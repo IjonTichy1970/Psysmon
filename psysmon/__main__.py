@@ -1,24 +1,15 @@
 """Command-line entry point.
 
-Parses the command line (``settings.build_parser``), merges it over the config file and
-defaults (CLI wins), and will hand the resulting :class:`~psysmon.config.settings.Settings` to
-the monitoring engine. The run path lands with the scheduler (Milestone 8) and daemonization
-(Milestone 11); for now this validates arguments and reports that the engine isn't wired yet.
+Delegates to :func:`psysmon.daemon.main`, which parses the CLI, loads and merges the config
+(CLI > file > defaults), builds the monitoring engine, and runs it with status publishing and
+signal handling. Exposed as the ``psysmon`` console script.
 """
 
 from __future__ import annotations
 
-import sys
+from psysmon.daemon import main
 
-from psysmon.config.settings import load
-
-
-def main(argv: list[str] | None = None) -> int:
-    # Parses argv (handling --version/--help) and merges over defaults. The config-file layer
-    # is wired once the legacy parser lands (Milestone 3).
-    load(argv)
-    print("psysmon: configuration parsed; engine not runnable yet.", file=sys.stderr)
-    return 1
+__all__ = ["main"]
 
 
 if __name__ == "__main__":

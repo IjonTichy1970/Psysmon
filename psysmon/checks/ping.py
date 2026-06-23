@@ -85,37 +85,55 @@ class PingService:
     def __init__(self, source_ip: str | None = None) -> None:
         self._source_ip = source_ip
         self._sock: socket.socket | None = None
+        self._reader_registered = False
         self._counter = 0  # monotonic 16-bit id/seq source (NOT random).
         self._pending: dict[tuple[int, int], asyncio.Future[None]] = {}
 
     # --- socket lifecycle -------------------------------------------------------------
 
-    def _ensure_socket(self, ctx: base.CheckContext) -> socket.socket:
-        """Open + register the raw ICMP socket on first use (requires raw-socket privilege)."""
-        if self._sock is not None:
-            return self._sock
+    def _open_raw(self) -> socket.socket:
+        """Create the raw ICMP socket and bind the source IP (requires root). No event loop."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
         sock.setblocking(False)
-        bind_ip = ctx.source_ip or self._source_ip
-        if bind_ip:
-            sock.bind((bind_ip, 0))
-        try:
-            asyncio.get_running_loop().add_reader(sock.fileno(), self._on_readable, sock)
-        except NotImplementedError as exc:
-            # The Windows Proactor loop has no add_reader; raw ICMP demux is unsupported there.
-            sock.close()
-            raise OSError("event loop does not support add_reader for raw sockets") from exc
-        self._sock = sock
+        if self._source_ip:
+            sock.bind((self._source_ip, 0))
         return sock
+
+    def prepare(self) -> None:
+        """Open the raw socket up front (call as root, before dropping privileges).
+
+        The reply reader is attached later by :meth:`_ensure_socket` once a loop is running.
+        """
+        if self._sock is None:
+            self._sock = self._open_raw()
+
+    def _ensure_socket(self, ctx: base.CheckContext) -> socket.socket:
+        """Open (if needed) and register the raw ICMP socket on first use within the loop."""
+        if self._sock is None:
+            self._sock = self._open_raw()
+        if not self._reader_registered:
+            try:
+                asyncio.get_running_loop().add_reader(
+                    self._sock.fileno(), self._on_readable, self._sock
+                )
+            except NotImplementedError as exc:
+                # The Windows Proactor loop has no add_reader; raw ICMP demux is unsupported.
+                self._sock.close()
+                self._sock = None
+                raise OSError("event loop does not support add_reader for raw sockets") from exc
+            self._reader_registered = True
+        return self._sock
 
     def close(self) -> None:
         """Unregister and close the raw socket (idempotent)."""
         if self._sock is None:
             return
-        try:
-            asyncio.get_running_loop().remove_reader(self._sock.fileno())
-        except RuntimeError:  # no running loop (shutdown) — socket close still suffices.
-            pass
+        if self._reader_registered:
+            try:
+                asyncio.get_running_loop().remove_reader(self._sock.fileno())
+            except RuntimeError:  # no running loop (shutdown) — socket close still suffices.
+                pass
+            self._reader_registered = False
         self._sock.close()
         self._sock = None
 

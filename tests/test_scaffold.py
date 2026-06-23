@@ -9,6 +9,7 @@ import pytest
 MODULES = [
     "psysmon",
     "psysmon.__main__",
+    "psysmon.daemon",
     "psysmon.status",
     "psysmon.privilege",
     "psysmon.config.model",

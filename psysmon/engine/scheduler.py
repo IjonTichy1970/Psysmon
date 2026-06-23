@@ -262,3 +262,42 @@ class Scheduler:
 
     def node_states(self) -> list[tuple[Node, NodeState]]:
         return [(s.node, s.state) for s in self._scheduled]
+
+    @property
+    def ping_service(self) -> PingService:
+        """The shared ping service (so the daemon can open its raw socket up front)."""
+        return self._ping
+
+    # --- config reload (SIGHUP) -------------------------------------------------------
+
+    _CARRIED = ("lastcheck", "downct", "contacted", "lastcontacted", "deathtime", "last_up")
+
+    def reload(self, roots: list[Node]) -> None:
+        """Rebuild the monitored tree from new config, preserving live state.
+
+        Nodes still present (matched by hostname/type/port) keep their up/down state and
+        counters; new nodes start fresh; removed nodes are dropped. Per-node ``max_down`` comes
+        from the *new* config. Global settings (intervals, paths) are not re-applied here — a
+        restart is needed for those.
+        """
+        previous = {
+            (s.node.hostname, s.node.check_type, s.node.port): s for s in self._scheduled
+        }
+        self.warnings = []
+        self._scheduled = self._flatten(roots)
+        seen: set[tuple[str, CheckType, int]] = set()
+        for sched in self._scheduled:
+            key = (sched.node.hostname, sched.node.check_type, sched.node.port)
+            if key in seen:
+                self.warnings.append(
+                    f"duplicate node {sched.node.hostname} ({sched.node.check_type}"
+                    f" port {sched.node.port}) in the new config; both will be scheduled "
+                    "and share the carried-over state"
+                )
+            seen.add(key)
+            old = previous.get(key)
+            if old is not None:
+                for field_name in self._CARRIED:
+                    setattr(sched.state, field_name, getattr(old.state, field_name))
+                sched.checked = old.checked
+        self._stagger_due(True)

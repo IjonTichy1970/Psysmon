@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
+from psysmon.config import legacy
 from psysmon.config.detect import ConfigFormat, detect
-from psysmon.config.legacy import parse
+from psysmon.config.legacy import ParseError, parse
 from psysmon.config.model import CheckType
 
 
@@ -155,6 +158,52 @@ def test_unbalanced_brace_on_service_line_is_contained():
     res = parse(text)
     assert [r.hostname for r in res.roots] == ["a.net", "b.net"]
     assert any("cannot have children" in w for w in res.warnings)
+
+
+def test_overlong_stanza_with_brace_still_opens_block():
+    # A stanza with >7 fields that ends in '{' must still open its child block: the brace is
+    # split off before the 7-field cap, so the subtree isn't detached and the rest of the file
+    # (here p2) isn't silently dropped (#32).
+    text = (
+        "p1 ping a b c d e f {\n"      # 9 tokens incl. the brace: over-long AND a block-open
+        "   c1 tcp 22 ssh noc@x\n"
+        "}\n"
+        "p2 ping p2 noc@x\n"
+    )
+    res = parse(text)
+    assert [r.hostname for r in res.roots] == ["p1", "p2"]        # p2 preserved, not dropped
+    assert [c.hostname for c in res.roots[0].children] == ["c1"]  # c1 stayed nested under p1
+    assert any("too many fields" in w for w in res.warnings)
+
+
+def test_stray_brace_on_service_line_does_not_pollute_contact():
+    # A tcp stanza whose '{' falls in the contact slot must NOT take '{' as the contact: the
+    # brace is stripped first, the block is drained, and the next top-level host still parses
+    # (#35). (The old code set contact = '{', so pages went nowhere.)
+    text = (
+        "h tcp 80 weblabel {\n"        # '{' would otherwise land in the contact field
+        "   inner ping inner noc@x\n"
+        "}\n"
+        "after ping after noc@x\n"
+    )
+    res = parse(text)
+    assert [r.hostname for r in res.roots] == ["h", "after"]
+    h = res.roots[0]
+    assert h.label == "weblabel"
+    assert h.contact == ""             # not '{'
+    assert h.children == []            # tcp can't have children
+    assert any("cannot have children" in w for w in res.warnings)
+
+
+def test_excessive_nesting_raises_clean_parse_error():
+    # Nesting past the cap raises ParseError (a ValueError), not an uncaught RecursionError (#36).
+    depth = legacy._MAX_NESTING_DEPTH + 5
+    lines = [f"p{i} ping p{i} {{" for i in range(depth)]
+    lines += ["inner ping inner"]
+    lines += ["}"] * depth
+    assert issubclass(ParseError, ValueError)
+    with pytest.raises(ParseError):
+        parse("\n".join(lines) + "\n")
 
 
 def test_unknown_config_directive_warns():

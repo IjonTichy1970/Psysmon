@@ -69,6 +69,18 @@ All notable changes to this project are documented here. The format is based on
   log output is no longer silently lost once the daemon forks
   ([#30](https://github.com/IjonTichy1970/Psysmon/issues/30),
   [#31](https://github.com/IjonTichy1970/Psysmon/issues/31)).
+- The legacy config parser no longer mishandles a stray `{`: a trailing brace is split off
+  before the 7-field cap and before field parsing, so an over-long stanza that opens a block no
+  longer drops the brace (which detached the subtree and silently truncated the rest of the
+  file), and a stray `{` on a service line is no longer stored as the contact or label
+  ([#32](https://github.com/IjonTichy1970/Psysmon/issues/32),
+  [#35](https://github.com/IjonTichy1970/Psysmon/issues/35)).
+- A pathologically deep config now fails with a clean configuration error instead of an uncaught
+  `RecursionError` at startup — `{` nesting is capped (default 64)
+  ([#36](https://github.com/IjonTichy1970/Psysmon/issues/36)).
+- A node whose dependency parent goes down mid-check is now marked suppressed immediately when
+  its stale result is discarded, so the status page and JSON no longer show it as a stale "up"
+  host for up to one interval ([#37](https://github.com/IjonTichy1970/Psysmon/issues/37)).
 
 ### Security
 - The status-file writer no longer follows a symlink at a predictable temp path: the temp file

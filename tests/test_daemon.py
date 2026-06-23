@@ -136,6 +136,21 @@ def test_main_missing_config_returns_clean_error(capsys):
     assert "config file not found" in err
 
 
+def test_main_deeply_nested_config_is_clean_error(tmp_path, capsys):
+    # A pathologically deep config is reported as a clean 'psysmon: ...' error + exit 1, not an
+    # uncaught RecursionError/ParseError traceback at startup (#36).
+    from psysmon.config import legacy
+
+    depth = legacy._MAX_NESTING_DEPTH + 5
+    lines = [f"p{i} ping p{i} {{" for i in range(depth)] + ["x ping x"] + ["}"] * depth
+    cfg = tmp_path / "deep.conf"
+    cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    rc = main(["-f", str(cfg), "-d"])
+    assert rc == 1
+    assert "psysmon:" in capsys.readouterr().err
+
+
 # --- logging / daemonization (issues #30, #31) ----------------------------------------
 
 

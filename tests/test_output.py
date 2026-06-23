@@ -33,7 +33,7 @@ def ns(host, ctype=CheckType.PING, lastcheck=Status.OK, *, port=0, downct=0, con
 
 
 def html_for(states, **kw):
-    opts = dict(org_hostname="qiclab", refresh_s=30, show_up_also=False,
+    opts = dict(org_hostname="mon.example.net", refresh_s=30, show_up_also=False,
                 logo_url="psysmon-logo.png", now_wall=NOW)
     opts.update(kw)
     return render_html(states, **opts)
@@ -54,7 +54,7 @@ def test_html_shows_down_hides_up_and_suppressed():
     assert "hidden.net" not in h   # suppressed always hidden
     assert 'src="psysmon-logo.png"' in h
     assert 'http-equiv="refresh" content="30"' in h
-    assert "qiclab" in h
+    assert "mon.example.net" in h
     assert "Unpingable" in h
     assert "host down" in h
 
@@ -407,7 +407,7 @@ async def test_scheduler_states_render(tmp_path):
     s = Settings()
     s.interval_s = 10
     s.status_path = str(tmp_path / "out.html")
-    s.org_hostname = "qiclab"
+    s.org_hostname = "mon.example.net"
     node = Node(hostname="rtr", check_type=CheckType.PING, max_down=1)
     sched = Scheduler([node], s, clock=clock, runner=runner, stagger=False)
     await sched.tick()

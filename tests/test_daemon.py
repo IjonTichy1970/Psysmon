@@ -8,7 +8,7 @@ import logging.handlers
 from pathlib import Path
 
 from psysmon import daemon
-from psysmon.config.model import CheckType, Node
+from psysmon.config.model import CheckType, Node, NodeState
 from psysmon.config.settings import Settings
 from psysmon.daemon import build, load_roots, main, serve
 from psysmon.engine.clock import ManualClock, SystemClock
@@ -22,6 +22,94 @@ SAMPLE = (
     "   rtr.example.net tcp 22 ssh noc@example.net\n"
     "}\n"
 )
+
+
+class _FakeSched:
+    """Minimal scheduler stand-in for the periodic logging helpers (#59)."""
+
+    def __init__(self, states=None, stats=None):
+        self._states = states or []
+        self._stats = stats
+
+    def node_states(self):
+        return self._states
+
+    def dns_stats(self):
+        return self._stats
+
+
+def test_log_dns_stats_line(caplog):
+    sched = _FakeSched(stats={"hits": 10, "misses": 3, "expired": 2, "entries": 5})
+    with caplog.at_level(logging.INFO, logger="psysmon"):
+        daemon._log_dns_stats(sched)
+    assert "dnscache periodic - 10 hits 3 misses 2 expired" in caplog.text
+
+
+def test_log_dns_stats_skips_when_no_stats(caplog):
+    with caplog.at_level(logging.INFO, logger="psysmon"):
+        daemon._log_dns_stats(_FakeSched(stats=None))
+    assert "dnscache" not in caplog.text
+
+
+def test_log_heartbeat_counts(caplog):
+    def st(lastcheck, suppressed=False):
+        return NodeState(lastcheck=lastcheck, suppressed=suppressed)
+
+    states = [
+        (Node(hostname="a", check_type=CheckType.PING), st(Status.OK)),                 # up
+        (Node(hostname="b", check_type=CheckType.PING), st(Status.UNPINGABLE)),         # down
+        (Node(hostname="c", check_type=CheckType.TCP), st(Status.CONN_REFUSED, True)),  # suppressed
+        (Node(hostname="d", check_type=CheckType.TCP), st(Status.OK, True)),            # suppressed
+    ]
+    with caplog.at_level(logging.INFO, logger="psysmon"):
+        daemon._log_heartbeat(_FakeSched(states))
+    assert "monitoring 4 hosts - 1 up, 1 down, 2 suppressed" in caplog.text
+
+
+async def test_periodic_disabled_when_interval_zero():
+    calls = []
+    await daemon._periodic(0, lambda: calls.append(1))
+    assert calls == []  # non-positive interval returns immediately, never calls fn
+
+
+async def test_periodic_survives_fn_exception():
+    # A raising fn must not kill the loop, so one bad stats call doesn't stop heartbeats forever.
+    calls = []
+
+    def fn():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+
+    task = asyncio.create_task(daemon._periodic(0.001, fn))
+    try:
+        await asyncio.sleep(0.05)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert len(calls) >= 2  # looped past the first-call exception
+
+
+def test_apply_log_level_sets_root_level():
+    root = logging.getLogger()
+    saved = root.level
+    try:
+        for level, expected in (("warning", logging.WARNING), ("info", logging.INFO),
+                                ("debug", logging.DEBUG)):
+            s = Settings()
+            s.log_level = level
+            daemon._apply_log_level(s)
+            assert root.level == expected
+    finally:
+        root.setLevel(saved)
+
+
+def test_heartbeat_counts_never_checked_as_up(caplog):
+    # A never-checked node (default NodeState, lastcheck == 0) counts as up, matching is_up.
+    states = [(Node(hostname="new", check_type=CheckType.PING), NodeState())]
+    with caplog.at_level(logging.INFO, logger="psysmon"):
+        daemon._log_heartbeat(_FakeSched(states))
+    assert "monitoring 1 hosts - 1 up, 0 down, 0 suppressed" in caplog.text
 
 
 def test_load_roots(tmp_path):

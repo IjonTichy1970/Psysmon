@@ -53,6 +53,7 @@ class DnsCache:
         self._locks: dict[str, asyncio.Lock] = {}
         self._hits = 0
         self._misses = 0
+        self._expired = 0
 
     def _fresh(self, hostname: str, now: float) -> str | None:
         entry = self._cache.get(hostname)
@@ -75,6 +76,10 @@ class DnsCache:
                 self._hits += 1
                 return cached
             self._misses += 1
+            if self._cache.pop(hostname, None) is not None:
+                # A previously-cached entry aged out: count one expiration and evict it, so a host
+                # that now fails to resolve isn't re-counted as "expired" on every retry.
+                self._expired += 1
             ip = await self._resolve_fn(hostname)
             if ip is not None:
                 self._cache[hostname] = (ip, self._monotonic())
@@ -83,4 +88,9 @@ class DnsCache:
     @property
     def stats(self) -> dict[str, int]:
         """Cache statistics for the periodic ``dnslog`` line."""
-        return {"hits": self._hits, "misses": self._misses, "entries": len(self._cache)}
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "expired": self._expired,
+            "entries": len(self._cache),
+        }

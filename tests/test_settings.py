@@ -118,3 +118,31 @@ def test_load_version_exits(capsys):
         load(["--version"])
     assert exc.value.code == 0
     assert "psysmon" in capsys.readouterr().out
+
+
+# --- logging verbosity + new knobs (#59) ----------------------------------------------
+
+def test_logging_defaults():
+    s = Settings()
+    assert (s.log_level, s.heartbeat_s, s.slow_check_s) == ("info", 300, 30.0)
+
+
+def test_verbose_flags_map_to_log_level():
+    assert cli_overrides(["-v"]) == {"log_level": "info"}
+    assert cli_overrides(["-vv"]) == {"log_level": "debug"}
+    assert cli_overrides(["-vvv"]) == {"log_level": "debug"}  # caps at debug
+
+
+def test_explicit_log_level_beats_verbose():
+    # --log-level is authoritative even if -v is also present.
+    assert cli_overrides(["--log-level", "warning", "-vv"]) == {"log_level": "warning"}
+
+
+def test_log_level_invalid_choice_errors():
+    with pytest.raises(SystemExit):
+        cli_overrides(["--log-level", "trace"])
+
+
+def test_new_logging_knobs_parse():
+    assert cli_overrides(["--heartbeat", "60"]) == {"heartbeat_s": 60}
+    assert cli_overrides(["--slow-check", "5"]) == {"slow_check_s": 5.0}

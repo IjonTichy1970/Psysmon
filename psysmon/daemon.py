@@ -28,8 +28,11 @@ from psysmon.config.settings import Settings, cli_overrides, merge
 from psysmon.engine.scheduler import Scheduler
 from psysmon.notify.email_smtp import SmtpNotifier
 from psysmon.output.statuspage import render_and_publish
+from psysmon.status import is_up
 
 logger = logging.getLogger("psysmon")
+
+_LEVELS = {"warning": logging.WARNING, "info": logging.INFO, "debug": logging.DEBUG}
 
 # Upper bound between status publishes when nothing changes — a floor so elapsed-time displays
 # stay fresh. Real state changes publish immediately (the scheduler's dirty event), so steady
@@ -81,7 +84,11 @@ async def _render_loop(scheduler: Scheduler, settings: Settings) -> None:
 async def _reload_loop(
     scheduler: Scheduler, settings: Settings, reload_flag: asyncio.Event
 ) -> None:
-    """Reload the config (and preserve live state) whenever SIGHUP sets ``reload_flag``."""
+    """Reload the config (and preserve live state) whenever SIGHUP sets ``reload_flag``.
+
+    Only the host tree is re-applied. Global settings — intervals, paths, and the logging knobs
+    ``loglevel`` / ``heartbeat`` / ``dnslog`` — need a restart to change (see scheduler.reload).
+    """
     while True:
         await reload_flag.wait()
         reload_flag.clear()
@@ -93,6 +100,41 @@ async def _reload_loop(
             logger.info("configuration reloaded (%d nodes)", len(scheduler.node_states()))
         except Exception:
             logger.exception("config reload failed; keeping the current configuration")
+
+
+def _log_dns_stats(scheduler: Scheduler) -> None:
+    """Emit the periodic ``dnscache periodic - ...`` line (skips if the resolver has no stats)."""
+    stats = scheduler.dns_stats()
+    if stats is not None:
+        logger.info("dnscache periodic - %d hits %d misses %d expired",
+                    stats["hits"], stats["misses"], stats.get("expired", 0))
+
+
+def _log_heartbeat(scheduler: Scheduler) -> None:
+    """Emit the periodic ``monitoring N hosts - ...`` summary.
+
+    A never-checked node (default ``lastcheck == 0``) counts as *up*, matching ``is_up`` used
+    everywhere else; by steady state every node has a real result, so this only briefly
+    over-reports "up" in the first heartbeat window after startup or a reload.
+    """
+    states = scheduler.node_states()
+    total = len(states)
+    suppressed = sum(1 for _, s in states if s.suppressed)
+    down = sum(1 for _, s in states if not s.suppressed and not is_up(s.lastcheck))
+    up = total - suppressed - down
+    logger.info("monitoring %d hosts - %d up, %d down, %d suppressed", total, up, down, suppressed)
+
+
+async def _periodic(interval: float, fn, *args) -> None:
+    """Call ``fn(*args)`` every ``interval`` seconds; a non-positive interval disables it."""
+    if interval <= 0:
+        return
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            fn(*args)
+        except Exception:
+            logger.exception("periodic logging task failed")
 
 
 def _install_signals(loop: asyncio.AbstractEventLoop, scheduler: Scheduler,
@@ -122,6 +164,8 @@ async def serve(scheduler: Scheduler, settings: Settings) -> None:
     helpers = [
         asyncio.create_task(_render_loop(scheduler, settings)),
         asyncio.create_task(_reload_loop(scheduler, settings, reload_flag)),
+        asyncio.create_task(_periodic(settings.dnslog_s, _log_dns_stats, scheduler)),
+        asyncio.create_task(_periodic(settings.heartbeat_s, _log_heartbeat, scheduler)),
     ]
     try:
         await run_task  # returns once scheduler.stop() is called (it drains in-flight checks)
@@ -202,6 +246,11 @@ def _daemonize() -> None:
         os.close(devnull)
 
 
+def _apply_log_level(settings: Settings) -> None:
+    """Set the root logger to the configured verbosity (warning/info/debug)."""
+    logging.getLogger().setLevel(_LEVELS.get(settings.log_level, logging.INFO))
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -214,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"psysmon: {exc}", file=sys.stderr)
         return 1
+
+    _apply_log_level(settings)
 
     if _has_ping(scheduler):
         if _is_root():

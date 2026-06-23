@@ -259,10 +259,14 @@ class _Parser:
             self._set_int(lineno, "pageinterval_min", tokens[2])
         elif directive.startswith("logging"):
             self._set_logging(lineno, tokens[2])
+        elif directive.startswith("loglevel"):
+            self._set_loglevel(lineno, tokens[2])
         elif directive.startswith("dnslog"):
             self._set_int(lineno, "dnslog_s", tokens[2])
         elif directive.startswith("dnsexpire"):
             self._set_int(lineno, "dnsexpire_s", tokens[2])
+        elif directive.startswith("heartbeat"):
+            self._set_int(lineno, "heartbeat_s", tokens[2])
         elif directive.startswith("statusfile"):
             self._set_statusfile(lineno, tokens)
         elif directive.startswith("numfailures"):
@@ -283,6 +287,14 @@ class _Parser:
         else:
             self._warn(lineno, f"unknown logging facility {facility!r}; using daemon")
             self.overrides["syslog_facility"] = "daemon"
+
+    def _set_loglevel(self, lineno: int, level: str) -> None:
+        level = level.lower()
+        if level in ("warning", "info", "debug"):
+            self.overrides["log_level"] = level
+        else:
+            self._warn(lineno, f"unknown loglevel {level!r}; using info")
+            self.overrides["log_level"] = "info"
 
     def _set_statusfile(self, lineno: int, tokens: list[str]) -> None:
         if len(tokens) != 4:

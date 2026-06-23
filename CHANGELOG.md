@@ -39,5 +39,13 @@ All notable changes to this project are documented here. The format is based on
   concurrent per-host loop: bounded concurrency, dependency suppression (a host behind a down
   parent isn't checked and its state freezes), stale-result discarding when a parent fails
   mid-check, and threshold/recovery/re-page notification.
+- Email notifier (SMTP) with a pluggable interface: renders the original PMESG-style alert
+  template, sends down/recovery/re-page emails via a bounded, non-blocking SMTP send, and
+  degrades safely (a missing contact or disabled notifications dedup without sending; delivery
+  failures retry; malformed addresses are rejected, not crash the loop).
+- Status output: a modern dark-themed HTML "Bad Hosts" page (logo header, the original
+  columns, browser auto-refresh, down-only by default with suppressed hosts hidden) plus a flat
+  text variant and a JSON endpoint (all nodes, with a suppressed flag). Published atomically so
+  readers never see a partial file. All dynamic content is HTML-escaped.
 
 [Unreleased]: https://github.com/IjonTichy1970/Sysmon/commits/main

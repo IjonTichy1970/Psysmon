@@ -31,7 +31,10 @@ from psysmon.output.statuspage import render_and_publish
 
 logger = logging.getLogger("psysmon")
 
-RENDER_INTERVAL_S = 5.0  # how often the status file is refreshed while running
+# Upper bound between status publishes when nothing changes — a floor so elapsed-time displays
+# stay fresh. Real state changes publish immediately (the scheduler's dirty event), so steady
+# state writes the file at most this often instead of every few seconds.
+RENDER_MAX_INTERVAL_S = 60.0
 
 
 def load_roots(settings: Settings) -> tuple[list[Node], dict, list[str]]:
@@ -60,14 +63,19 @@ def build(argv: list[str] | None = None) -> tuple[Scheduler, Settings]:
 
 
 async def _render_loop(scheduler: Scheduler, settings: Settings) -> None:
-    """Publish the status file periodically (off-thread so it never blocks the loop)."""
+    """Publish the status file on state changes (plus a periodic floor), off the event loop.
+
+    Waits on the scheduler's dirty signal so an unchanged steady state isn't re-rendered and
+    re-written every few seconds; the floor still publishes periodically so relative timestamps
+    don't go stale.
+    """
     while True:
+        await scheduler.wait_until_dirty(RENDER_MAX_INTERVAL_S)
         if settings.status_path:
             try:
                 await asyncio.to_thread(render_and_publish, scheduler.node_states(), settings)
             except Exception:
                 logger.exception("status render failed")
-        await asyncio.sleep(RENDER_INTERVAL_S)
 
 
 async def _reload_loop(

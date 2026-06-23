@@ -13,5 +13,6 @@ All notable changes to this project are documented here. The format is based on
   from the original C `sysmon`.
 - Status-code definitions and display mappings ported from the original `lib.c`.
 - Core data model (`Node`, `NodeState`) ported from the original `struct hostinfo`.
+- Licensed under GPL-2.0-or-later (continuing the original sysmon's GNU GPL licensing).
 
 [Unreleased]: https://github.com/IjonTichy1970/Sysmon/commits/main

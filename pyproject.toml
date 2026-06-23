@@ -8,11 +8,12 @@ version = "0.1.0.dev0"
 description = "Dependency-aware network monitoring daemon (Python rewrite of the 1998 C sysmon)"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "TBD" }
+license = { text = "GPL-2.0-or-later" }
 authors = [{ name = "IjonTichy1970" }]
 keywords = ["monitoring", "network", "icmp", "ping", "daemon", "sysmon"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
     "Environment :: No Input/Output (Daemon)",
     "Intended Audience :: System Administrators",
     "Operating System :: POSIX :: Linux",

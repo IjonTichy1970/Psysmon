@@ -95,3 +95,7 @@ Deferred enhancements include a modern config format with a converter
 A faithful-but-modernized descendant of the original sysmon by Jared Mauch
 ([puck.nether.net/sysmon](http://www.sysmon.org/)). Thanks to that project for ~25 years of prior
 art.
+
+## License
+
+GPL-2.0-or-later, continuing the original sysmon's GNU GPL licensing. See [LICENSE](LICENSE).

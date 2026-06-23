@@ -108,13 +108,22 @@ def test_parse_rejects_non_ipv4():
 
 # --- counter is monotonic, not random ----------------------------------------------------
 
-def test_counter_is_monotonic_16bit():
+def test_counter_increments_and_is_16bit():
+    # Consecutive keys step by one through the 32-bit (ident << 16 | seq) space. The starting
+    # point is randomized per process (anti-spoofing, #29), so assert the step, not the origin.
     svc = ping.PingService()
     keys = [svc._next_key() for _ in range(5)]
-    assert keys == [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]
+    values = [(ident << 16) | seq for ident, seq in keys]
+    assert all(b == (a + 1) & 0xFFFFFFFF for a, b in zip(values, values[1:], strict=False))
     for ident, seq in keys:
         assert 0 <= ident <= 0xFFFF
         assert 0 <= seq <= 0xFFFF
+
+
+def test_counter_seed_is_randomized():
+    # Two fresh services almost certainly start from different (ident, seq) bases (a fixed seed
+    # would make both start identical). Collision probability is 2**-32.
+    assert ping.PingService()._next_key() != ping.PingService()._next_key()
 
 
 # --- check() demux + retry logic (no privilege, no real raw socket) ----------------------
@@ -130,17 +139,20 @@ class _FakeSocket:
         self.sent: list[tuple[bytes, object]] = []
         self.closed = False
         self.reply_for_sent = True  # if True, the next packet is "answered"
-        self._inbox: list[bytes] = []
+        self.reply_src = None  # override the reply's source addr (default: from the target)
+        self._inbox: list[tuple[bytes, tuple]] = []
 
     def sendto(self, packet, addr):
         self.sent.append((packet, addr))
         if self.reply_for_sent:
-            # Echo it back as a reply (flip type 8 -> 0), wrapped in an IPv4 header,
-            # exactly as the kernel would hand it to the raw socket.
-            self._inbox.append(_wrap_ipv4(_to_echo_reply(packet)))
+            # Echo it back as a reply (flip type 8 -> 0), wrapped in an IPv4 header, exactly as
+            # the kernel would hand it to the raw socket — from the target's address, unless a
+            # source override is set (to exercise the reply-source-verification path).
+            src = self.reply_src if self.reply_src is not None else addr
+            self._inbox.append((_wrap_ipv4(_to_echo_reply(packet)), src))
         return len(packet)
 
-    def recv(self, _bufsize):
+    def recvfrom(self, _bufsize):
         if self._inbox:
             return self._inbox.pop(0)
         raise BlockingIOError
@@ -208,9 +220,9 @@ async def test_check_wrong_reply_does_not_resolve():
     def feed_wrong(_sock):
         wrong = _wrap_ipv4(_to_echo_reply(ping.build_echo_request(0xDEAD, 0xBEEF, b"x")))
         parsed = ping.parse_echo_reply(wrong)
-        fut = svc._pending.get(parsed)  # 0xDEAD/0xBEEF is never a real pending key here
-        if fut is not None and not fut.done():
-            fut.set_result(None)
+        entry = svc._pending.get(parsed)  # 0xDEAD/0xBEEF is never a real pending key here
+        if entry is not None and not entry[0].done():
+            entry[0].set_result(None)
 
     svc._on_readable = feed_wrong  # type: ignore[method-assign]
 
@@ -218,6 +230,23 @@ async def test_check_wrong_reply_does_not_resolve():
     result = await svc.check(node(), ctx)
 
     assert result == Status.UNPINGABLE
+
+
+async def test_check_reply_from_wrong_source_is_rejected():
+    # A well-formed echo reply matching the in-flight (ident, seq) but arriving from a DIFFERENT
+    # source IP than the pinged target must NOT satisfy the waiter — this is the source-address
+    # verification that defeats a host forging a reply for another's probe (issue #29). Driven
+    # through the REAL _on_readable demux (not a mock).
+    svc = ping.PingService()
+    sock = _FakeSocket()
+    sock.reply_src = ("203.0.113.99", 0)  # attacker address, not the target we pinged
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(default="198.51.100.5"), timeout_s=0.15)
+    result = await svc.check(node(), ctx)
+
+    assert result == Status.UNPINGABLE  # wrong-source reply ignored -> probe times out
+    assert not svc._pending  # waiters cleaned up
 
 
 async def test_check_resolve_failure_returns_no_dns_before_socket():

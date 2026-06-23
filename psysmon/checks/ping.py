@@ -2,9 +2,12 @@
 
 Reproduces ``icmp.c`` but modern and concurrent: a single shared raw ICMP socket opened
 lazily (the first time a ping is actually run), registered with ``loop.add_reader``; outbound
-echo requests carry a monotonic 16-bit identifier/sequence, and replies are demultiplexed to
-per-(identifier, sequence) futures. The socket is optionally ``bind()``-ed to the configured
-source IP (ACL-load-bearing). One unanswered echo after the retry budget -> ``Status.UNPINGABLE``.
+echo requests carry a per-process-randomized, monotonic identifier/sequence, and replies are
+demultiplexed to per-(identifier, sequence) futures **only after the reply's source address is
+verified against the pinged target** (the shared socket receives every inbound echo reply, so
+matching on id/seq alone would let any host — or a spoofed packet — forge a host-is-up result).
+The socket is optionally ``bind()``-ed to the configured source IP (ACL-load-bearing). One
+unanswered echo after the retry budget -> ``Status.UNPINGABLE``.
 
 The raw socket is *not* opened at import time, so this module imports cleanly without
 privilege on both Windows and Linux. It is opened on first use (which requires root / raw-socket
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import secrets
 import socket
 import struct
 
@@ -87,8 +91,11 @@ class PingService:
         self._source_ip = source_ip
         self._sock: socket.socket | None = None
         self._reader_registered = False
-        self._counter = 0  # monotonic 16-bit id/seq source (NOT random).
-        self._pending: dict[tuple[int, int], asyncio.Future[None]] = {}
+        # id/seq base: randomized per process so an off-path attacker can't predict the
+        # in-flight (ident, seq) of a probe and forge a reply (#29). Still monotonic from there.
+        self._counter = secrets.randbits(32)
+        # (ident, seq) -> (waiter, expected peer IP); the IP gates which replies may resolve it.
+        self._pending: dict[tuple[int, int], tuple[asyncio.Future[None], str]] = {}
 
     # --- socket lifecycle -------------------------------------------------------------
 
@@ -149,16 +156,26 @@ class PingService:
     # --- reply demux ------------------------------------------------------------------
 
     def _on_readable(self, sock: socket.socket) -> None:
-        """``add_reader`` callback: read a packet and wake the matching waiter."""
+        """``add_reader`` callback: read a packet and wake the matching, source-verified waiter."""
         try:
-            packet = sock.recv(2048)
+            packet, addr = sock.recvfrom(2048)
         except OSError:
             return
         parsed = parse_echo_reply(packet)
         if parsed is None:
             return
-        future = self._pending.get(parsed)
-        if future is not None and not future.done():
+        entry = self._pending.get(parsed)
+        if entry is None:
+            return
+        future, expected_ip = entry
+        # The reply must come from the host we actually pinged. The shared raw socket receives
+        # ALL inbound echo replies, so matching (ident, seq) alone would let another host — or a
+        # spoofed off-path packet that guessed the (now randomized) id/seq — satisfy the waiter
+        # and forge a host-is-up result, masking an outage and (via dependency gating) silencing
+        # a whole subtree.
+        if addr[0] != expected_ip:
+            return
+        if not future.done():
             future.set_result(None)
 
     # --- public check -----------------------------------------------------------------
@@ -202,7 +219,7 @@ class PingService:
         for _ in range(1 + _RETRIES):
             ident, seq = self._next_key()
             future: asyncio.Future[None] = loop.create_future()
-            self._pending[(ident, seq)] = future
+            self._pending[(ident, seq)] = (future, ip)  # only a reply from `ip` may resolve it
             try:
                 packet = build_echo_request(ident, seq)
                 sock.sendto(packet, (ip, 0))

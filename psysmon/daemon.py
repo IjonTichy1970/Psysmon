@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import logging.handlers
 import os
 import signal
 import sys
@@ -135,14 +136,62 @@ def _has_ping(scheduler: Scheduler) -> bool:
     return any(node.check_type is CheckType.PING for node, _ in scheduler.node_states())
 
 
+def _setup_syslog(settings: Settings) -> None:
+    """Route logging to syslog using the configured facility (for the backgrounded daemon).
+
+    In the foreground we keep logging to stderr (``logging.basicConfig`` in :func:`main`).
+    But once the daemon detaches and redirects stdio to ``/dev/null`` (see :func:`_daemonize`),
+    stderr logging would vanish — so when backgrounding we add a :class:`SysLogHandler` and drop
+    the stderr handler. A facility of ``None`` / ``"none"`` disables syslog (matching the legacy
+    ``config logging none``), in which case a backgrounded daemon simply has no log destination.
+    """
+    facility_name = (settings.syslog_facility or "none").lower()
+    if facility_name == "none":
+        return
+    facility = logging.handlers.SysLogHandler.facility_names.get(facility_name)
+    if facility is None:
+        logger.warning("unknown syslog facility %r; logging stays on stderr",
+                       settings.syslog_facility)
+        return
+    address = "/dev/log" if os.path.exists("/dev/log") else ("localhost", 514)
+    try:
+        handler = logging.handlers.SysLogHandler(address=address, facility=facility)
+    except OSError as exc:
+        logger.warning("could not connect to syslog (%s); logging stays on stderr", exc)
+        return
+    handler.setFormatter(
+        logging.Formatter("psysmon[%(process)d]: %(levelname)s %(name)s: %(message)s")
+    )
+    root = logging.getLogger()
+    root.addHandler(handler)
+    # After backgrounding, stderr is redirected to /dev/null, so the stderr handler that
+    # basicConfig() installed would write nowhere — drop it now that syslog is wired up.
+    for existing in list(root.handlers):
+        if type(existing) is logging.StreamHandler:
+            root.removeHandler(existing)
+
+
 def _daemonize() -> None:
-    """Detach into the background with a single fork (POSIX only; matches the original)."""
+    """Detach into the background with a single fork (POSIX only; matches the original).
+
+    After detaching there is no controlling terminal, so the standard streams are redirected
+    to ``/dev/null``: anything still writing to stdout/stderr would otherwise be lost (or, on a
+    full pipe, block the daemon). Configure syslog *before* calling this (see
+    :func:`_setup_syslog`) so log output survives the redirect.
+    """
     if not hasattr(os, "fork"):
         logger.warning("fork() unavailable here; staying in the foreground")
         return
     if os.fork() > 0:
         os._exit(0)  # parent exits; the child keeps running
     os.setsid()  # detach from the controlling terminal
+    sys.stdout.flush()
+    sys.stderr.flush()
+    devnull = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(devnull, fd)
+    if devnull > 2:
+        os.close(devnull)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,6 +218,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             logger.warning("not running as root: ICMP ping needs raw sockets and will fail")
     if not settings.foreground:
+        # Only switch logging to syslog when we can actually detach; otherwise keep stderr so
+        # _daemonize()'s "staying in the foreground" warning is still visible.
+        if hasattr(os, "fork"):
+            _setup_syslog(settings)  # wire syslog before stdio is sent to /dev/null
         _daemonize()
     try:
         asyncio.run(serve(scheduler, settings))

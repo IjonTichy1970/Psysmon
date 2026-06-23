@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import logging.handlers
 from pathlib import Path
 
+from psysmon import daemon
 from psysmon.config.model import CheckType, Node
 from psysmon.config.settings import Settings
 from psysmon.daemon import build, load_roots, main, serve
@@ -131,6 +134,75 @@ def test_main_missing_config_returns_clean_error(capsys):
     assert rc == 1  # not a traceback
     err = capsys.readouterr().err
     assert "config file not found" in err
+
+
+# --- logging / daemonization (issues #30, #31) ----------------------------------------
+
+
+def test_setup_syslog_wires_handler_and_drops_stderr(monkeypatch):
+    # syslog_facility must actually configure a SysLogHandler (issue #30); a real socket is
+    # avoided by faking SysLogHandler. "none"/unknown add nothing; a valid facility adds the
+    # syslog handler and drops the stderr handler (which goes to /dev/null once backgrounded).
+    real_facilities = logging.handlers.SysLogHandler.facility_names
+    created: list[object] = []
+
+    class FakeSyslog(logging.Handler):
+        facility_names = real_facilities
+
+        def __init__(self, address=None, facility=None):
+            super().__init__()
+            self.facility = facility
+            created.append(self)
+
+        def emit(self, record):  # pragma: no cover - never actually logs in the test
+            pass
+
+    monkeypatch.setattr(logging.handlers, "SysLogHandler", FakeSyslog)
+
+    root = logging.getLogger()
+    saved = root.handlers[:]
+    try:
+        root.handlers = [logging.StreamHandler()]  # pretend basicConfig() installed stderr
+
+        none_s = Settings()
+        none_s.syslog_facility = "none"
+        daemon._setup_syslog(none_s)
+        assert created == [] and len(root.handlers) == 1  # disabled: nothing changes
+
+        bogus_s = Settings()
+        bogus_s.syslog_facility = "does-not-exist"
+        daemon._setup_syslog(bogus_s)
+        assert created == []  # unknown facility: warn, add nothing
+
+        ok_s = Settings()
+        ok_s.syslog_facility = "local0"
+        daemon._setup_syslog(ok_s)
+        assert len(created) == 1
+        assert created[0].facility == real_facilities["local0"]
+        assert any(isinstance(h, FakeSyslog) for h in root.handlers)
+        assert not any(type(h) is logging.StreamHandler for h in root.handlers)  # stderr dropped
+    finally:
+        root.handlers = saved
+
+
+def test_daemonize_redirects_stdio(monkeypatch):
+    # After detaching, stdio must be redirected to /dev/null so backgrounded output isn't lost
+    # (issue #31). Fork/setsid/open/dup2 are faked so nothing actually forks.
+    calls: dict[str, object] = {"setsid": 0, "dup2": [], "closed": []}
+    monkeypatch.setattr(daemon.os, "fork", lambda: 0, raising=False)  # act as the child
+    monkeypatch.setattr(
+        daemon.os, "setsid", lambda: calls.__setitem__("setsid", calls["setsid"] + 1),
+        raising=False,
+    )
+    monkeypatch.setattr(daemon.os, "open", lambda path, flags: 7)  # fake /dev/null fd
+    monkeypatch.setattr(daemon.os, "dup2", lambda src, dst: calls["dup2"].append((src, dst)))
+    monkeypatch.setattr(daemon.os, "close", lambda fd: calls["closed"].append(fd))
+
+    daemon._daemonize()
+
+    assert calls["setsid"] == 1
+    assert calls["dup2"] == [(7, 0), (7, 1), (7, 2)]  # stdin/stdout/stderr all redirected
+    assert calls["closed"] == [7]  # the spare /dev/null fd is closed
 
 
 async def test_serve_cleans_up_helper_tasks_on_stop(tmp_path):

@@ -11,16 +11,13 @@ status code; only protocol-level outcomes return an explicit code here.
 from __future__ import annotations
 
 from psysmon.checks import base
-from psysmon.config.model import DEFAULT_PORT, CheckType, Node
+from psysmon.config.model import Node
 from psysmon.status import Status
 
 
 async def check(node: Node, ctx: base.CheckContext) -> int:
     """Probe a POP3 server, authenticating with ``node.username``/``node.password``."""
-    ip = await base.resolve(node, ctx)
-    port = node.port or DEFAULT_PORT[CheckType.POP3]
-    reader, writer = await base.open_connection(ip, port, ctx)
-    try:
+    async with base.open_check_connection(node, ctx) as (reader, writer):
         greeting = await reader.readline()
         if not greeting.startswith(b"+OK"):
             return Status.NO_RESPONSE
@@ -34,11 +31,8 @@ async def check(node: Node, ctx: base.CheckContext) -> int:
         reply = await reader.readline()
 
         if reply.startswith(b"+OK"):
-            writer.write(b"QUIT\r\n")
-            await writer.drain()
+            await base.graceful_quit(writer)
             return Status.OK
         if reply.startswith(b"-ERR"):
             return Status.BAD_AUTH
         return Status.BAD_RESPONSE
-    finally:
-        writer.close()

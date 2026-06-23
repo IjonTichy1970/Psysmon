@@ -16,11 +16,16 @@ from __future__ import annotations
 import asyncio
 import errno
 import socket
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Protocol
 
-from psysmon.config.model import Node
+import dns.asyncquery
+import dns.exception
+import dns.message
+
+from psysmon.config.model import DEFAULT_PORT, Node
 from psysmon.status import Status
 
 DEFAULT_TIMEOUT_S = 10.0
@@ -91,3 +96,56 @@ async def perform(checker: Checker, node: Node, ctx: CheckContext) -> int:
         return Status.NO_DNS
     except OSError as exc:
         return map_oserror(exc)
+
+
+def effective_port(node: Node) -> int | None:
+    """The node's port, falling back to the check type's default — the single owner of that
+    fallback (the parser already assigns it, but hand-built nodes may not)."""
+    return node.port or DEFAULT_PORT.get(node.check_type)
+
+
+@asynccontextmanager
+async def open_check_connection(
+    node: Node, ctx: CheckContext, *, port: int | None = None
+) -> AsyncIterator[tuple[asyncio.StreamReader, asyncio.StreamWriter]]:
+    """Resolve + open a TCP connection for a stream check, always tearing it down cleanly.
+
+    Centralizes the resolve -> effective-port -> open_connection scaffolding shared by the
+    tcp/smtp/pop3 checks and guarantees the same teardown everywhere (``close()`` +
+    ``wait_closed()``), so the contract can't drift between checkers.
+    """
+    ip = await resolve(node, ctx)
+    use_port = port if port is not None else effective_port(node)
+    reader, writer = await open_connection(ip, use_port, ctx)
+    try:
+        yield reader, writer
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+
+async def graceful_quit(writer: asyncio.StreamWriter) -> None:
+    """Send the line-protocol ``QUIT`` both SMTP and POP3 use to end a session politely."""
+    writer.write(b"QUIT\r\n")
+    await writer.drain()
+
+
+async def dns_udp_query(
+    query: dns.message.Message, ip: str, ctx: CheckContext, *, port: int
+) -> tuple[int | None, dns.message.Message | None]:
+    """Send a DNS query over UDP with the kwargs shared by the udp and authoritative-dns checks.
+
+    Returns ``(None, response)`` on success, or ``(status_code, None)`` when the exchange fails:
+    a DNS-level timeout -> ``NO_RESPONSE``; any other ``DNSException`` (malformed reply,
+    unexpected source, ...) -> ``BAD_RESPONSE``. OS/socket errors propagate to :func:`perform`.
+    Centralizing this keeps the exception mapping in one place for both checks.
+    """
+    try:
+        response = await dns.asyncquery.udp(
+            query, ip, timeout=ctx.timeout_s, port=port, source=ctx.source_ip
+        )
+    except dns.exception.Timeout:
+        return Status.NO_RESPONSE, None
+    except dns.exception.DNSException:
+        return Status.BAD_RESPONSE, None
+    return None, response

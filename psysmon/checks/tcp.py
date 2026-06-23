@@ -15,8 +15,5 @@ from psysmon.status import Status
 
 async def check(node: Node, ctx: base.CheckContext) -> int:
     """Return ``OK`` if a TCP connection to ``node.port`` can be established."""
-    ip = await base.resolve(node, ctx)
-    _reader, writer = await base.open_connection(ip, node.port, ctx)
-    writer.close()
-    await writer.wait_closed()
-    return Status.OK
+    async with base.open_check_connection(node, ctx):
+        return Status.OK

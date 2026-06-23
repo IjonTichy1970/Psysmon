@@ -28,14 +28,14 @@ NodeStates = list[tuple[Node, NodeState]]
 # Palette sampled from the logo: navy background, teal glow, logo green/yellow, alert red.
 _CSS = """
 :root {
-  --bg:#202F5A; --panel:#28375E; --border:#3A4D7A; --text:#E6ECF7; --muted:#93A4C4;
-  --glow:#2D8099; --green:#4CD137; --yellow:#F4D03F; --down:#E84118;
+  --bg:#15254A; --panel:#1F3158; --border:#2E4470; --text:#E6ECF7; --muted:#93A4C4;
+  --glow:#1D708C; --green:#4CD137; --yellow:#F4D03F; --down:#E84118;
 }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--text);
   font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
 .header { display:flex; align-items:center; gap:22px; padding:18px 26px;
-  background:linear-gradient(180deg,#243562,#1B2A4F); border-bottom:2px solid var(--border); }
+  background:linear-gradient(180deg,#1C2E58,#101D3C); border-bottom:2px solid var(--border); }
 .header .glow { display:grid; place-items:center; border-radius:14px;
   background:radial-gradient(circle at center, var(--glow) 0%, transparent 68%); }
 .header img.logo { height:104px; width:104px; image-rendering:pixelated; display:block; }
@@ -50,7 +50,7 @@ body { margin:0; background:var(--bg); color:var(--text);
 table { width:100%; border-collapse:collapse; background:var(--panel);
   border:1px solid var(--border); border-radius:10px; overflow:hidden; }
 th { text-align:left; font-size:12px; text-transform:uppercase; letter-spacing:.6px;
-  color:var(--muted); padding:11px 14px; background:#23335C;
+  color:var(--muted); padding:11px 14px; background:#1A2C54;
   border-bottom:1px solid var(--border); }
 td { padding:10px 14px; border-bottom:1px solid var(--border); font-size:14px; }
 tr:last-child td { border-bottom:none; }

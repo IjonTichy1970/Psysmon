@@ -70,4 +70,17 @@ All notable changes to this project are documented here. The format is based on
   ([#30](https://github.com/IjonTichy1970/Psysmon/issues/30),
   [#31](https://github.com/IjonTichy1970/Psysmon/issues/31)).
 
+### Security
+- The status-file writer no longer follows a symlink at a predictable temp path: the temp file
+  is created with an unguessable name via `tempfile.mkstemp` (`O_CREAT | O_EXCL`, plus
+  `O_NOFOLLOW` where the platform defines it) in the target directory, and the pre-rename
+  `chmod` of the target is restricted to Windows. This closes a symlink race that let a local
+  user with write access to a world-/group-writable status directory redirect the privileged
+  writer onto an arbitrary root-owned file ([#28](https://github.com/IjonTichy1970/Psysmon/issues/28)).
+- ICMP echo replies are now accepted only from the address that was actually pinged, and the
+  per-probe identifier/sequence is seeded from a per-process random value. Previously any host
+  emitting a reply with a matching, predictable id/sequence on the shared raw socket could forge
+  a host-is-up result — masking an outage and, because ping nodes gate their dependents,
+  silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
+
 [Unreleased]: https://github.com/IjonTichy1970/Psysmon/commits/main

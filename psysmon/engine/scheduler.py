@@ -79,6 +79,7 @@ class _Scheduled:
     next_due: float = 0.0
     in_flight: bool = False
     checked: bool = False  # has completed at least one (non-discarded) check
+    alive: bool = True  # cleared by reload(); a stale in-flight check on a dead node is dropped
 
 
 class Scheduler:
@@ -233,6 +234,8 @@ class Scheduler:
             else:
                 async with self._sem:
                     code = await self._runner(node, self._ctx)
+            if not sched.alive:
+                return  # config was reloaded mid-check; this node's state is now orphaned
             if not self._eligible(sched):
                 return  # gate fell while we ran; discard the stale result
             sched.state.suppressed = False
@@ -283,6 +286,11 @@ class Scheduler:
         previous = {
             (s.node.hostname, s.node.check_type, s.node.port): s for s in self._scheduled
         }
+        # Orphan the outgoing scheduled objects: any check still in flight against one of them
+        # completes into _run_check's ``not sched.alive`` guard and is discarded rather than
+        # paging or mutating state that has already been carried onto the new objects.
+        for old in self._scheduled:
+            old.alive = False
         self.warnings = []
         self._scheduled = self._flatten(roots)
         seen: set[tuple[str, CheckType, int]] = set()

@@ -317,6 +317,33 @@ async def test_stale_result_discarded_when_gate_falls():
     assert state_of(sched, "c").lastcheck == Status.OK
 
 
+async def test_reload_discards_inflight_result_and_does_not_page():
+    # A check in flight when SIGHUP reload swaps the scheduled set is orphaned: it must NOT
+    # page or mutate the carried-over state, else it pages against dead state and the fresh
+    # node re-pages the same outage (issue #27).
+    clock = ManualClock()
+    gate = asyncio.Event()
+
+    class HangRoot(ScriptedRunner):
+        async def __call__(self, node, ctx):
+            self.calls[node.hostname] += 1
+            await gate.wait()
+            return Status.UNPINGABLE  # would cross threshold and page if applied
+
+    runner = HangRoot()
+    sched, notifier = make([node("r", max_down=1)], runner, clock)
+
+    await sched.tick()  # dispatch r; it blocks on the gate, still in flight
+    await asyncio.sleep(0.02)
+    sched.reload([node("r", max_down=1)])  # SIGHUP-equivalent: rebuild while the check runs
+    gate.set()
+    await sched.drain()  # the orphaned check completes here
+
+    assert notifier.count(PageIntent.DOWN) == 0  # the stale down result did not page
+    assert state_of(sched, "r").lastcheck == Status.OK  # fresh carried state, not clobbered
+    assert state_of(sched, "r").downct == 0
+
+
 # --- run() smoke ----------------------------------------------------------------------
 
 async def test_run_loop_smoke():

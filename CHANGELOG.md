@@ -14,5 +14,18 @@ All notable changes to this project are documented here. The format is based on
 - Status-code definitions and display mappings ported from the original `lib.c`.
 - Core data model (`Node`, `NodeState`) ported from the original `struct hostinfo`.
 - Licensed under GPL-2.0-or-later (continuing the original sysmon's GNU GPL licensing).
+- Runtime settings with **CLI > config-file > defaults** precedence: a `Settings` model and
+  command-line flags for the values that were hardcoded in the original (outbound source IP,
+  alert/status hostname, SMTP settings, status path/format, intervals, concurrency, thresholds,
+  DNS-cache timers). Unset CLI flags fall through to the config file, then to defaults.
+- Legacy `sysmon.conf` parser: builds the dependency tree (`{ }` nesting), honors the
+  position-dependent `config numfailures`, parses all in-scope check types, warns-and-skips
+  dropped types, and surfaces `config` globals as settings overrides. DNS is resolved at run
+  time, not parse time, so unresolvable hosts are no longer silently dropped. Plus config
+  format auto-detection (legacy today; reserved for a future modern format).
+- Per-node up/down state machine reproducing the original's failure-counting and paging
+  logic: threshold-based page-once, recovery notification, error-change handling, a NO_DNS
+  state that records the outage without paging, and a re-page timer — all pure and
+  exhaustively unit-tested.
 
 [Unreleased]: https://github.com/IjonTichy1970/Sysmon/commits/main

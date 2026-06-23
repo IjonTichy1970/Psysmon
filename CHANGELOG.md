@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-23 — initial release
+
 ### Added
 - Initial project scaffold: package layout, packaging (`pyproject.toml`), CI, and the
   monitoring-engine architecture (config parser, async scheduler, checks, notifier, output).
@@ -98,4 +100,5 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/commits/main
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/IjonTichy1970/Psysmon/releases/tag/v0.1.0

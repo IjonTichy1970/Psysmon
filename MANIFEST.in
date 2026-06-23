@@ -1,0 +1,7 @@
+# Ship the user-facing docs and license in the source distribution. README is already pulled in
+# via pyproject's `readme =`, and setuptools includes LICENSE by default, but list them here too
+# so the sdist is self-contained and explicit.
+include README.md
+include INSTALL.md
+include CHANGELOG.md
+include LICENSE

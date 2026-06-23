@@ -25,12 +25,14 @@ env/
 .coverage.*
 htmlcov/
 
-# Editors / OS
+# Editors / OS / local tooling
 .idea/
 .vscode/
 *.swp
 .DS_Store
 Thumbs.db
+# Per-developer Claude Code config + workflow skills (not shared in the repo)
+.claude/
 
 # Local runtime artifacts
 *.log

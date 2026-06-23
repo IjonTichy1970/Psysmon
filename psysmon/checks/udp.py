@@ -8,8 +8,6 @@ in :mod:`psysmon.checks.dns`; this module covers the generic legacy ``udp`` type
 
 from __future__ import annotations
 
-import dns.asyncquery
-import dns.exception
 import dns.message
 import dns.rdatatype
 
@@ -22,19 +20,5 @@ async def check(node: Node, ctx: base.CheckContext) -> int:
     """Send a UDP DNS query; any reply means the server is reachable (``OK``)."""
     ip = await base.resolve(node, ctx)
     query = dns.message.make_query(node.hostname or ".", dns.rdatatype.A)
-    try:
-        await dns.asyncquery.udp(
-            query,
-            ip,
-            timeout=ctx.timeout_s,
-            port=node.port,
-            source=ctx.source_ip,
-        )
-    except dns.exception.Timeout:
-        return Status.NO_RESPONSE
-    except dns.exception.DNSException:
-        # A reachable-but-misbehaving server (malformed wire data, reply from an unexpected
-        # source, etc.) raises a non-Timeout DNSException; surface it as a concrete down code
-        # rather than letting it escape uncaught and leave the node with no verdict.
-        return Status.BAD_RESPONSE
-    return Status.OK
+    code, _response = await base.dns_udp_query(query, ip, ctx, port=node.port)
+    return code if code is not None else Status.OK

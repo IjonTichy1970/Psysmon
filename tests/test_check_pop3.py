@@ -105,6 +105,9 @@ async def test_default_port_used(check_ctx, monkeypatch):
             def close(self):
                 pass
 
+            async def wait_closed(self):
+                pass
+
         return _Reader(), _Writer()
 
     monkeypatch.setattr(base, "open_connection", fake_open_connection)

@@ -17,8 +17,6 @@ DNS resolution of the server host and OS/socket errors propagate to :func:`base.
 
 from __future__ import annotations
 
-import dns.asyncquery
-import dns.exception
 import dns.flags
 import dns.message
 import dns.rcode
@@ -36,22 +34,9 @@ async def check(node: Node, ctx: base.CheckContext) -> int:
     q = dns.message.make_query(node.username, dns.rdatatype.A)
     q.flags &= ~dns.flags.RD  # non-recursive: the server must answer authoritatively
 
-    try:
-        response = await dns.asyncquery.udp(
-            q,
-            ip,
-            timeout=ctx.timeout_s,
-            port=node.port,
-            source=ctx.source_ip,
-        )
-    except dns.exception.Timeout:
-        return Status.NO_RESPONSE
-    except dns.exception.DNSException:
-        # Any other DNS-level failure (malformed/garbled wire data, a reply from an
-        # unexpected source, etc.) is a reachable-but-bad server — report BAD_RESPONSE
-        # instead of letting it escape uncaught and produce no verdict on every tick.
-        return Status.BAD_RESPONSE
-
+    code, response = await base.dns_udp_query(q, ip, ctx, port=node.port)
+    if code is not None:
+        return code
     if response.rcode() != dns.rcode.NOERROR:
         return Status.BAD_RESPONSE
     if len(response.answer) == 0:

@@ -195,6 +195,19 @@ def test_stray_brace_on_service_line_does_not_pollute_contact():
     assert any("cannot have children" in w for w in res.warnings)
 
 
+def test_stray_top_level_brace_does_not_truncate_file():
+    # A misplaced top-level '}' must NOT silently terminate parsing of the rest of the file;
+    # it is warned and skipped so trailing stanzas still parse (#42).
+    text = (
+        "a.net ping a.net noc@x\n"
+        "}\n"                          # stray close brace at the root
+        "b.net ping b.net noc@x\n"     # must still be parsed, not dropped
+    )
+    res = parse(text)
+    assert [r.hostname for r in res.roots] == ["a.net", "b.net"]
+    assert any("unexpected '}'" in w for w in res.warnings)
+
+
 def test_excessive_nesting_raises_clean_parse_error():
     # Nesting past the cap raises ParseError (a ValueError), not an uncaught RecursionError (#36).
     depth = legacy._MAX_NESTING_DEPTH + 5

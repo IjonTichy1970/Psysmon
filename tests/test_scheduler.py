@@ -250,21 +250,34 @@ async def test_multiple_roots_independent():
 # --- concurrency / robustness ---------------------------------------------------------
 
 
-async def test_slow_inflight_node_does_not_busy_spin_next_delay():
-    # Regression: a slow check whose next_due is already in the past must not peg _next_delay
-    # at 0 (which would busy-spin run()). In-flight nodes are excluded from the wake-time calc.
+def test_nonpositive_interval_is_floored():
+    # A non-positive check interval is floored to a positive minimum: a 0 interval would re-push
+    # a suppressed node at `now` and spin tick() forever (the heap loop never awaits). Guarding
+    # the floor here keeps that re-push strictly in the future.
+    sched, _ = make([node("p", CheckType.PING)], ScriptedRunner(), ManualClock(), interval_s=0)
+    assert sched._scheduled[0].interval > 0
+
+
+async def test_inflight_node_excluded_from_next_delay():
+    # A dispatched (in-flight) node leaves the scheduling heap, so it can't peg _next_delay to 0
+    # and busy-spin run() while a slow check runs; only waiting nodes count toward the next wake.
+    # Once it completes and is re-queued overdue, _next_delay drops to 0 so it dispatches promptly.
     clock = ManualClock()
-    n = node("s", CheckType.TCP)
-    sched, _ = make([n], ScriptedRunner(), clock, interval_s=10.0)
+    gate = asyncio.Event()
 
-    s0 = next(s for s in sched._scheduled if s.node.hostname == "s")
-    s0.in_flight = True
-    s0.next_due = -100.0  # overdue, but in flight -> must be ignored by _next_delay
+    class Hang(ScriptedRunner):
+        async def __call__(self, node, ctx):
+            self.calls[node.hostname] += 1
+            await gate.wait()
+            return Status.OK
+
+    sched, _ = make([node("s", CheckType.TCP)], Hang(), clock, interval_s=10.0)
+    await sched.tick()  # dispatch "s"; now in flight and off the heap, blocked on the gate
     clock.advance(50)
-    # With the node excluded, no actionable node remains -> bounded idle poll, not 0.
-    assert sched._next_delay() > 0.0
+    assert sched._next_delay() > 0.0  # nothing waiting -> bounded idle poll, not a 0-spin
 
-    s0.in_flight = False  # once it completes, the overdue node drives an immediate wake
+    gate.set()
+    await sched.drain()  # "s" completes, re-queued at next_due=10 (overdue now at t=50)
     assert sched._next_delay() == 0.0
 
 async def test_hung_check_does_not_stall_others():
@@ -392,3 +405,59 @@ async def test_run_loop_smoke():
     sched.stop()
     await asyncio.wait_for(task, timeout=1.0)
     assert runner.calls["r"] >= 1
+
+
+# --- concurrency cap (max_concurrency) ------------------------------------------------
+
+
+class _ConcurrencyRunner(ScriptedRunner):
+    """Tracks how many checks are inside the runner at once; blocks until released."""
+
+    def __init__(self):
+        super().__init__()
+        self.current = 0
+        self.peak = 0
+        self.release = asyncio.Event()
+
+    async def __call__(self, node, ctx):
+        self.calls[node.hostname] += 1
+        self.current += 1
+        self.peak = max(self.peak, self.current)
+        await self.release.wait()
+        self.current -= 1
+        return Status.OK
+
+
+async def test_semaphore_bounds_concurrent_checks():
+    # max_concurrency caps how many non-ping checks run at once. With cap=2 and 4 eligible
+    # nodes, never more than 2 are inside the check simultaneously (regression guard: deleting
+    # the `async with self._sem` would let all 4 in).
+    clock = ManualClock()
+    runner = _ConcurrencyRunner()
+    nodes = [node(h, CheckType.TCP) for h in ("a", "b", "c", "d")]
+    sched, _ = make(nodes, runner, clock, max_concurrency=2)
+
+    await sched.tick()         # all 4 due + eligible -> dispatched
+    await asyncio.sleep(0.02)  # the 2 the semaphore admits enter the check; the others block
+    assert runner.current == 2 and runner.peak == 2
+
+    runner.release.set()
+    await sched.drain()
+    assert runner.peak == 2                      # never exceeded the cap
+    assert sum(runner.calls.values()) == 4       # all four ran, eventually
+
+
+async def test_ping_bypasses_concurrency_cap():
+    # PING shares one raw socket and is NOT bounded by max_concurrency: all pings run at once
+    # even under cap=1 (regression guard: routing ping through the semaphore would serialize it).
+    clock = ManualClock()
+    runner = _ConcurrencyRunner()
+    nodes = [node(h, CheckType.PING) for h in ("p1", "p2", "p3", "p4")]
+    sched, _ = make(nodes, runner, clock, max_concurrency=1)
+
+    await sched.tick()
+    await asyncio.sleep(0.02)
+    assert runner.current == 4 and runner.peak == 4  # unbounded despite cap=1
+
+    runner.release.set()
+    await sched.drain()

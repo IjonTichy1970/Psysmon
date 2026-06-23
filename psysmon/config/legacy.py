@@ -150,7 +150,12 @@ class _Parser:
             if tokens[0][0] in ";#":
                 continue
             if tokens[0] == "}":
-                return siblings
+                if depth > 0:
+                    return siblings
+                # A '}' with no open block would otherwise end parsing of the ENTIRE rest of the
+                # file silently; warn and skip it so trailing stanzas still parse.
+                self._warn(lineno, "unexpected '}' at top level; ignoring")
+                continue
 
             # Split off a trailing block-open BEFORE the 7-field cap or any field parsing, so the
             # `{` can't be dropped by truncation (detaching a subtree + unbalancing the rest of

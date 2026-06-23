@@ -9,23 +9,17 @@ banner is a bad response. Connection-level failures (refused/unreachable/timeout
 from __future__ import annotations
 
 from psysmon.checks import base
-from psysmon.config.model import DEFAULT_PORT, CheckType, Node
+from psysmon.config.model import Node
 from psysmon.status import Status
 
 
 async def check(node: Node, ctx: base.CheckContext) -> int:
     """Resolve, connect, and validate the SMTP greeting banner."""
-    ip = await base.resolve(node, ctx)
-    port = node.port or DEFAULT_PORT[CheckType.SMTP]
-    reader, writer = await base.open_connection(ip, port, ctx)
-    try:
+    async with base.open_check_connection(node, ctx) as (reader, writer):
         banner = await reader.readline()
         if banner.startswith(b"220"):
-            writer.write(b"QUIT\r\n")
-            await writer.drain()
+            await base.graceful_quit(writer)
             return Status.OK
         if banner == b"":
             return Status.NO_RESPONSE
         return Status.BAD_RESPONSE
-    finally:
-        writer.close()

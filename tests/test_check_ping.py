@@ -140,6 +140,7 @@ class _FakeSocket:
         self.closed = False
         self.reply_for_sent = True  # if True, the next packet is "answered"
         self.reply_src = None  # override the reply's source addr (default: from the target)
+        self.mangle = False  # if True, reply with a bumped (ident,seq) that won't match
         self._inbox: list[tuple[bytes, tuple]] = []
 
     def sendto(self, packet, addr):
@@ -149,7 +150,11 @@ class _FakeSocket:
             # the kernel would hand it to the raw socket — from the target's address, unless a
             # source override is set (to exercise the reply-source-verification path).
             src = self.reply_src if self.reply_src is not None else addr
-            self._inbox.append((_wrap_ipv4(_to_echo_reply(packet)), src))
+            replied_to = packet
+            if self.mangle:
+                ident, seq = struct.unpack("!HH", packet[4:8])
+                replied_to = ping.build_echo_request((ident + 1) & 0xFFFF, (seq + 1) & 0xFFFF)
+            self._inbox.append((_wrap_ipv4(_to_echo_reply(replied_to)), src))
         return len(packet)
 
     def recvfrom(self, _bufsize):
@@ -210,26 +215,20 @@ async def test_check_unpingable_when_no_reply():
     assert not svc._pending  # all futures cleaned up after timeout
 
 
-async def test_check_wrong_reply_does_not_resolve():
-    # A reply for a *different* (ident, seq) must not satisfy the waiter -> UNPINGABLE.
+async def test_check_mismatched_reply_ignored_via_real_demux():
+    # A reply whose (ident, seq) doesn't match the in-flight probe must NOT satisfy the waiter.
+    # This drives the REAL _on_readable demux (recvfrom -> parse_echo_reply -> _pending lookup),
+    # not a stub, so the mismatch branch is genuinely exercised -> UNPINGABLE (#44).
     svc = ping.PingService()
     sock = _FakeSocket()
+    sock.mangle = True  # the echoed reply carries a bumped (ident,seq) that won't match
     _install_fake_socket(svc, sock)
-
-    # Replace the demux callback with one that feeds a mismatched reply.
-    def feed_wrong(_sock):
-        wrong = _wrap_ipv4(_to_echo_reply(ping.build_echo_request(0xDEAD, 0xBEEF, b"x")))
-        parsed = ping.parse_echo_reply(wrong)
-        entry = svc._pending.get(parsed)  # 0xDEAD/0xBEEF is never a real pending key here
-        if entry is not None and not entry[0].done():
-            entry[0].set_result(None)
-
-    svc._on_readable = feed_wrong  # type: ignore[method-assign]
 
     ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.15)
     result = await svc.check(node(), ctx)
 
     assert result == Status.UNPINGABLE
+    assert not svc._pending  # the unmatched waiters were all cleaned up
 
 
 async def test_check_reply_from_wrong_source_is_rejected():

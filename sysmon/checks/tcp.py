@@ -1,15 +1,22 @@
-"""TCP connect-reachability check (Milestone 6).
+"""TCP connect-reachability check.
 
-Opens a TCP connection to ``node.port`` and closes it; success = connected. Maps
-refused/unreachable/timeout to the corresponding ``Status`` codes via :mod:`sysmon.checks.base`.
-
-Not yet implemented.
+A bare TCP connect: resolve the host, open a connection to ``node.port``, close it cleanly,
+and report :data:`~sysmon.status.Status.OK`. There is no protocol exchange — the connect
+either succeeds or raises a socket error, which :func:`sysmon.checks.base.perform` maps to the
+appropriate failure code (refused / unreachable / timed out).
 """
 
 from __future__ import annotations
 
+from sysmon.checks import base
 from sysmon.config.model import Node
+from sysmon.status import Status
 
 
-async def check(node: Node, deadline: float) -> int:
-    raise NotImplementedError("Milestone 6: tcp check")
+async def check(node: Node, ctx: base.CheckContext) -> int:
+    """Return ``OK`` if a TCP connection to ``node.port`` can be established."""
+    ip = await base.resolve(node, ctx)
+    _reader, writer = await base.open_connection(ip, node.port, ctx)
+    writer.close()
+    await writer.wait_closed()
+    return Status.OK

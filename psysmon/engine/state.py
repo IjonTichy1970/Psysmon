@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from psysmon.config.model import NodeState
-from psysmon.status import Status
+from psysmon.status import Status, is_up
 
 
 class PageIntent(Enum):
@@ -64,8 +64,8 @@ def apply_result(state: NodeState, result: int, now_wall: float) -> Transition:
             state.deathtime = now_wall
         state.lastcheck = Status.NO_DNS
 
-    elif result == Status.OK:
-        if state.lastcheck != Status.OK:  # came up
+    elif is_up(result):
+        if not is_up(state.lastcheck):  # came up
             was_contacted = state.contacted
             state.lastcheck = Status.OK
             state.last_up = now_wall

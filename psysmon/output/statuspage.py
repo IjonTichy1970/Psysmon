@@ -22,7 +22,7 @@ import time
 from psysmon import __version__, timefmt
 from psysmon.config.model import Node, NodeState, type_to_name
 from psysmon.config.settings import Settings
-from psysmon.status import Status, errtostr
+from psysmon.status import errtostr, is_up
 
 NodeStates = list[tuple[Node, NodeState]]
 
@@ -76,7 +76,7 @@ def _visible(node_states: NodeStates, show_up_also: bool) -> NodeStates:
     for node, state in node_states:
         if state.suppressed:
             continue
-        if state.lastcheck == Status.OK and not show_up_also:
+        if is_up(state.lastcheck) and not show_up_also:
             continue
         out.append((node, state))
     return out
@@ -111,7 +111,7 @@ def render_html(
     now_wall: float,
 ) -> str:
     rows = _visible(node_states, show_up_also)
-    down = sum(1 for _, s in rows if s.lastcheck != Status.OK)
+    down = sum(1 for _, s in rows if not is_up(s.lastcheck))
 
     if rows:
         body = "\n".join(_html_row(node, state, now_wall) for node, state in rows)
@@ -151,7 +151,7 @@ def render_html(
 
 
 def _html_row(node: Node, state: NodeState, now_wall: float) -> str:
-    up = state.lastcheck == Status.OK
+    up = is_up(state.lastcheck)
     badge = "up" if up else "down"
     cells = [
         f'<td class="host">{_esc(node.hostname)}</td>',

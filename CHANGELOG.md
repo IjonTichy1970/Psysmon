@@ -35,5 +35,9 @@ All notable changes to this project are documented here. The format is based on
   verification on by default).
 - ICMP ping via a shared raw socket with concurrent reply demultiplexing, plus a privilege-
   drop helper so the daemon can shed root after opening the raw socket.
+- Async monitoring scheduler that ties checks, the state machine, and the DNS cache into a
+  concurrent per-host loop: bounded concurrency, dependency suppression (a host behind a down
+  parent isn't checked and its state freezes), stale-result discarding when a parent fails
+  mid-check, and threshold/recovery/re-page notification.
 
 [Unreleased]: https://github.com/IjonTichy1970/Sysmon/commits/main

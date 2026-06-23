@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 
+import dns.exception
 import dns.flags
 import dns.message
 import dns.rcode
@@ -130,6 +131,17 @@ async def test_dns_timeout_is_no_response():
 async def test_dns_no_dns_via_perform(check_ctx):
     ctx = base.CheckContext(resolver=FakeResolver(default=None), timeout_s=2.0)
     assert await base.perform(dns_check.check, node(53), ctx) == Status.NO_DNS
+
+
+async def test_dns_bad_response_on_non_timeout_dns_exception(monkeypatch):
+    # A non-Timeout DNSException (malformed wire data, unexpected source, ...) must map to
+    # BAD_RESPONSE rather than escape uncaught and produce no verdict every tick (issue #26).
+    async def boom(*args, **kwargs):
+        raise dns.exception.FormError("malformed response")
+
+    monkeypatch.setattr("dns.asyncquery.udp", boom)
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await dns_check.check(node(53), ctx) == Status.BAD_RESPONSE
 
 
 async def test_dns_request_uses_non_recursive_query(check_ctx, dns_server):

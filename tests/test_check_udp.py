@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 
+import dns.exception
 import dns.message
 import dns.rdata
 import dns.rdataclass
@@ -92,3 +93,14 @@ async def test_udp_no_response(free_port):
 async def test_udp_no_dns_via_perform():
     ctx = base.CheckContext(resolver=FakeResolver(default=None), timeout_s=2.0)
     assert await base.perform(udp.check, node(), ctx) == Status.NO_DNS
+
+
+async def test_udp_bad_response_on_non_timeout_dns_exception(monkeypatch):
+    # A reachable-but-misbehaving server raises a non-Timeout DNSException (e.g. a malformed
+    # reply); it must map to BAD_RESPONSE, not escape uncaught and leave no verdict (issue #26).
+    async def boom(*args, **kwargs):
+        raise dns.exception.FormError("malformed response")
+
+    monkeypatch.setattr("dns.asyncquery.udp", boom)
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await udp.check(node(), ctx) == Status.BAD_RESPONSE

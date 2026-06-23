@@ -27,5 +27,13 @@ All notable changes to this project are documented here. The format is based on
   logic: threshold-based page-once, recovery notification, error-change handling, a NO_DNS
   state that records the outage without paging, and a re-page timer — all pure and
   exhaustively unit-tested.
+- Check engine foundation: a common async check contract (resolve + connect + a timeout/
+  error-mapping wrapper) and an in-process DNS cache with TTL expiry, single-flight, and
+  hit/miss stats. DNS is resolved at check time so transient failures self-heal.
+- Service checks: TCP connect, UDP/DNS reachability, SMTP banner, POP3 authentication,
+  authoritative DNS (via dnspython), and HTTP/HTTPS content (via httpx, certificate
+  verification on by default).
+- ICMP ping via a shared raw socket with concurrent reply demultiplexing, plus a privilege-
+  drop helper so the daemon can shed root after opening the raw socket.
 
 [Unreleased]: https://github.com/IjonTichy1970/Sysmon/commits/main

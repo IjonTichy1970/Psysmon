@@ -78,14 +78,22 @@ def test_build_echo_request_header_fields():
 def test_build_parse_round_trip():
     req = ping.build_echo_request(0x1111, 0x2222, b"payload")
     reply = _wrap_ipv4(_to_echo_reply(req))
-    assert ping.parse_echo_reply(reply) == (0x1111, 0x2222)
+    # parse returns (ident, seq, payload) — the payload is needed to verify the echoed nonce.
+    assert ping.parse_echo_reply(reply) == (0x1111, 0x2222, b"payload")
 
 
 def test_build_parse_round_trip_with_options_header():
     # IPv4 header with options (IHL > 5) must be skipped via the IHL nibble.
     req = ping.build_echo_request(0x0042, 0x0099, b"x")
     reply = _wrap_ipv4(_to_echo_reply(req), ihl_words=6)
-    assert ping.parse_echo_reply(reply) == (0x0042, 0x0099)
+    assert ping.parse_echo_reply(reply) == (0x0042, 0x0099, b"x")
+
+
+def test_parse_returns_empty_payload_for_header_only_reply():
+    # A header-only echo reply (no data) parses with an empty payload — the payload slice is
+    # well-defined at the edge — which the demux then rejects (b"" cannot echo the nonce).
+    reply = _wrap_ipv4(_to_echo_reply(ping.build_echo_request(0x7777, 0x0003, b"")))
+    assert ping.parse_echo_reply(reply) == (0x7777, 0x0003, b"")
 
 
 def test_parse_rejects_non_echo_reply():
@@ -141,6 +149,9 @@ class _FakeSocket:
         self.reply_for_sent = True  # if True, the next packet is "answered"
         self.reply_src = None  # override the reply's source addr (default: from the target)
         self.mangle = False  # if True, reply with a bumped (ident,seq) that won't match
+        self.mangle_payload = False  # if True, reply with the right (ident,seq) but a wrong nonce
+        self.strip_payload = False  # if True, reply with the right (ident,seq) but NO payload
+        self.pad = b""  # if set, echo the nonce followed by these trailing bytes (padding)
         self._inbox: list[tuple[bytes, tuple]] = []
 
     def sendto(self, packet, addr):
@@ -148,12 +159,26 @@ class _FakeSocket:
         if self.reply_for_sent:
             # Echo it back as a reply (flip type 8 -> 0), wrapped in an IPv4 header, exactly as
             # the kernel would hand it to the raw socket — from the target's address, unless a
-            # source override is set (to exercise the reply-source-verification path).
+            # source override is set (a different source must STILL be accepted: the nonce, not
+            # the address, authenticates the reply).
             src = self.reply_src if self.reply_src is not None else addr
             replied_to = packet
             if self.mangle:
                 ident, seq = struct.unpack("!HH", packet[4:8])
                 replied_to = ping.build_echo_request((ident + 1) & 0xFFFF, (seq + 1) & 0xFFFF)
+            elif self.mangle_payload:
+                # Right (ident,seq), but a payload that does not echo our per-probe nonce.
+                ident, seq = struct.unpack("!HH", packet[4:8])
+                replied_to = ping.build_echo_request(ident, seq, b"not-the-nonce-at-all")
+            elif self.strip_payload:
+                # Right (ident,seq), but a header-only reply that echoes no payload at all.
+                ident, seq = struct.unpack("!HH", packet[4:8])
+                replied_to = ping.build_echo_request(ident, seq, b"")
+            elif self.pad:
+                # Echo our nonce verbatim plus trailing bytes (a padding responder / middlebox).
+                ident, seq = struct.unpack("!HH", packet[4:8])
+                sent_payload = packet[ping._ECHO_HEADER.size :]
+                replied_to = ping.build_echo_request(ident, seq, sent_payload + self.pad)
             self._inbox.append((_wrap_ipv4(_to_echo_reply(replied_to)), src))
         return len(packet)
 
@@ -231,21 +256,97 @@ async def test_check_mismatched_reply_ignored_via_real_demux():
     assert not svc._pending  # the unmatched waiters were all cleaned up
 
 
-async def test_check_reply_from_wrong_source_is_rejected():
-    # A well-formed echo reply matching the in-flight (ident, seq) but arriving from a DIFFERENT
-    # source IP than the pinged target must NOT satisfy the waiter — this is the source-address
-    # verification that defeats a host forging a reply for another's probe (issue #29). Driven
-    # through the REAL _on_readable demux (not a mock).
+async def test_check_reply_from_other_source_is_accepted():
+    # A well-formed echo reply that echoes our probe's nonce must satisfy the waiter EVEN IF it
+    # arrives from a different source IP than the pinged target. Routers commonly source an echo
+    # reply from their egress interface, and asymmetric routing / NAT do the same; the old strict
+    # source-IP match (#29) rejected these and read healthy gateways as UNPINGABLE. The per-probe
+    # nonce — not the source address — is what authenticates a reply now. Driven through the REAL
+    # _on_readable demux (not a mock).
     svc = ping.PingService()
     sock = _FakeSocket()
-    sock.reply_src = ("203.0.113.99", 0)  # attacker address, not the target we pinged
+    sock.reply_src = ("203.0.113.50", 0)  # a different source than the target (cf. the report)
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(default="198.51.100.10"), timeout_s=2.0)
+    result = await svc.check(node(), ctx)
+
+    assert result == Status.OK  # different source, but the nonce matched -> up
+    assert len(sock.sent) == 1  # answered on the first attempt, no retries
+    assert not svc._pending  # waiters cleaned up
+
+
+async def test_check_reply_with_wrong_nonce_is_rejected():
+    # A reply matching the in-flight (ident, seq) but NOT echoing our per-probe nonce must be
+    # ignored — this is the anti-forgery check that replaced the strict source-IP match (#29).
+    # An off-path host that guessed the (randomized) id/seq still cannot produce the right nonce.
+    # Driven through the REAL _on_readable demux (not a mock).
+    svc = ping.PingService()
+    sock = _FakeSocket()
+    sock.mangle_payload = True  # right (ident,seq), wrong payload
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.15)
+    result = await svc.check(node(), ctx)
+
+    assert result == Status.UNPINGABLE  # wrong-nonce reply ignored -> probe times out
+    assert len(sock.sent) == 1 + ping._RETRIES  # every attempt was tried
+    assert not svc._pending  # waiters cleaned up
+
+
+async def test_check_reply_from_other_source_with_wrong_nonce_is_rejected():
+    # The invariant the whole fix rests on: the source address is irrelevant, the NONCE is the
+    # gate. A reply from a FOREIGN source AND with a wrong nonce — the exact off-path forgery the
+    # nonce defends against (an attacker who guessed (ident,seq) but cannot know the nonce) — must
+    # be rejected. This pins BOTH halves at once: dropping the source check (so a router-sourced
+    # reply is accepted, #53) did NOT weaken the nonce gate. A regression that re-coupled source
+    # handling to acceptance would fail here even though the two single-axis tests still pass.
+    svc = ping.PingService()
+    sock = _FakeSocket()
+    sock.reply_src = ("203.0.113.99", 0)  # foreign source ...
+    sock.mangle_payload = True  # ... and a payload that does not echo our nonce
     _install_fake_socket(svc, sock)
 
     ctx = base.CheckContext(resolver=FakeResolver(default="198.51.100.5"), timeout_s=0.15)
     result = await svc.check(node(), ctx)
 
-    assert result == Status.UNPINGABLE  # wrong-source reply ignored -> probe times out
-    assert not svc._pending  # waiters cleaned up
+    assert result == Status.UNPINGABLE
+    assert len(sock.sent) == 1 + ping._RETRIES  # every attempt was tried
+    assert not svc._pending
+
+
+async def test_check_reply_with_padded_nonce_is_accepted():
+    # The demux uses payload.startswith(nonce), not ==, so a reply that echoes the nonce followed
+    # by trailing bytes (some stacks / middleboxes pad the ICMP payload) is still accepted. This
+    # locks in that deliberate prefix tolerance: a future tightening to `==` would silently break
+    # padding responders — the same false-UNPINGABLE class as #29 — and this test would catch it.
+    svc = ping.PingService()
+    sock = _FakeSocket()
+    sock.pad = b"-trailing-padding-bytes"
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=2.0)
+    result = await svc.check(node(), ctx)
+
+    assert result == Status.OK  # nonce + padding still matches the nonce prefix -> up
+    assert len(sock.sent) == 1  # answered on the first attempt
+    assert not svc._pending
+
+
+async def test_check_reply_with_empty_payload_is_rejected():
+    # A well-formed echo reply matching (ident,seq) but carrying NO payload cannot echo the nonce,
+    # so it must not resolve the waiter (b"".startswith(nonce) is False). Guards the empty-payload
+    # boundary now that the payload — not the source — is the only thing gating a match.
+    svc = ping.PingService()
+    sock = _FakeSocket()
+    sock.strip_payload = True
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.15)
+    result = await svc.check(node(), ctx)
+
+    assert result == Status.UNPINGABLE  # header-only reply ignored -> probe times out
+    assert not svc._pending
 
 
 async def test_check_resolve_failure_returns_no_dns_before_socket():

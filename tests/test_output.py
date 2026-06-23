@@ -150,10 +150,10 @@ def test_publish_cleans_up_temp_on_write_failure(tmp_path, monkeypatch):
 
     import psysmon.output.statuspage as sp
 
-    real_open = open
+    real_fdopen = os.fdopen
 
-    def exploding_open(*a, **k):
-        handle = real_open(*a, **k)
+    def exploding_fdopen(fd, *a, **k):
+        handle = real_fdopen(fd, *a, **k)
         orig_write = handle.write
 
         def boom(_s):
@@ -163,11 +163,63 @@ def test_publish_cleans_up_temp_on_write_failure(tmp_path, monkeypatch):
         handle.write = boom
         return handle
 
-    monkeypatch.setattr(sp, "open", exploding_open, raising=False)
+    monkeypatch.setattr(sp.os, "fdopen", exploding_fdopen)
     with pytest.raises(OSError):
         publish("this fails", path)
     assert not list(tmp_path.glob("*.tmp"))  # no leftover temp
     assert Path(path).read_text() == "good"  # original target untouched
+
+
+def test_publish_uses_unpredictable_temp_name(tmp_path):
+    """The temp file is not the predictable <path>.<pid>.tmp (closes the symlink-race, #28)."""
+    path = str(tmp_path / "status.html")
+    predictable = tmp_path / f"status.html.{os.getpid()}.tmp"
+
+    seen: list[str] = []
+    real_replace = os.replace
+
+    def spy_replace(src, dst):
+        seen.append(os.path.basename(src))
+        return real_replace(src, dst)
+
+    import psysmon.output.statuspage as sp
+
+    orig = sp.os.replace
+    sp.os.replace = spy_replace  # capture the temp name actually used
+    try:
+        publish("<html>x</html>", path)
+    finally:
+        sp.os.replace = orig
+
+    assert Path(path).read_text() == "<html>x</html>"
+    assert not predictable.exists()  # the old predictable name is never created
+    # The temp name carries random characters between the prefix and suffix, not just the pid.
+    assert seen and seen[0] != f"status.html.{os.getpid()}.tmp"
+    assert seen[0].startswith("status.html.") and seen[0].endswith(".tmp")
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks unsupported")
+def test_publish_does_not_follow_a_preplaced_symlink(tmp_path):
+    """mkstemp's O_EXCL + unpredictable name means a pre-placed symlink is never written through.
+
+    Simulates the attack target: a sensitive file the symlink would point at. Because the temp
+    name is unpredictable, publish() never opens the attacker's path at all; the sensitive file
+    is left untouched and the status file is written normally.
+    """
+    sensitive = tmp_path / "victim"
+    sensitive.write_text("SECRET")
+    path = str(tmp_path / "status.html")
+    # An attacker pre-creates the *old* predictable temp name as a symlink to the victim.
+    attacker_link = tmp_path / f"status.html.{os.getpid()}.tmp"
+    try:
+        os.symlink(sensitive, attacker_link)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create symlinks in this environment")
+
+    publish("<html>status</html>", path)
+
+    assert sensitive.read_text() == "SECRET"  # victim untouched: the link was never followed
+    assert Path(path).read_text() == "<html>status</html>"
 
 
 def test_render_and_publish_html(tmp_path):

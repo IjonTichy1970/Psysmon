@@ -8,6 +8,7 @@ on Windows), so it is attempted and ``pytest.skip``-ped when the OS refuses the 
 from __future__ import annotations
 
 import asyncio
+import errno
 import socket
 import struct
 
@@ -107,13 +108,22 @@ def test_parse_rejects_non_ipv4():
 
 # --- counter is monotonic, not random ----------------------------------------------------
 
-def test_counter_is_monotonic_16bit():
+def test_counter_increments_and_is_16bit():
+    # Consecutive keys step by one through the 32-bit (ident << 16 | seq) space. The starting
+    # point is randomized per process (anti-spoofing, #29), so assert the step, not the origin.
     svc = ping.PingService()
     keys = [svc._next_key() for _ in range(5)]
-    assert keys == [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]
+    values = [(ident << 16) | seq for ident, seq in keys]
+    assert all(b == (a + 1) & 0xFFFFFFFF for a, b in zip(values, values[1:], strict=False))
     for ident, seq in keys:
         assert 0 <= ident <= 0xFFFF
         assert 0 <= seq <= 0xFFFF
+
+
+def test_counter_seed_is_randomized():
+    # Two fresh services almost certainly start from different (ident, seq) bases (a fixed seed
+    # would make both start identical). Collision probability is 2**-32.
+    assert ping.PingService()._next_key() != ping.PingService()._next_key()
 
 
 # --- check() demux + retry logic (no privilege, no real raw socket) ----------------------
@@ -129,17 +139,20 @@ class _FakeSocket:
         self.sent: list[tuple[bytes, object]] = []
         self.closed = False
         self.reply_for_sent = True  # if True, the next packet is "answered"
-        self._inbox: list[bytes] = []
+        self.reply_src = None  # override the reply's source addr (default: from the target)
+        self._inbox: list[tuple[bytes, tuple]] = []
 
     def sendto(self, packet, addr):
         self.sent.append((packet, addr))
         if self.reply_for_sent:
-            # Echo it back as a reply (flip type 8 -> 0), wrapped in an IPv4 header,
-            # exactly as the kernel would hand it to the raw socket.
-            self._inbox.append(_wrap_ipv4(_to_echo_reply(packet)))
+            # Echo it back as a reply (flip type 8 -> 0), wrapped in an IPv4 header, exactly as
+            # the kernel would hand it to the raw socket — from the target's address, unless a
+            # source override is set (to exercise the reply-source-verification path).
+            src = self.reply_src if self.reply_src is not None else addr
+            self._inbox.append((_wrap_ipv4(_to_echo_reply(packet)), src))
         return len(packet)
 
-    def recv(self, _bufsize):
+    def recvfrom(self, _bufsize):
         if self._inbox:
             return self._inbox.pop(0)
         raise BlockingIOError
@@ -207,9 +220,9 @@ async def test_check_wrong_reply_does_not_resolve():
     def feed_wrong(_sock):
         wrong = _wrap_ipv4(_to_echo_reply(ping.build_echo_request(0xDEAD, 0xBEEF, b"x")))
         parsed = ping.parse_echo_reply(wrong)
-        fut = svc._pending.get(parsed)  # 0xDEAD/0xBEEF is never a real pending key here
-        if fut is not None and not fut.done():
-            fut.set_result(None)
+        entry = svc._pending.get(parsed)  # 0xDEAD/0xBEEF is never a real pending key here
+        if entry is not None and not entry[0].done():
+            entry[0].set_result(None)
 
     svc._on_readable = feed_wrong  # type: ignore[method-assign]
 
@@ -219,16 +232,51 @@ async def test_check_wrong_reply_does_not_resolve():
     assert result == Status.UNPINGABLE
 
 
-async def test_check_resolve_failure_propagates_before_socket():
-    # resolve() failure raises NoDnsError before any socket work; check never sends.
+async def test_check_reply_from_wrong_source_is_rejected():
+    # A well-formed echo reply matching the in-flight (ident, seq) but arriving from a DIFFERENT
+    # source IP than the pinged target must NOT satisfy the waiter — this is the source-address
+    # verification that defeats a host forging a reply for another's probe (issue #29). Driven
+    # through the REAL _on_readable demux (not a mock).
+    svc = ping.PingService()
+    sock = _FakeSocket()
+    sock.reply_src = ("203.0.113.99", 0)  # attacker address, not the target we pinged
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(default="198.51.100.5"), timeout_s=0.15)
+    result = await svc.check(node(), ctx)
+
+    assert result == Status.UNPINGABLE  # wrong-source reply ignored -> probe times out
+    assert not svc._pending  # waiters cleaned up
+
+
+async def test_check_resolve_failure_returns_no_dns_before_socket():
+    # resolve() failure maps to NO_DNS (not a raised exception) before any socket work, so the
+    # scheduler always gets a verdict; check never sends. (Regression: an escaping exception
+    # left ping nodes with no result and silently suppressed their whole subtree — issue #25.)
     svc = ping.PingService()
     sock = _FakeSocket()
     _install_fake_socket(svc, sock)
 
     ctx = base.CheckContext(resolver=FakeResolver(default=None), timeout_s=2.0)
-    with pytest.raises(base.NoDnsError):
-        await svc.check(node(), ctx)
+    assert await svc.check(node(), ctx) == Status.NO_DNS
     assert sock.sent == []  # nothing was sent
+
+
+async def test_check_unsendable_route_error_maps_to_status():
+    # A sendto() that fails with no-route must become a Status code (here HOST_DOWN), never an
+    # exception that escapes check() and blacks out the node's whole gated subtree (issue #25).
+    svc = ping.PingService()
+    sock = _FakeSocket()
+
+    def unreachable(packet, addr):
+        raise OSError(errno.EHOSTUNREACH, "No route to host")
+
+    sock.sendto = unreachable  # type: ignore[method-assign]
+    _install_fake_socket(svc, sock)  # wraps the raising sendto; the raise still propagates
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await svc.check(node(), ctx) == Status.HOST_DOWN
+    assert not svc._pending  # the pending future was cleaned up despite the send error
 
 
 # --- prepare() / lazy reader attach (no privilege, fake socket) --------------------------

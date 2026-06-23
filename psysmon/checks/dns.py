@@ -10,8 +10,9 @@ Classification:
 - NOERROR but no answer records -> ``NO_RESPONSE``
 - otherwise -> ``OK``
 
-A DNS-level timeout (``dns.exception.Timeout``) maps to ``NO_RESPONSE``; DNS resolution of the
-server host and OS/socket errors propagate to :func:`base.perform` for mapping.
+A DNS-level timeout (``dns.exception.Timeout``) maps to ``NO_RESPONSE`` and any other
+``dns.exception.DNSException`` (malformed reply, unexpected source, ...) to ``BAD_RESPONSE``;
+DNS resolution of the server host and OS/socket errors propagate to :func:`base.perform`.
 """
 
 from __future__ import annotations
@@ -45,6 +46,11 @@ async def check(node: Node, ctx: base.CheckContext) -> int:
         )
     except dns.exception.Timeout:
         return Status.NO_RESPONSE
+    except dns.exception.DNSException:
+        # Any other DNS-level failure (malformed/garbled wire data, a reply from an
+        # unexpected source, etc.) is a reachable-but-bad server — report BAD_RESPONSE
+        # instead of letting it escape uncaught and produce no verdict on every tick.
+        return Status.BAD_RESPONSE
 
     if response.rcode() != dns.rcode.NOERROR:
         return Status.BAD_RESPONSE

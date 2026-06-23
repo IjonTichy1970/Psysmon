@@ -52,4 +52,47 @@ All notable changes to this project are documented here. The format is based on
   (config reload that preserves live up/down state for hosts that still exist), and backgrounding
   itself unless `--no-fork`.
 
+### Fixed
+- Ping checks no longer go silent when a target can't be resolved or has no route: a failed
+  DNS resolution or send now yields a concrete status (`No DNS` / `Net Unreachable` /
+  `Host Down` / `Unpingable`) instead of an unhandled error that left the host — and, because
+  ping targets gate their dependents, its whole downstream subtree — unmonitored with no alert
+  ([#25](https://github.com/IjonTichy1970/Psysmon/issues/25)).
+- DNS and UDP/DNS checks now report a malformed or unexpected-source reply as `Bad Response`
+  rather than letting it escape and produce no verdict, so a reachable-but-misbehaving server is
+  still flagged ([#26](https://github.com/IjonTichy1970/Psysmon/issues/26)).
+- A `SIGHUP` config reload no longer races an in-flight check: a result that completes after the
+  reload is discarded instead of being applied to the just-replaced state, preventing a
+  duplicate page or a lost state change ([#27](https://github.com/IjonTichy1970/Psysmon/issues/27)).
+- The backgrounded daemon now keeps its logs: the configured syslog facility is wired to an
+  actual syslog handler, and the standard streams are redirected to `/dev/null` on detach, so
+  log output is no longer silently lost once the daemon forks
+  ([#30](https://github.com/IjonTichy1970/Psysmon/issues/30),
+  [#31](https://github.com/IjonTichy1970/Psysmon/issues/31)).
+- The legacy config parser no longer mishandles a stray `{`: a trailing brace is split off
+  before the 7-field cap and before field parsing, so an over-long stanza that opens a block no
+  longer drops the brace (which detached the subtree and silently truncated the rest of the
+  file), and a stray `{` on a service line is no longer stored as the contact or label
+  ([#32](https://github.com/IjonTichy1970/Psysmon/issues/32),
+  [#35](https://github.com/IjonTichy1970/Psysmon/issues/35)).
+- A pathologically deep config now fails with a clean configuration error instead of an uncaught
+  `RecursionError` at startup — `{` nesting is capped (default 64)
+  ([#36](https://github.com/IjonTichy1970/Psysmon/issues/36)).
+- A node whose dependency parent goes down mid-check is now marked suppressed immediately when
+  its stale result is discarded, so the status page and JSON no longer show it as a stale "up"
+  host for up to one interval ([#37](https://github.com/IjonTichy1970/Psysmon/issues/37)).
+
+### Security
+- The status-file writer no longer follows a symlink at a predictable temp path: the temp file
+  is created with an unguessable name via `tempfile.mkstemp` (`O_CREAT | O_EXCL`, plus
+  `O_NOFOLLOW` where the platform defines it) in the target directory, and the pre-rename
+  `chmod` of the target is restricted to Windows. This closes a symlink race that let a local
+  user with write access to a world-/group-writable status directory redirect the privileged
+  writer onto an arbitrary root-owned file ([#28](https://github.com/IjonTichy1970/Psysmon/issues/28)).
+- ICMP echo replies are now accepted only from the address that was actually pinged, and the
+  per-probe identifier/sequence is seeded from a per-process random value. Previously any host
+  emitting a reply with a matching, predictable id/sequence on the shared raw socket could forge
+  a host-is-up result — masking an outage and, because ping nodes gate their dependents,
+  silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
+
 [Unreleased]: https://github.com/IjonTichy1970/Psysmon/commits/main

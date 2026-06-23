@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import html
 import os
+import tempfile
 import time
 
 from psysmon import __version__, timefmt
@@ -188,20 +189,26 @@ def render_text(
 
 
 def publish(content: str, path: str) -> None:
-    """Atomically write ``content`` to ``path`` (temp file -> read-only -> rename).
+    """Atomically write ``content`` to ``path`` (unguessable temp file -> read-only -> rename).
 
-    On any failure before the rename completes the temp file is removed, so a mid-write
-    error (disk full, encoding error) never leaves a stray ``*.tmp`` behind.
+    The temp file is created with :func:`tempfile.mkstemp` in the target's own directory: an
+    unpredictable name opened ``O_CREAT | O_EXCL`` (and ``O_NOFOLLOW`` where the platform
+    defines it). This closes a predictable-temp-name / symlink-follow race for the privileged
+    writer when the status file lives in a world- or group-writable (e.g. web-served) directory:
+    an attacker can neither guess the temp name nor pre-create it as a symlink for the root
+    process to follow and overwrite. On any failure before the rename completes the temp file is
+    removed, so a mid-write error (disk full, encoding error) never leaves a stray temp behind.
     """
-    tmp = f"{path}.{os.getpid()}.tmp"
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp")
     try:
-        with open(tmp, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
         os.chmod(tmp, 0o444)
-        if os.path.exists(path):
-            try:  # clear the old read-only bit so os.replace also works on Windows
-                os.chmod(path, 0o644)
-            except OSError:
+        if os.name == "nt" and os.path.exists(path):
+            try:  # Windows refuses os.replace onto a read-only file; clear the bit first.
+                os.chmod(path, 0o644)  # POSIX rename needs no such chmod (and chmod follows
+            except OSError:            # a symlink at `path`, so we skip it off Windows).
                 pass
         os.replace(tmp, path)
     except BaseException:

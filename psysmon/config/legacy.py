@@ -17,12 +17,16 @@ Faithfully reproduces ``loadconfig.c``/``parseline``:
 * Keyword matching is prefix-based, like the original ``strncmp`` (so ``tcpfoo`` matches
   ``tcp``).
 
-Two deliberate departures from the C, both fixes:
+Deliberate departures from the C, all fixes/hardening:
 
 * DNS resolution is **deferred to runtime** — unresolvable hosts still produce a node (the C
   silently dropped them, and a ping parent dropped its already-parsed subtree).
-* A non-ping line ending in ``{`` has its stray block consumed and discarded with a warning,
-  so one malformed line can't corrupt brace balance for the rest of the file.
+* A trailing ``{`` is split off *before* field parsing and the 7-field cap, so it can never be
+  mistaken for a positional field (contact/label) nor dropped by truncation — either of which
+  would detach a subtree and unbalance the rest of the file. A non-ping line's stray block is
+  still consumed and discarded with a warning.
+* ``{`` nesting is capped at :data:`_MAX_NESTING_DEPTH`; a deeper config raises
+  :class:`ParseError` (a clean config error) instead of an uncaught ``RecursionError``.
 
 ``parse`` returns a :class:`ParseResult` carrying the root nodes, a dict of config-file
 settings overrides (to feed :func:`psysmon.config.settings.merge`), and collected warnings.
@@ -59,6 +63,19 @@ _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
 
 # Types whose stanza may open a `{` child block (the original's ping-like parse branch).
 _PING_LIKE = frozenset({CheckType.PING, CheckType.SMTP})
+
+# Hard cap on `{` nesting depth. Real dependency trees are only a handful deep; anything past
+# this is malformed/pathological, and recursing further risks Python's RecursionError surfacing
+# as an uncaught startup crash. Past the cap we raise ParseError (see the daemon's handling).
+_MAX_NESTING_DEPTH = 64
+
+
+class ParseError(ValueError):
+    """A config the parser refuses (e.g. nesting past :data:`_MAX_NESTING_DEPTH`).
+
+    Subclasses ``ValueError`` so the daemon's startup handler reports it as a clean
+    ``psysmon: ...`` config error rather than crashing with a traceback.
+    """
 
 
 @dataclass(slots=True)
@@ -109,8 +126,17 @@ class _Parser:
         self._pos += 1
         return item
 
-    def parse_block(self) -> list[Node]:
-        """Parse sibling stanzas until a ``}`` closes this block (or EOF)."""
+    def parse_block(self, depth: int = 0) -> list[Node]:
+        """Parse sibling stanzas until a ``}`` closes this block (or EOF).
+
+        ``depth`` is the current ``{`` nesting level; exceeding :data:`_MAX_NESTING_DEPTH`
+        raises :class:`ParseError` instead of letting Python's recursion limit surface as an
+        uncaught ``RecursionError`` during startup.
+        """
+        if depth > _MAX_NESTING_DEPTH:
+            raise ParseError(
+                f"configuration nesting exceeds the maximum depth of {_MAX_NESTING_DEPTH}"
+            )
         siblings: list[Node] = []
         while True:
             item = self._next()
@@ -125,33 +151,42 @@ class _Parser:
                 continue
             if tokens[0] == "}":
                 return siblings
+
+            # Split off a trailing block-open BEFORE the 7-field cap or any field parsing, so the
+            # `{` can't be dropped by truncation (detaching a subtree + unbalancing the rest of
+            # the file) nor land in a positional field such as contact or label.
+            opens_block = tokens[-1] == "{"
+            if opens_block:
+                tokens = tokens[:-1]
+
             if len(tokens) > 7:
                 self._warn(lineno, "too many fields; using the first 7")
                 tokens = tokens[:7]
+
             if len(tokens) < 3:
                 self._warn(lineno, "not enough fields; skipping")
-                self._consume_stray_block(tokens)
+                if opens_block:
+                    self.parse_block(depth + 1)  # drain the orphaned block; keep braces balanced
                 continue
             if tokens[0] == "config":
                 self._handle_config(lineno, tokens)
+                if opens_block:
+                    self._warn(lineno, "a config line cannot open a block; ignoring the '{'")
+                    self.parse_block(depth + 1)
                 continue
 
             node = self._parse_host(lineno, tokens)
             if node is None:
-                self._consume_stray_block(tokens)
+                if opens_block:
+                    self.parse_block(depth + 1)  # drain a skipped stanza's block
                 continue
             siblings.append(node)
-            if tokens[-1] == "{":
+            if opens_block:
                 if node.check_type in _PING_LIKE:
-                    node.children = self.parse_block()
+                    node.children = self.parse_block(depth + 1)
                 else:
                     self._warn(lineno, f"{node.check_type} cannot have children; ignoring block")
-                    self.parse_block()
-
-    def _consume_stray_block(self, tokens: list[str]) -> None:
-        """Drain a child block opened by a skipped/invalid line to keep braces balanced."""
-        if tokens and tokens[-1] == "{":
-            self.parse_block()
+                    self.parse_block(depth + 1)
 
     def _parse_host(self, lineno: int, tokens: list[str]) -> Node | None:
         host = tokens[0]
@@ -205,11 +240,11 @@ class _Parser:
                 return None
             node.username = tokens[2]  # name to look up
             node.contact = tokens[3]
-        else:  # ping-like: ping, smtp
+        else:  # ping-like: ping, smtp (a trailing '{' was already stripped by parse_block)
             node.label = tokens[2]
-            if n > 3 and tokens[3] != "{":
+            if n > 3:
                 node.contact = tokens[3]
-                if n >= 5 and tokens[4] != "{":
+                if n >= 5:
                     self._warn(lineno, "unexpected fields after contact; ignoring")
         return node
 

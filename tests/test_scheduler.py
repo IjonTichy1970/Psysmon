@@ -317,6 +317,68 @@ async def test_stale_result_discarded_when_gate_falls():
     assert state_of(sched, "c").lastcheck == Status.OK
 
 
+async def test_discarded_stale_result_marks_node_suppressed():
+    # A node that is checked-and-up (suppressed=False) is re-dispatched; its gate falls during
+    # the in-flight window. The discarded result must also flip suppressed=True so status/JSON
+    # don't show a stale up host until the next tick (#37).
+    clock = ManualClock()
+    gate = asyncio.Event()
+
+    class ChildHangsOnSecondCheck(ScriptedRunner):
+        async def __call__(self, node, ctx):
+            self.calls[node.hostname] += 1
+            if node.hostname == "c" and self.calls["c"] >= 2:
+                await gate.wait()  # block only the second check of the child
+            return Status.OK
+
+    child = node("c", CheckType.TCP)
+    parent = node("p", CheckType.PING, children=[child], max_down=5)
+    runner = ChildHangsOnSecondCheck()
+    sched, _ = make([parent], runner, clock)
+
+    await tick_drain(sched)   # t=0: parent checked up; child suppressed (parent not yet checked)
+    clock.advance(10)
+    await tick_drain(sched)   # t=10: child eligible -> checked OK -> suppressed=False
+    assert state_of(sched, "c").suppressed is False
+
+    clock.advance(10)
+    await sched.tick()        # t=20: parent + child dispatched; child blocks on the gate
+    await asyncio.sleep(0.02)
+    state_of(sched, "p").lastcheck = Status.UNPINGABLE  # parent goes down mid-child-check
+    gate.set()
+    await sched.drain()
+
+    assert state_of(sched, "c").suppressed is True       # discard path flipped it (was False)
+    assert state_of(sched, "c").lastcheck == Status.OK   # stale down result still discarded
+
+
+async def test_reload_discards_inflight_result_and_does_not_page():
+    # A check in flight when SIGHUP reload swaps the scheduled set is orphaned: it must NOT
+    # page or mutate the carried-over state, else it pages against dead state and the fresh
+    # node re-pages the same outage (issue #27).
+    clock = ManualClock()
+    gate = asyncio.Event()
+
+    class HangRoot(ScriptedRunner):
+        async def __call__(self, node, ctx):
+            self.calls[node.hostname] += 1
+            await gate.wait()
+            return Status.UNPINGABLE  # would cross threshold and page if applied
+
+    runner = HangRoot()
+    sched, notifier = make([node("r", max_down=1)], runner, clock)
+
+    await sched.tick()  # dispatch r; it blocks on the gate, still in flight
+    await asyncio.sleep(0.02)
+    sched.reload([node("r", max_down=1)])  # SIGHUP-equivalent: rebuild while the check runs
+    gate.set()
+    await sched.drain()  # the orphaned check completes here
+
+    assert notifier.count(PageIntent.DOWN) == 0  # the stale down result did not page
+    assert state_of(sched, "r").lastcheck == Status.OK  # fresh carried state, not clobbered
+    assert state_of(sched, "r").downct == 0
+
+
 # --- run() smoke ----------------------------------------------------------------------
 
 async def test_run_loop_smoke():

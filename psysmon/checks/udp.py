@@ -32,4 +32,9 @@ async def check(node: Node, ctx: base.CheckContext) -> int:
         )
     except dns.exception.Timeout:
         return Status.NO_RESPONSE
+    except dns.exception.DNSException:
+        # A reachable-but-misbehaving server (malformed wire data, reply from an unexpected
+        # source, etc.) raises a non-Timeout DNSException; surface it as a concrete down code
+        # rather than letting it escape uncaught and leave the node with no verdict.
+        return Status.BAD_RESPONSE
     return Status.OK

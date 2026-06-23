@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import json
 
-from sysmon.config.model import Node, NodeState
-from sysmon.status import Status, errtostr
+from psysmon.config.model import Node, NodeState
+from psysmon.status import Status, errtostr
 
 NodeStates = list[tuple[Node, NodeState]]
 

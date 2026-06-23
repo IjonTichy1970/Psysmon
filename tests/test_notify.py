@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from sysmon.config.model import CheckType, Node, NodeState
-from sysmon.config.settings import Settings
-from sysmon.engine.clock import ManualClock
-from sysmon.engine.scheduler import Scheduler
-from sysmon.engine.state import PageIntent
-from sysmon.notify.base import render_message
-from sysmon.notify.email_smtp import SmtpNotifier
-from sysmon.status import Status
+from psysmon.config.model import CheckType, Node, NodeState
+from psysmon.config.settings import Settings
+from psysmon.engine.clock import ManualClock
+from psysmon.engine.scheduler import Scheduler
+from psysmon.engine.state import PageIntent
+from psysmon.notify.base import render_message
+from psysmon.notify.email_smtp import SmtpNotifier
+from psysmon.status import Status
 
 # A fixed epoch for deterministic timestamps: 2026-06-22 16:06:10 local.
 FIXED_NOW = 1781827570.0
@@ -131,7 +131,7 @@ async def test_down_page_built_correctly():
     assert ok is True
     (msg,) = cap.messages
     assert msg["To"] == "noc@example.net"
-    assert msg["From"] == "sysmon@mon.example.net"
+    assert msg["From"] == "psysmon@mon.example.net"
     assert msg["Subject"] == "rtr.example.net is Unpingable"
     assert "Unpingable" in msg.get_content()
 
@@ -193,7 +193,7 @@ async def test_smtp_timeout_is_passed_to_smtplib(monkeypatch):
         def send_message(self, message):
             seen["sent"] = message
 
-    import sysmon.notify.email_smtp as mod
+    import psysmon.notify.email_smtp as mod
 
     monkeypatch.setattr(mod.smtplib, "SMTP", FakeSMTP)
     n = SmtpNotifier(settings(), now_wall=lambda: FIXED_NOW, timeout=7.5)  # real path (no send_fn)

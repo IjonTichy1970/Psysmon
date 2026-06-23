@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, fields
 
-from sysmon import __version__
+from psysmon import __version__
 
 
 @dataclass(slots=True)
@@ -29,7 +29,7 @@ class Settings:
     """Effective runtime configuration after merging CLI, file, and defaults."""
 
     # Files / output
-    config_path: str = "/etc/sysmon.conf"
+    config_path: str = "/etc/psysmon.conf"
     status_path: str | None = None  # set by `config statusfile`
     status_html: bool = True  # html vs flat text
     status_refresh_s: int = 30  # HTML meta-refresh
@@ -72,11 +72,11 @@ def build_parser() -> argparse.ArgumentParser:
     ``no_notify``, ``no_fork``, ``show_up``) are translated in :func:`cli_overrides`.
     """
     p = argparse.ArgumentParser(
-        prog="sysmon",
+        prog="psysmon",
         description="Dependency-aware network monitoring daemon.",
         argument_default=argparse.SUPPRESS,
     )
-    p.add_argument("--version", action="version", version=f"sysmon {__version__}")
+    p.add_argument("--version", action="version", version=f"psysmon {__version__}")
 
     # Files / output
     p.add_argument("-f", "--config", dest="config_path", metavar="PATH", help="config file path")

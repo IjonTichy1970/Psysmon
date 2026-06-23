@@ -4,15 +4,15 @@ Resolves the node, opens a TCP connection, reads the greeting (must be ``+OK``),
 a ``USER``/``PASS`` login. ``+OK`` on the password reply means the credentials are accepted
 (``OK``); ``-ERR`` means the auth was rejected (``BAD_AUTH``); anything else is ``BAD_RESPONSE``.
 
-Socket/OS errors propagate so that :func:`sysmon.checks.base.perform` maps them to the right
+Socket/OS errors propagate so that :func:`psysmon.checks.base.perform` maps them to the right
 status code; only protocol-level outcomes return an explicit code here.
 """
 
 from __future__ import annotations
 
-from sysmon.checks import base
-from sysmon.config.model import DEFAULT_PORT, CheckType, Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.config.model import DEFAULT_PORT, CheckType, Node
+from psysmon.status import Status
 
 
 async def check(node: Node, ctx: base.CheckContext) -> int:

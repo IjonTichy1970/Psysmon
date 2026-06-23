@@ -10,9 +10,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from sysmon.checks import base, http
-from sysmon.config.model import CheckType, Node
-from sysmon.status import Status
+from psysmon.checks import base, http
+from psysmon.config.model import CheckType, Node
+from psysmon.status import Status
 
 from .conftest import FakeResolver
 

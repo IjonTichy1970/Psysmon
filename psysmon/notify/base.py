@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from sysmon import timefmt
-from sysmon.config.model import CheckType, Node, NodeState
-from sysmon.engine.state import PageIntent
-from sysmon.status import errtostr
+from psysmon import timefmt
+from psysmon.config.model import CheckType, Node, NodeState
+from psysmon.engine.state import PageIntent
+from psysmon.status import errtostr
 
 # The original config.h default PMESG.
 DEFAULT_TEMPLATE = "%t: %h %w is %u %d"

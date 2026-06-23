@@ -28,8 +28,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from sysmon.config.model import NodeState
-from sysmon.status import Status
+from psysmon.config.model import NodeState
+from psysmon.status import Status
 
 
 class PageIntent(Enum):

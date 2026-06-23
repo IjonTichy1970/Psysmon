@@ -9,7 +9,7 @@ resolution happens at check time and a failure surfaces as ``None`` (the checker
 into ``Status.NO_DNS``) without removing the node — so transient DNS failures self-heal.
 
 The actual lookup and the clock are injectable so the cache is testable without real DNS.
-Satisfies :class:`sysmon.checks.base.Resolver`.
+Satisfies :class:`psysmon.checks.base.Resolver`.
 """
 
 from __future__ import annotations

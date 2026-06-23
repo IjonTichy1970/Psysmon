@@ -8,7 +8,7 @@ source IP (ACL-load-bearing). One unanswered echo after the retry budget -> ``St
 
 The raw socket is *not* opened at import time, so this module imports cleanly without
 privilege on both Windows and Linux. It is opened on first use (which requires root / raw-socket
-capability) and kept open across a later privilege drop (see :mod:`sysmon.privilege`).
+capability) and kept open across a later privilege drop (see :mod:`psysmon.privilege`).
 
 The pure framing helpers (:func:`icmp_checksum`, :func:`build_echo_request`,
 :func:`parse_echo_reply`) need no privilege and are unit-tested directly.
@@ -20,16 +20,16 @@ import asyncio
 import socket
 import struct
 
-from sysmon.checks import base
-from sysmon.config.model import Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.config.model import Node
+from psysmon.status import Status
 
 # ICMP message types we care about.
 ICMP_ECHO_REQUEST = 8
 ICMP_ECHO_REPLY = 0
 
 _ECHO_HEADER = struct.Struct("!BBHHH")  # type, code, checksum, identifier, sequence
-_DEFAULT_PAYLOAD = b"sysmon-ping-payload"
+_DEFAULT_PAYLOAD = b"psysmon-ping-payload"
 _RETRIES = 2  # total attempts per check = 1 + _RETRIES
 
 

@@ -34,7 +34,7 @@ Thumbs.db
 
 # Local runtime artifacts
 *.log
-sysmon.stat.html*
+psysmon.stat.html*
 status.html*
 
 # Real production config kept local for scale/smoke checks (contains live data + creds)

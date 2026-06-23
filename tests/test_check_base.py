@@ -11,9 +11,9 @@ import errno
 
 import pytest
 
-from sysmon.checks import base
-from sysmon.config.model import CheckType, Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.config.model import CheckType, Node
+from psysmon.status import Status
 
 from .conftest import FakeResolver
 

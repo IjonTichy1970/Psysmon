@@ -17,9 +17,9 @@ Design:
   unreachable by the original's rules and is dropped from scheduling with a warning.
 * A check result is **discarded** if the node's gate fell while the check was in flight
   (re-checked at completion), so a parent going down mid-check can't produce a stale alarm.
-* **Ping** runs on the shared :class:`~sysmon.checks.ping.PingService` (one raw socket) and is
+* **Ping** runs on the shared :class:`~psysmon.checks.ping.PingService` (one raw socket) and is
   *not* bounded by the per-check semaphore; all other checks are.
-* Paging is wired through a :class:`~sysmon.notify.base.Notifier`: on a DOWN intent it pages
+* Paging is wired through a :class:`~psysmon.notify.base.Notifier`: on a DOWN intent it pages
   and marks ``contacted``; on RECOVERY it pages the clear; otherwise a still-down contacted
   node is re-paged once ``pageinterval`` has elapsed (eligible nodes only — a fix vs. the C).
 """
@@ -31,14 +31,14 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from sysmon.checks import base, dns, http, pop3, smtp, tcp, udp
-from sysmon.checks.ping import PingService
-from sysmon.config.model import CheckType, Node, NodeState
-from sysmon.config.settings import Settings
-from sysmon.engine.clock import Clock, SystemClock
-from sysmon.engine.dnscache import DnsCache
-from sysmon.engine.state import PageIntent, apply_result, maybe_repage
-from sysmon.status import Status
+from psysmon.checks import base, dns, http, pop3, smtp, tcp, udp
+from psysmon.checks.ping import PingService
+from psysmon.config.model import CheckType, Node, NodeState
+from psysmon.config.settings import Settings
+from psysmon.engine.clock import Clock, SystemClock
+from psysmon.engine.dnscache import DnsCache
+from psysmon.engine.state import PageIntent, apply_result, maybe_repage
+from psysmon.status import Status
 
 logger = logging.getLogger(__name__)
 

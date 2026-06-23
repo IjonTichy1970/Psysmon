@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from sysmon.checks import base, tcp
-from sysmon.config.model import CheckType, Node
-from sysmon.status import Status
+from psysmon.checks import base, tcp
+from psysmon.config.model import CheckType, Node
+from psysmon.status import Status
 
 from .conftest import FakeResolver
 

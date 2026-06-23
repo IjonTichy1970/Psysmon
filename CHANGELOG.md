@@ -48,4 +48,4 @@ All notable changes to this project are documented here. The format is based on
   text variant and a JSON endpoint (all nodes, with a suppressed flag). Published atomically so
   readers never see a partial file. All dynamic content is HTML-escaped.
 
-[Unreleased]: https://github.com/IjonTichy1970/Sysmon/commits/main
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/commits/main

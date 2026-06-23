@@ -2,7 +2,7 @@
 
 Renders the "Bad Hosts" view — by default only nodes that are down (``lastcheck != OK``),
 suppressed children omitted (owner choice) — as a modern dark-themed HTML5 page with the
-sysmon logo header, or as a flat text table. Columns match the original: HostName, Type, Port,
+psysmon logo header, or as a flat text table. Columns match the original: HostName, Type, Port,
 Count, Notified, Status, Time Failed, Last Outage.
 
 Atomic publish is preserved from ``textfile.c``: write to a temp file, make it read-only, then
@@ -18,10 +18,10 @@ import html
 import os
 import time
 
-from sysmon import __version__, timefmt
-from sysmon.config.model import Node, NodeState, type_to_name
-from sysmon.config.settings import Settings
-from sysmon.status import Status, errtostr
+from psysmon import __version__, timefmt
+from psysmon.config.model import Node, NodeState, type_to_name
+from psysmon.config.settings import Settings
+from psysmon.status import Status, errtostr
 
 NodeStates = list[tuple[Node, NodeState]]
 
@@ -127,7 +127,7 @@ def render_html(
     else:
         summary = '<span class="count ok">All clear</span>'
 
-    footer = f"sysmon {__version__} · auto-refresh {int(refresh_s)}s"
+    footer = f"psysmon {__version__} · auto-refresh {int(refresh_s)}s"
 
     return "\n".join(
         [
@@ -137,8 +137,8 @@ def render_html(
             f"<title>Network Status — {_esc(org_hostname)}</title>",
             f"<style>{_CSS}</style></head><body>",
             '<div class="header">'
-            f'<div class="glow"><img class="logo" src="{_esc(logo_url)}" alt="sysmon logo"></div>'
-            "<div><h1>SYSMON</h1>"
+            f'<div class="glow"><img class="logo" src="{_esc(logo_url)}" alt="psysmon logo"></div>'
+            "<div><h1>PSYSMON</h1>"
             f'<p class="sub">Network status for {_esc(org_hostname)}</p></div></div>',
             f'<div class="bar"><div>{summary}</div>'
             f'<div>Updated {_esc(timefmt.clock_time(now_wall))}</div></div>',
@@ -228,14 +228,14 @@ def render_and_publish(
     if not settings.status_path:
         return
     now = time.time() if now_wall is None else now_wall
-    org = settings.org_hostname or "sysmon"
+    org = settings.org_hostname or "psysmon"
     if settings.status_html:
         content = render_html(
             node_states,
             org_hostname=org,
             refresh_s=settings.status_refresh_s,
             show_up_also=settings.show_up_also,
-            logo_url="sysmon-logo.png",
+            logo_url="psysmon-logo.png",
             now_wall=now,
         )
     else:

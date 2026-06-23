@@ -10,12 +10,12 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 
-from sysmon.config.model import CheckType, Node
-from sysmon.config.settings import Settings
-from sysmon.engine.clock import ManualClock, SystemClock
-from sysmon.engine.scheduler import Scheduler
-from sysmon.engine.state import PageIntent
-from sysmon.status import Status
+from psysmon.config.model import CheckType, Node
+from psysmon.config.settings import Settings
+from psysmon.engine.clock import ManualClock, SystemClock
+from psysmon.engine.scheduler import Scheduler
+from psysmon.engine.state import PageIntent
+from psysmon.status import Status
 
 
 def settings(**kw) -> Settings:

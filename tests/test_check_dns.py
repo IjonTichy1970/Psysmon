@@ -1,6 +1,6 @@
 """Tests for the authoritative DNS check.
 
-Drives :func:`sysmon.checks.dns.check` against a hermetic loopback UDP DNS responder built
+Drives :func:`psysmon.checks.dns.check` against a hermetic loopback UDP DNS responder built
 with dnspython, covering the OK / BAD_RESPONSE / NO_RESPONSE classifications plus NO_DNS and
 the DNS-level timeout path.
 """
@@ -18,10 +18,10 @@ import dns.rdatatype
 import dns.rrset
 import pytest
 
-from sysmon.checks import base
-from sysmon.checks import dns as dns_check
-from sysmon.config.model import CheckType, Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.checks import dns as dns_check
+from psysmon.config.model import CheckType, Node
+from psysmon.status import Status
 
 from .conftest import FakeResolver
 

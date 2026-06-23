@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from sysmon.config.model import NodeState
-from sysmon.engine.state import PageIntent, apply_result, maybe_repage
-from sysmon.status import Status
+from psysmon.config.model import NodeState
+from psysmon.engine.state import PageIntent, apply_result, maybe_repage
+from psysmon.status import Status
 
 PING_DOWN = int(Status.UNPINGABLE)  # 6
 CONN_REF = int(Status.CONN_REFUSED)  # 1

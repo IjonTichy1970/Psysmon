@@ -15,6 +15,12 @@ All notable changes to this project are documented here. The format is based on
   accepting these valid replies. Because ping targets gate their dependents, this also unblocks
   the whole monitored subtree behind such a host
   ([#53](https://github.com/IjonTichy1970/Psysmon/issues/53)).
+- The POP3 check now reports a connection dropped mid-authentication as `No Srvr Resp` instead of
+  the misleading `Bad Resp`, and flags a username rejected at `USER` (not only at `PASS`) as
+  `Bad Auth`. A drop after a successful login is deliberately *not* reported as `Bad Auth`, since
+  a correct login can also be cut short by a post-authentication server fault — so the status no
+  longer points operators at credentials when auth may have succeeded
+  ([#54](https://github.com/IjonTichy1970/Psysmon/issues/54)).
 
 ## [0.1.1] — 2026-06-23 — audit cleanup + parser fix
 

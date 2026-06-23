@@ -1,29 +1,54 @@
-"""Notifier interface and message templating (Milestone 9).
+"""Notifier interface and message templating.
 
-A ``Notifier`` delivers a page for a node. After a successful send (or immediately when a
-node has no contact address) the caller sets ``state.contacted`` / ``state.lastcontacted`` —
-the act of paging is the dedup point (faithful to ``page.c``).
+A ``Notifier`` delivers a page for a node and returns whether the page should count as
+"contacted" (delivered, or there was no contact to deliver to) — the scheduler uses that to
+set the dedup flag, faithful to the original's "the act of paging is the dedup point".
 
-``render_message`` reproduces the original ``PMESG`` template tokens (``%t`` time, ``%h``
-host, ``%w`` what, ``%u`` status string, ``%d`` downtime, ``%m`` my-hostname).
-
-Not yet implemented.
+``render_message`` reproduces the original ``PMESG`` template tokens:
+``%m`` my hostname · ``%h`` failed host (with possessive ``'s`` unless it's a ping) ·
+``%t`` current time · ``%d`` downtime (DD:HH:MM) · ``%u`` status string · ``%w`` the node's
+message/label (blank for a ping).
 """
 
 from __future__ import annotations
 
 from typing import Protocol
 
-from sysmon.config.model import Node, NodeState
+from sysmon import timefmt
+from sysmon.config.model import CheckType, Node, NodeState
 from sysmon.engine.state import PageIntent
+from sysmon.status import errtostr
+
+# The original config.h default PMESG.
+DEFAULT_TEMPLATE = "%t: %h %w is %u %d"
 
 
 class Notifier(Protocol):
-    """Delivers a page for ``node`` given the current ``state`` and page ``intent``."""
+    """Delivers a page for ``node``; returns True if it should count as contacted."""
 
     async def send(self, node: Node, state: NodeState, intent: PageIntent) -> bool: ...
 
 
-def render_message(template: str, node: Node, state: NodeState) -> str:
+def render_message(
+    template: str, node: Node, state: NodeState, *, myname: str, now_wall: float
+) -> str:
     """Expand a ``PMESG``-style template into a page body."""
-    raise NotImplementedError("Milestone 9: message templating")
+    is_ping = node.check_type is CheckType.PING
+    tokens = {
+        "m": myname,
+        "h": node.hostname + ("" if is_ping else "'s"),
+        "t": timefmt.clock_time(now_wall),
+        "d": timefmt.elapsed(state.deathtime, now_wall),
+        "u": errtostr(state.lastcheck),
+        "w": "" if is_ping else node.label,
+    }
+    out: list[str] = []
+    i = 0
+    while i < len(template):
+        if template[i] == "%" and i + 1 < len(template):
+            out.append(tokens.get(template[i + 1], template[i : i + 2]))
+            i += 2
+        else:
+            out.append(template[i])
+            i += 1
+    return "".join(out)

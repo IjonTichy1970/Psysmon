@@ -39,7 +39,7 @@ body { margin:0; background:var(--bg); color:var(--text);
   background:linear-gradient(180deg,#1C2E58,#101D3C); border-bottom:2px solid var(--border); }
 .header .glow { display:grid; place-items:center; border-radius:14px;
   background:radial-gradient(circle at center, var(--glow) 0%, transparent 68%); }
-.header img.logo { height:104px; width:104px; image-rendering:pixelated; display:block; }
+.header img.logo { height:104px; width:104px; image-rendering:auto; display:block; }
 .header h1 { margin:0; font-size:30px; letter-spacing:1px; }
 .header .sub { margin:3px 0 0; color:var(--muted); font-size:14px; }
 .bar { display:flex; justify-content:space-between; align-items:center;

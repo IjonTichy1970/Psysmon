@@ -17,6 +17,7 @@ The pure framing helpers (:func:`icmp_checksum`, :func:`build_echo_request`,
 from __future__ import annotations
 
 import asyncio
+import errno
 import socket
 import struct
 
@@ -163,10 +164,37 @@ class PingService:
     # --- public check -----------------------------------------------------------------
 
     async def check(self, node: Node, ctx: base.CheckContext) -> int:
-        """Send an echo request and await a matching reply; success -> OK, else UNPINGABLE."""
-        ip = await base.resolve(node, ctx)
-        sock = self._ensure_socket(ctx)
+        """Send echo requests and await a matching reply, mapping failures to a Status code.
 
+        Unlike the protocol checkers (which run under :func:`base.perform`), ping is dispatched
+        directly by the scheduler, so it must translate its *own* expected failures — an
+        unresolvable host, an event loop without ``add_reader``, or an un-sendable packet (no
+        route to the target) — into a Status code instead of raising. An exception escaping
+        here would leave the node with no verdict at all and, because ping nodes gate their
+        children, silently suppress the whole subtree during exactly the outage we exist to
+        detect (the scheduler's generic handler would log and move on without ever applying a
+        result or marking the node checked).
+        """
+        try:
+            ip = await base.resolve(node, ctx)
+            sock = self._ensure_socket(ctx)
+            return await self._probe(ip, sock, ctx)
+        except base.NoDnsError:
+            return Status.NO_DNS
+        except socket.gaierror:
+            return Status.NO_DNS
+        except OSError as exc:
+            # A ping that can't be sent (no route, or an unsupported event loop) is reported
+            # down, not raised. Known route errors keep their specific code; anything else is
+            # UNPINGABLE (map_oserror's CONN_REFUSED default is meaningless for ICMP).
+            if exc.errno in (
+                errno.ENETUNREACH, errno.EHOSTUNREACH, errno.EHOSTDOWN, errno.ETIMEDOUT
+            ):
+                return base.map_oserror(exc)
+            return Status.UNPINGABLE
+
+    async def _probe(self, ip: str, sock: socket.socket, ctx: base.CheckContext) -> int:
+        """Send up to ``1 + _RETRIES`` echoes; first matching reply -> OK, else UNPINGABLE."""
         loop = asyncio.get_running_loop()
         # Split the overall budget across attempts so the whole check still fits ctx.timeout_s.
         per_attempt = max(ctx.timeout_s / (1 + _RETRIES), 0.001)

@@ -8,6 +8,7 @@ on Windows), so it is attempted and ``pytest.skip``-ped when the OS refuses the 
 from __future__ import annotations
 
 import asyncio
+import errno
 import socket
 import struct
 
@@ -219,16 +220,34 @@ async def test_check_wrong_reply_does_not_resolve():
     assert result == Status.UNPINGABLE
 
 
-async def test_check_resolve_failure_propagates_before_socket():
-    # resolve() failure raises NoDnsError before any socket work; check never sends.
+async def test_check_resolve_failure_returns_no_dns_before_socket():
+    # resolve() failure maps to NO_DNS (not a raised exception) before any socket work, so the
+    # scheduler always gets a verdict; check never sends. (Regression: an escaping exception
+    # left ping nodes with no result and silently suppressed their whole subtree — issue #25.)
     svc = ping.PingService()
     sock = _FakeSocket()
     _install_fake_socket(svc, sock)
 
     ctx = base.CheckContext(resolver=FakeResolver(default=None), timeout_s=2.0)
-    with pytest.raises(base.NoDnsError):
-        await svc.check(node(), ctx)
+    assert await svc.check(node(), ctx) == Status.NO_DNS
     assert sock.sent == []  # nothing was sent
+
+
+async def test_check_unsendable_route_error_maps_to_status():
+    # A sendto() that fails with no-route must become a Status code (here HOST_DOWN), never an
+    # exception that escapes check() and blacks out the node's whole gated subtree (issue #25).
+    svc = ping.PingService()
+    sock = _FakeSocket()
+
+    def unreachable(packet, addr):
+        raise OSError(errno.EHOSTUNREACH, "No route to host")
+
+    sock.sendto = unreachable  # type: ignore[method-assign]
+    _install_fake_socket(svc, sock)  # wraps the raising sendto; the raise still propagates
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await svc.check(node(), ctx) == Status.HOST_DOWN
+    assert not svc._pending  # the pending future was cleaned up despite the send error
 
 
 # --- prepare() / lazy reader attach (no privilege, fake socket) --------------------------

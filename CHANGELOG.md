@@ -52,4 +52,22 @@ All notable changes to this project are documented here. The format is based on
   (config reload that preserves live up/down state for hosts that still exist), and backgrounding
   itself unless `--no-fork`.
 
+### Fixed
+- Ping checks no longer go silent when a target can't be resolved or has no route: a failed
+  DNS resolution or send now yields a concrete status (`No DNS` / `Net Unreachable` /
+  `Host Down` / `Unpingable`) instead of an unhandled error that left the host — and, because
+  ping targets gate their dependents, its whole downstream subtree — unmonitored with no alert
+  ([#25](https://github.com/IjonTichy1970/Psysmon/issues/25)).
+- DNS and UDP/DNS checks now report a malformed or unexpected-source reply as `Bad Response`
+  rather than letting it escape and produce no verdict, so a reachable-but-misbehaving server is
+  still flagged ([#26](https://github.com/IjonTichy1970/Psysmon/issues/26)).
+- A `SIGHUP` config reload no longer races an in-flight check: a result that completes after the
+  reload is discarded instead of being applied to the just-replaced state, preventing a
+  duplicate page or a lost state change ([#27](https://github.com/IjonTichy1970/Psysmon/issues/27)).
+- The backgrounded daemon now keeps its logs: the configured syslog facility is wired to an
+  actual syslog handler, and the standard streams are redirected to `/dev/null` on detach, so
+  log output is no longer silently lost once the daemon forks
+  ([#30](https://github.com/IjonTichy1970/Psysmon/issues/30),
+  [#31](https://github.com/IjonTichy1970/Psysmon/issues/31)).
+
 [Unreleased]: https://github.com/IjonTichy1970/Psysmon/commits/main

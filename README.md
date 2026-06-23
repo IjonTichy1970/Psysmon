@@ -28,7 +28,7 @@ daemon that pings hosts, checks services, and alerts you when things break — w
 |                                          | Original C `sysmon`            | This rewrite                                                  |
 | ---------------------------------------- | ------------------------------ | ------------------------------------------------------------ |
 | Concurrency                              | single-threaded serial sweep   | **asyncio**, concurrent per-host scheduling                  |
-| ICMP privilege                           | whole daemon suid root         | raw socket opened as root, **privileges dropped**            |
+| ICMP privilege                           | whole daemon suid root         | raw socket opened as root; runs as a root process (no setuid binary) |
 | Config                                   | legacy `sysmon.conf` only      | **legacy `sysmon.conf` (drop-in)** + auto-detect; modern format planned |
 | Hardcoded source IP / hostnames / paths  | compiled in                    | **config file + CLI** (CLI wins)                             |
 | Status page                              | malformed legacy HTML          | **HTML5 + CSS**, plus JSON                                   |
@@ -72,23 +72,28 @@ and SMTP settings.
 ## Requirements
 
 - Python **3.11+**
-- Linux (raw ICMP via setuid root)
+- Linux (raw ICMP ping needs a raw socket, i.e. running as root)
 - Dependencies: [`dnspython`](https://www.dnspython.org/), [`httpx`](https://www.python-httpx.org/)
 
 ## Install & run
 
 ```bash
-pip install -e .
+pip install .
 sudo psysmon --config /etc/psysmon.conf        # CLI flags override config values
 ```
 
+See [INSTALL.md](INSTALL.md) for step-by-step setup (venv install, configuration, and running
+under systemd).
+
 ## Project status & roadmap
 
-Under active development — see the [issue tracker](https://github.com/IjonTichy1970/Psysmon/issues).
-Near-term milestones: config parser, check engine, async scheduler, notifier, and status output.
-Deferred enhancements include a modern config format with a converter
-([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)) and an authenticated control/query API
-([#1](https://github.com/IjonTichy1970/Psysmon/issues/1)).
+The core daemon is feature-complete (config parser, check engine, async scheduler, notifier, and
+HTML/JSON status output) and under active development toward a first release — see the
+[issue tracker](https://github.com/IjonTichy1970/Psysmon/issues). Planned enhancements include a
+modern config format with a converter
+([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)), operator annotations
+([#20](https://github.com/IjonTichy1970/Psysmon/issues/20)), and IPv6 ping
+([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)).
 
 ## Heritage
 

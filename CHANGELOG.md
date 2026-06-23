@@ -11,6 +11,9 @@ All notable changes to this project are documented here. The format is based on
   monitoring-engine architecture (config parser, async scheduler, checks, notifier, output).
 - README describing the rewrite, its dependency-aware monitoring model, and how it differs
   from the original C `sysmon`.
+- `INSTALL.md` step-by-step setup guide: venv install (from a release artifact or source),
+  configuration with a sample config, running in the foreground / backgrounded / under systemd,
+  and operate/upgrade/uninstall notes.
 - Status-code definitions and display mappings ported from the original `lib.c`.
 - Core data model (`Node`, `NodeState`) ported from the original `struct hostinfo`.
 - Licensed under GPL-2.0-or-later (continuing the original sysmon's GNU GPL licensing).

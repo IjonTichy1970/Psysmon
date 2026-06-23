@@ -11,14 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from sysmon import timefmt
-from sysmon.config.model import CheckType, Node, NodeState
-from sysmon.config.settings import Settings
-from sysmon.engine.clock import ManualClock
-from sysmon.engine.scheduler import Scheduler
-from sysmon.output.jsonout import to_json
-from sysmon.output.statuspage import publish, render_and_publish, render_html, render_text
-from sysmon.status import Status
+from psysmon import timefmt
+from psysmon.config.model import CheckType, Node, NodeState
+from psysmon.config.settings import Settings
+from psysmon.engine.clock import ManualClock
+from psysmon.engine.scheduler import Scheduler
+from psysmon.output.jsonout import to_json
+from psysmon.output.statuspage import publish, render_and_publish, render_html, render_text
+from psysmon.status import Status
 
 NOW = 1781827570.0
 
@@ -33,7 +33,7 @@ def ns(host, ctype=CheckType.PING, lastcheck=Status.OK, *, port=0, downct=0, con
 
 def html_for(states, **kw):
     opts = dict(org_hostname="qiclab", refresh_s=30, show_up_also=False,
-                logo_url="sysmon-logo.png", now_wall=NOW)
+                logo_url="psysmon-logo.png", now_wall=NOW)
     opts.update(kw)
     return render_html(states, **opts)
 
@@ -51,7 +51,7 @@ def test_html_shows_down_hides_up_and_suppressed():
     assert "down.net" in h
     assert "up.net" not in h       # up hidden by default
     assert "hidden.net" not in h   # suppressed always hidden
-    assert 'src="sysmon-logo.png"' in h
+    assert 'src="psysmon-logo.png"' in h
     assert 'http-equiv="refresh" content="30"' in h
     assert "qiclab" in h
     assert "Unpingable" in h
@@ -148,7 +148,7 @@ def test_publish_cleans_up_temp_on_write_failure(tmp_path, monkeypatch):
     path = str(tmp_path / "status.html")
     publish("good", path)  # establish an existing (read-only) target
 
-    import sysmon.output.statuspage as sp
+    import psysmon.output.statuspage as sp
 
     real_open = open
 

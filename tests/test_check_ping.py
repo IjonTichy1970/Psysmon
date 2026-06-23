@@ -13,10 +13,10 @@ import struct
 
 import pytest
 
-from sysmon.checks import base, ping
-from sysmon.config.model import CheckType, Node
-from sysmon.privilege import PrivilegeError, drop_privileges
-from sysmon.status import Status
+from psysmon.checks import base, ping
+from psysmon.config.model import CheckType, Node
+from psysmon.privilege import PrivilegeError, drop_privileges
+from psysmon.status import Status
 
 from .conftest import FakeResolver
 
@@ -229,6 +229,68 @@ async def test_check_resolve_failure_propagates_before_socket():
     with pytest.raises(base.NoDnsError):
         await svc.check(node(), ctx)
     assert sock.sent == []  # nothing was sent
+
+
+# --- prepare() / lazy reader attach (no privilege, fake socket) --------------------------
+
+
+class _CountingSocket:
+    """Minimal fake raw socket: tracks close + exposes a stable fileno for add_reader."""
+
+    _next_fd = 5000
+
+    def __init__(self):
+        _CountingSocket._next_fd += 1
+        self._fd = _CountingSocket._next_fd
+        self.closed = False
+
+    def fileno(self):
+        return self._fd
+
+    def close(self):
+        self.closed = True
+
+
+async def test_prepare_opens_socket_without_attaching_reader(monkeypatch):
+    # prepare() opens the raw socket up front (as root would, pre-fork) but does NOT
+    # attach the reply reader; the first check attaches it exactly once.
+    svc = ping.PingService()
+    opens: list[_CountingSocket] = []
+    monkeypatch.setattr(svc, "_open_raw", lambda: opens.append(_CountingSocket()) or opens[-1])
+
+    loop = asyncio.get_running_loop()
+    adds: list[int] = []
+    removes: list[int] = []
+    monkeypatch.setattr(loop, "add_reader", lambda fd, *a: adds.append(fd))
+    monkeypatch.setattr(loop, "remove_reader", lambda fd: removes.append(fd))
+
+    svc.prepare()
+    assert svc._sock is not None and svc._reader_registered is False
+    assert len(opens) == 1 and adds == []  # socket open, reader not yet attached
+
+    ctx = base.CheckContext(resolver=FakeResolver())
+    first = svc._ensure_socket(ctx)
+    assert svc._reader_registered is True and len(adds) == 1  # attached exactly once
+    second = svc._ensure_socket(ctx)
+    assert second is first and len(adds) == 1  # idempotent: same socket, no re-attach
+    assert len(opens) == 1  # prepare()'s socket was reused, not reopened
+
+    svc.close()
+    assert svc._sock is None and svc._reader_registered is False
+    assert removes == [first.fileno()] and first.closed is True
+
+
+async def test_ensure_socket_opens_when_prepare_skipped(monkeypatch):
+    # If prepare() is never called, the first check still opens AND attaches the reader.
+    svc = ping.PingService()
+    monkeypatch.setattr(svc, "_open_raw", _CountingSocket)
+    loop = asyncio.get_running_loop()
+    adds: list[int] = []
+    monkeypatch.setattr(loop, "add_reader", lambda fd, *a: adds.append(fd))
+    monkeypatch.setattr(loop, "remove_reader", lambda fd: None)
+
+    svc._ensure_socket(base.CheckContext(resolver=FakeResolver()))
+    assert svc._sock is not None and svc._reader_registered is True and len(adds) == 1
 
 
 # --- privilege module --------------------------------------------------------------------

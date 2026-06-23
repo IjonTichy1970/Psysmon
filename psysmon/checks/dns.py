@@ -23,9 +23,9 @@ import dns.message
 import dns.rcode
 import dns.rdatatype
 
-from sysmon.checks import base
-from sysmon.config.model import Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.config.model import Node
+from psysmon.status import Status
 
 
 async def check(node: Node, ctx: base.CheckContext) -> int:

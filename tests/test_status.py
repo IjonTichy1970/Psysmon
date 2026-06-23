@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sysmon.status import Status, errtostr, is_up
+from psysmon.status import Status, errtostr, is_up
 
 
 def test_ok_is_zero_and_up():

@@ -1,13 +1,13 @@
 """Common check plumbing: context, DNS resolve, timeout wrapper, and error mapping.
 
 Every checker is a coroutine ``async def check(node, ctx) -> int`` returning a
-:class:`sysmon.status.Status` code. Checkers focus on protocol logic and may raise ordinary
+:class:`psysmon.status.Status` code. Checkers focus on protocol logic and may raise ordinary
 socket/OS exceptions; :func:`perform` wraps a checker with the context's timeout and maps
 expected failures to status codes, so individual protocol modules stay thin and never have to
 reproduce the same try/except.
 
 Each check's first step is DNS resolution via :func:`resolve` (backed by the shared
-:class:`~sysmon.engine.dnscache.DnsCache`); a resolution failure surfaces as ``NO_DNS`` without
+:class:`~psysmon.engine.dnscache.DnsCache`); a resolution failure surfaces as ``NO_DNS`` without
 the node being dropped — the runtime-resolution fix over the original.
 """
 
@@ -20,8 +20,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from sysmon.config.model import Node
-from sysmon.status import Status
+from psysmon.config.model import Node
+from psysmon.status import Status
 
 DEFAULT_TIMEOUT_S = 10.0
 

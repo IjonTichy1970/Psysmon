@@ -2,7 +2,7 @@
 
 Renders the "Bad Hosts" view — by default only nodes that are down (``lastcheck != OK``),
 suppressed children omitted (owner choice) — as a modern dark-themed HTML5 page with the
-sysmon logo header, or as a flat text table. Columns match the original: HostName, Type, Port,
+psysmon logo header, or as a flat text table. Columns match the original: HostName, Type, Port,
 Count, Notified, Status, Time Failed, Last Outage.
 
 Atomic publish is preserved from ``textfile.c``: write to a temp file, make it read-only, then
@@ -18,24 +18,24 @@ import html
 import os
 import time
 
-from sysmon import __version__, timefmt
-from sysmon.config.model import Node, NodeState, type_to_name
-from sysmon.config.settings import Settings
-from sysmon.status import Status, errtostr
+from psysmon import __version__, timefmt
+from psysmon.config.model import Node, NodeState, type_to_name
+from psysmon.config.settings import Settings
+from psysmon.status import Status, errtostr
 
 NodeStates = list[tuple[Node, NodeState]]
 
 # Palette sampled from the logo: navy background, teal glow, logo green/yellow, alert red.
 _CSS = """
 :root {
-  --bg:#202F5A; --panel:#28375E; --border:#3A4D7A; --text:#E6ECF7; --muted:#93A4C4;
-  --glow:#2D8099; --green:#4CD137; --yellow:#F4D03F; --down:#E84118;
+  --bg:#15254A; --panel:#1F3158; --border:#2E4470; --text:#E6ECF7; --muted:#93A4C4;
+  --glow:#1D708C; --green:#4CD137; --yellow:#F4D03F; --down:#E84118;
 }
 * { box-sizing:border-box; }
 body { margin:0; background:var(--bg); color:var(--text);
   font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
 .header { display:flex; align-items:center; gap:22px; padding:18px 26px;
-  background:linear-gradient(180deg,#243562,#1B2A4F); border-bottom:2px solid var(--border); }
+  background:linear-gradient(180deg,#1C2E58,#101D3C); border-bottom:2px solid var(--border); }
 .header .glow { display:grid; place-items:center; border-radius:14px;
   background:radial-gradient(circle at center, var(--glow) 0%, transparent 68%); }
 .header img.logo { height:104px; width:104px; image-rendering:pixelated; display:block; }
@@ -50,7 +50,7 @@ body { margin:0; background:var(--bg); color:var(--text);
 table { width:100%; border-collapse:collapse; background:var(--panel);
   border:1px solid var(--border); border-radius:10px; overflow:hidden; }
 th { text-align:left; font-size:12px; text-transform:uppercase; letter-spacing:.6px;
-  color:var(--muted); padding:11px 14px; background:#23335C;
+  color:var(--muted); padding:11px 14px; background:#1A2C54;
   border-bottom:1px solid var(--border); }
 td { padding:10px 14px; border-bottom:1px solid var(--border); font-size:14px; }
 tr:last-child td { border-bottom:none; }
@@ -127,7 +127,7 @@ def render_html(
     else:
         summary = '<span class="count ok">All clear</span>'
 
-    footer = f"sysmon {__version__} · auto-refresh {int(refresh_s)}s"
+    footer = f"psysmon {__version__} · auto-refresh {int(refresh_s)}s"
 
     return "\n".join(
         [
@@ -137,8 +137,8 @@ def render_html(
             f"<title>Network Status — {_esc(org_hostname)}</title>",
             f"<style>{_CSS}</style></head><body>",
             '<div class="header">'
-            f'<div class="glow"><img class="logo" src="{_esc(logo_url)}" alt="sysmon logo"></div>'
-            "<div><h1>SYSMON</h1>"
+            f'<div class="glow"><img class="logo" src="{_esc(logo_url)}" alt="psysmon logo"></div>'
+            "<div><h1>PSYSMON</h1>"
             f'<p class="sub">Network status for {_esc(org_hostname)}</p></div></div>',
             f'<div class="bar"><div>{summary}</div>'
             f'<div>Updated {_esc(timefmt.clock_time(now_wall))}</div></div>',
@@ -228,14 +228,14 @@ def render_and_publish(
     if not settings.status_path:
         return
     now = time.time() if now_wall is None else now_wall
-    org = settings.org_hostname or "sysmon"
+    org = settings.org_hostname or "psysmon"
     if settings.status_html:
         content = render_html(
             node_states,
             org_hostname=org,
             refresh_s=settings.status_refresh_s,
             show_up_also=settings.show_up_also,
-            logo_url="sysmon-logo.png",
+            logo_url="psysmon-logo.png",
             now_wall=now,
         )
     else:

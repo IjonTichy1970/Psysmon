@@ -1,8 +1,8 @@
-# Sysmon
+# PSYSMON
 
-A modern Python reimplementation of **sysmon**, a network-monitoring daemon that pings hosts,
-checks services, and alerts you when things break — with **dependency-aware** monitoring so an
-upstream outage raises one alert instead of a flood.
+**PSYSMON** (Python Sysmon) is a modern reimplementation of **sysmon**, a network-monitoring
+daemon that pings hosts, checks services, and alerts you when things break — with
+**dependency-aware** monitoring so an upstream outage raises one alert instead of a flood.
 
 > **Status: early development.** This is a from-scratch Python 3.11+ rewrite of the original
 > 1998 C `sysmon` (v0.78.3.2 by Jared Mauch), preserving its battle-tested monitoring and
@@ -54,7 +54,7 @@ Nesting (`{ }` in the config) encodes "reachable only if the parent is up."
 ## Configuration (legacy format)
 
 ```
-config statusfile html /var/www/sysmon/status.html
+config statusfile html /var/www/psysmon/status.html
 config pageinterval 18        ; minutes between re-pages while down
 config numfailures 5          ; consecutive failures before alerting
 
@@ -79,16 +79,16 @@ and SMTP settings.
 
 ```bash
 pip install -e .
-sudo sysmon --config /etc/sysmon.conf          # CLI flags override config values
+sudo psysmon --config /etc/psysmon.conf        # CLI flags override config values
 ```
 
 ## Project status & roadmap
 
-Under active development — see the [issue tracker](https://github.com/IjonTichy1970/Sysmon/issues).
+Under active development — see the [issue tracker](https://github.com/IjonTichy1970/Psysmon/issues).
 Near-term milestones: config parser, check engine, async scheduler, notifier, and status output.
 Deferred enhancements include a modern config format with a converter
-([#3](https://github.com/IjonTichy1970/Sysmon/issues/3)) and an authenticated control/query API
-([#1](https://github.com/IjonTichy1970/Sysmon/issues/1)).
+([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)) and an authenticated control/query API
+([#1](https://github.com/IjonTichy1970/Psysmon/issues/1)).
 
 ## Heritage
 

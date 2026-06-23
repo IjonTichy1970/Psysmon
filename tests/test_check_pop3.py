@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from sysmon.checks import base
-from sysmon.checks.pop3 import check
-from sysmon.config.model import CheckType, Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.checks.pop3 import check
+from psysmon.config.model import CheckType, Node
+from psysmon.status import Status
 
 from .conftest import FakeResolver
 
@@ -84,7 +84,7 @@ async def test_unexpected_pass_reply_bad_response(check_ctx, tcp_server):
 async def test_default_port_used(check_ctx, monkeypatch):
     # port=0 must fall back to the POP3 default (110). Capture the port passed to
     # open_connection so we prove the fallback expression actually selects 110.
-    from sysmon.config.model import DEFAULT_PORT
+    from psysmon.config.model import DEFAULT_PORT
 
     captured: dict[str, int] = {}
 

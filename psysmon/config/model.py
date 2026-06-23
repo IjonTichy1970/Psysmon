@@ -89,7 +89,7 @@ class Node:
 class NodeState:
     """Mutable per-node runtime state (the live fields of ``struct hostinfo``).
 
-    Driven by :mod:`sysmon.engine.state`. ``contacted`` is set by the *notifier* (the act
+    Driven by :mod:`psysmon.engine.state`. ``contacted`` is set by the *notifier* (the act
     of paging is the dedup point), never by the state machine.
     """
 

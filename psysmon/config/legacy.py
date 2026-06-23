@@ -25,14 +25,14 @@ Two deliberate departures from the C, both fixes:
   so one malformed line can't corrupt brace balance for the rest of the file.
 
 ``parse`` returns a :class:`ParseResult` carrying the root nodes, a dict of config-file
-settings overrides (to feed :func:`sysmon.config.settings.merge`), and collected warnings.
+settings overrides (to feed :func:`psysmon.config.settings.merge`), and collected warnings.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sysmon.config.model import DEFAULT_PORT, CheckType, Node
+from psysmon.config.model import DEFAULT_PORT, CheckType, Node
 
 # Valid syslog facilities (from match_facility in loadconfig.c); "none" disables logging.
 _FACILITIES = frozenset(

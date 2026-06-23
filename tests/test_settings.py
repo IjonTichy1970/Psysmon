@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sysmon.config.settings import Settings, cli_overrides, load, merge
+from psysmon.config.settings import Settings, cli_overrides, load, merge
 
 # --- defaults -------------------------------------------------------------------------
 
@@ -117,4 +117,4 @@ def test_load_version_exits(capsys):
     with pytest.raises(SystemExit) as exc:
         load(["--version"])
     assert exc.value.code == 0
-    assert "sysmon" in capsys.readouterr().out
+    assert "psysmon" in capsys.readouterr().out

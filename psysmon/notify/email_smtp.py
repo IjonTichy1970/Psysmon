@@ -17,11 +17,11 @@ import socket
 from collections.abc import Awaitable, Callable
 from email.message import EmailMessage
 
-from sysmon.config.model import Node, NodeState
-from sysmon.config.settings import Settings
-from sysmon.engine.state import PageIntent
-from sysmon.notify.base import DEFAULT_TEMPLATE, render_message
-from sysmon.status import errtostr
+from psysmon.config.model import Node, NodeState
+from psysmon.config.settings import Settings
+from psysmon.engine.state import PageIntent
+from psysmon.notify.base import DEFAULT_TEMPLATE, render_message
+from psysmon.status import errtostr
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class SmtpNotifier:
         self._now = now_wall or self._wall_clock
         self._timeout = timeout
         self._myname = settings.org_hostname or socket.gethostname()
-        self._from = settings.mail_from or f"sysmon@{self._myname}"
+        self._from = settings.mail_from or f"psysmon@{self._myname}"
 
     @staticmethod
     def _wall_clock() -> float:

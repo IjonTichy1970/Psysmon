@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from sysmon.engine.dnscache import DnsCache
+from psysmon.engine.dnscache import DnsCache
 
 
 class Clock:

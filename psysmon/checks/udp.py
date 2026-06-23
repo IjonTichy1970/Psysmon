@@ -3,7 +3,7 @@
 In production the only UDP checks are DNS (port 53), so the probe sends a minimal DNS query
 and treats *any* response as up — the point is reachability, not correctness, so even a
 SERVFAIL or REFUSED rcode proves the server answered. A clean authoritative-DNS check lives
-in :mod:`sysmon.checks.dns`; this module covers the generic legacy ``udp`` type.
+in :mod:`psysmon.checks.dns`; this module covers the generic legacy ``udp`` type.
 """
 
 from __future__ import annotations
@@ -13,9 +13,9 @@ import dns.exception
 import dns.message
 import dns.rdatatype
 
-from sysmon.checks import base
-from sysmon.config.model import Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.config.model import Node
+from psysmon.status import Status
 
 
 async def check(node: Node, ctx: base.CheckContext) -> int:

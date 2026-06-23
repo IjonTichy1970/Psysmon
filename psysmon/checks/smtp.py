@@ -3,14 +3,14 @@
 Opens a TCP connection and reads the greeting banner. A ``220`` greeting means the server is
 up; an immediate close (empty banner) means the server hung up without greeting; any other
 banner is a bad response. Connection-level failures (refused/unreachable/timeout) propagate as
-``OSError`` and are mapped by :func:`sysmon.checks.base.perform`.
+``OSError`` and are mapped by :func:`psysmon.checks.base.perform`.
 """
 
 from __future__ import annotations
 
-from sysmon.checks import base
-from sysmon.config.model import DEFAULT_PORT, CheckType, Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.config.model import DEFAULT_PORT, CheckType, Node
+from psysmon.status import Status
 
 
 async def check(node: Node, ctx: base.CheckContext) -> int:

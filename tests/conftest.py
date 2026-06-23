@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from sysmon.checks.base import CheckContext
+from psysmon.checks.base import CheckContext
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

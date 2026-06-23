@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import httpx
 
-from sysmon.checks import base
-from sysmon.checks.base import CheckContext
-from sysmon.config.model import CheckType, Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.checks.base import CheckContext
+from psysmon.config.model import CheckType, Node
+from psysmon.status import Status
 
 # Optional injectable transport for hermetic tests (e.g. httpx.MockTransport). Defaults to
 # None so production uses the real network transport.

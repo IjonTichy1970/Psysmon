@@ -3,14 +3,14 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sysmon"
+name = "psysmon"
 version = "0.1.0.dev0"
-description = "Dependency-aware network monitoring daemon (Python rewrite of the 1998 C sysmon)"
+description = "PSYSMON — dependency-aware network monitoring daemon (Python rewrite of the 1998 C sysmon)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "GPL-2.0-or-later" }
 authors = [{ name = "IjonTichy1970" }]
-keywords = ["monitoring", "network", "icmp", "ping", "daemon", "sysmon"]
+keywords = ["monitoring", "network", "icmp", "ping", "daemon", "psysmon", "sysmon"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
@@ -34,14 +34,14 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/IjonTichy1970/Sysmon"
-Issues = "https://github.com/IjonTichy1970/Sysmon/issues"
+Homepage = "https://github.com/IjonTichy1970/Psysmon"
+Issues = "https://github.com/IjonTichy1970/Psysmon/issues"
 
 [project.scripts]
-sysmon = "sysmon.__main__:main"
+psysmon = "psysmon.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["sysmon*"]
+include = ["psysmon*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

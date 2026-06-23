@@ -1,16 +1,16 @@
 """TCP connect-reachability check.
 
 A bare TCP connect: resolve the host, open a connection to ``node.port``, close it cleanly,
-and report :data:`~sysmon.status.Status.OK`. There is no protocol exchange — the connect
-either succeeds or raises a socket error, which :func:`sysmon.checks.base.perform` maps to the
+and report :data:`~psysmon.status.Status.OK`. There is no protocol exchange — the connect
+either succeeds or raises a socket error, which :func:`psysmon.checks.base.perform` maps to the
 appropriate failure code (refused / unreachable / timed out).
 """
 
 from __future__ import annotations
 
-from sysmon.checks import base
-from sysmon.config.model import Node
-from sysmon.status import Status
+from psysmon.checks import base
+from psysmon.config.model import Node
+from psysmon.status import Status
 
 
 async def check(node: Node, ctx: base.CheckContext) -> int:

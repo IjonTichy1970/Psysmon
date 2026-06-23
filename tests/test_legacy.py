@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from sysmon.config.detect import ConfigFormat, detect
-from sysmon.config.legacy import parse
-from sysmon.config.model import CheckType
+from psysmon.config.detect import ConfigFormat, detect
+from psysmon.config.legacy import parse
+from psysmon.config.model import CheckType
 
 
 def _count(nodes) -> int:
@@ -73,7 +73,7 @@ def test_sample_overrides(sample_config_text):
     res = parse(sample_config_text)
     assert res.overrides == {
         "status_html": True,
-        "status_path": "/var/www/sysmon/status.html",
+        "status_path": "/var/www/psysmon/status.html",
         "pageinterval_min": 15,
         "syslog_facility": "local4",
         "dnslog_s": 180,

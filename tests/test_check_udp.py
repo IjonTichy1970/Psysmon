@@ -13,9 +13,9 @@ import dns.rdata
 import dns.rdataclass
 import dns.rdatatype
 
-from sysmon.checks import base, udp
-from sysmon.config.model import CheckType, Node
-from sysmon.status import Status
+from psysmon.checks import base, udp
+from psysmon.config.model import CheckType, Node
+from psysmon.status import Status
 
 from .conftest import FakeResolver
 

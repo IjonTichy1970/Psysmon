@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sysmon.config.model import DEFAULT_PORT, CheckType, Node, NodeState, type_to_name
+from psysmon.config.model import DEFAULT_PORT, CheckType, Node, NodeState, type_to_name
 
 
 def test_node_defaults():

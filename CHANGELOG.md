@@ -47,5 +47,9 @@ All notable changes to this project are documented here. The format is based on
   columns, browser auto-refresh, down-only by default with suppressed hosts hidden) plus a flat
   text variant and a JSON endpoint (all nodes, with a suppressed flag). Published atomically so
   readers never see a partial file. All dynamic content is HTML-escaped.
+- Runnable daemon: the `psysmon` command loads the config, builds the engine, and runs it —
+  publishing the status file periodically, handling SIGTERM/SIGINT (graceful stop) and SIGHUP
+  (config reload that preserves live up/down state for hosts that still exist), and backgrounding
+  itself unless `--no-fork`.
 
-[Unreleased]: https://github.com/IjonTichy1970/Sysmon/commits/main
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/commits/main

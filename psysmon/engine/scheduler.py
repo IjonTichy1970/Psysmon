@@ -37,12 +37,12 @@ from dataclasses import dataclass
 
 from psysmon.checks import base, dns, http, pop3, smtp, tcp, udp
 from psysmon.checks.ping import PingService
-from psysmon.config.model import CheckType, Node, NodeState
+from psysmon.config.model import CheckType, Node, NodeState, type_to_name
 from psysmon.config.settings import Settings
 from psysmon.engine.clock import Clock, SystemClock
 from psysmon.engine.dnscache import DnsCache
 from psysmon.engine.state import PageIntent, apply_result, maybe_repage
-from psysmon.status import is_up
+from psysmon.status import errtostr, is_up
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,7 @@ class Scheduler:
         )
         self._default_interval = settings.interval_s
         self._pageinterval_s = settings.pageinterval_min * 60
+        self._slow_check_s = settings.slow_check_s
         self._sem = asyncio.Semaphore(settings.max_concurrency)
         self._stop = asyncio.Event()
         self._dirty = asyncio.Event()
@@ -268,10 +269,20 @@ class Scheduler:
         node = sched.node
         try:
             if node.check_type is CheckType.PING:
+                started = self._clock.monotonic()
                 code = await self._runner(node, self._ctx)
             else:
                 async with self._sem:
+                    # Start timing only after acquiring the slot: a check that merely queued
+                    # behind the concurrency cap shouldn't read as "ran for N seconds".
+                    started = self._clock.monotonic()
                     code = await self._runner(node, self._ctx)
+            elapsed = self._clock.monotonic() - started
+            if self._slow_check_s > 0 and elapsed >= self._slow_check_s:
+                logger.info("Check of %s of %s ran for %.1f seconds",
+                            node.hostname, type_to_name(node.check_type), elapsed)
+            logger.debug("checked %s of %s -> %s",
+                         node.hostname, type_to_name(node.check_type), errtostr(code))
             if not sched.alive:
                 return  # config was reloaded mid-check; this node's state is now orphaned
             if not self._eligible(sched):
@@ -311,6 +322,11 @@ class Scheduler:
 
     def node_states(self) -> list[tuple[Node, NodeState]]:
         return [(s.node, s.state) for s in self._scheduled]
+
+    def dns_stats(self) -> dict[str, int] | None:
+        """DNS-cache stats for the periodic ``dnslog`` line, or None if the resolver has none."""
+        stats = getattr(self._resolver, "stats", None)
+        return stats if isinstance(stats, dict) else None
 
     @property
     def ping_service(self) -> PingService:

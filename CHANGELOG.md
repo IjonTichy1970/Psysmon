@@ -11,6 +11,15 @@ All notable changes to this project are documented here. The format is based on
   publish, so a fresh deploy renders the logo without a manual copy step. An existing
   `psysmon-logo.png` in the status directory is left untouched, so a custom logo is preserved
   ([#58](https://github.com/IjonTichy1970/Psysmon/issues/58)).
+- Operational syslog logging at selectable levels of detail. Verbosity is set with
+  `config loglevel <warning|info|debug>` (or `--log-level` / `-v` / `-vv`): `info` — the default —
+  logs host down/recovery and pages, a periodic `monitoring N hosts - U up, D down, S suppressed`
+  heartbeat, periodic DNS-cache stats (`dnscache periodic - … hits … misses … expired`), and
+  slow-check durations (`Check of <host> of <type> ran for N seconds`); `debug` adds a per-check
+  result line. The heartbeat interval (`config heartbeat <sec>` / `--heartbeat`, default 300,
+  `0` disables), the DNS-stats interval (`config dnslog <sec>`), and the slow-check threshold
+  (`--slow-check <sec>`, default 30) are all configurable
+  ([#59](https://github.com/IjonTichy1970/Psysmon/issues/59)).
 
 ## [0.1.2] — 2026-06-23 — ping false-DOWN + POP3 status accuracy
 

@@ -8,6 +8,7 @@ without real network or wall-clock waits.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import Counter
 
 from psysmon.config.model import CheckType, Node
@@ -72,6 +73,105 @@ async def tick_drain(sched):
 
 def state_of(sched, host):
     return next(st for nd, st in sched.node_states() if nd.hostname == host)
+
+
+# --- operational logging (#59) --------------------------------------------------------
+
+async def test_slow_check_is_logged(caplog):
+    clock = ManualClock()
+
+    async def slow(node, ctx):
+        clock.advance(31)  # the check "ran" 31s on the (manual) clock
+        return Status.OK
+
+    sched, _ = make([node("slow.net", CheckType.TCP)], slow, clock, slow_check_s=30.0)
+    with caplog.at_level(logging.INFO, logger="psysmon.engine.scheduler"):
+        await tick_drain(sched)
+    assert "Check of slow.net of tcp ran for 31.0 seconds" in caplog.text
+
+
+async def test_fast_check_is_not_logged_as_slow(caplog):
+    clock = ManualClock()
+    sched, _ = make([node("fast.net", CheckType.TCP)], ScriptedRunner(), clock, slow_check_s=30.0)
+    with caplog.at_level(logging.INFO, logger="psysmon.engine.scheduler"):
+        await tick_drain(sched)
+    assert "ran for" not in caplog.text
+
+
+async def test_slow_check_threshold_zero_disables(caplog):
+    clock = ManualClock()
+
+    async def slow(node, ctx):
+        clock.advance(99)
+        return Status.OK
+
+    sched, _ = make([node("slow.net", CheckType.TCP)], slow, clock, slow_check_s=0.0)
+    with caplog.at_level(logging.INFO, logger="psysmon.engine.scheduler"):
+        await tick_drain(sched)
+    assert "ran for" not in caplog.text  # 0 disables the slow-check log
+
+
+async def test_per_check_result_logged_at_debug(caplog):
+    clock = ManualClock()
+    sched, _ = make(
+        [node("h.net", CheckType.TCP)], ScriptedRunner({"h.net": Status.CONN_REFUSED}), clock
+    )
+    with caplog.at_level(logging.DEBUG, logger="psysmon.engine.scheduler"):
+        await tick_drain(sched)
+    assert "checked h.net of tcp -> Conn Ref" in caplog.text
+
+
+async def test_per_check_result_not_logged_at_info(caplog):
+    # The per-check result line is DEBUG-gated; at the default info level it must NOT appear —
+    # this is what makes the leveled logging actually leveled.
+    clock = ManualClock()
+    sched, _ = make([node("h.net", CheckType.TCP)], ScriptedRunner(), clock)
+    with caplog.at_level(logging.INFO, logger="psysmon.engine.scheduler"):
+        await tick_drain(sched)
+    assert "checked h.net" not in caplog.text
+
+
+async def test_queue_wait_does_not_count_as_slow(caplog):
+    # A check that merely waits for a concurrency slot must NOT be logged "slow" — only its own
+    # execution time counts (#59 review). max_concurrency=1: a holder pins the only slot for 40s
+    # while a do-nothing waiter queues behind it; the waiter's own probe is instant.
+    clock = ManualClock()
+    holder_in = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(nd, ctx):
+        if nd.hostname == "holder":
+            holder_in.set()
+            await release.wait()  # pin the only slot
+        return Status.OK
+
+    sched, _ = make(
+        [node("holder", CheckType.TCP), node("waiter", CheckType.TCP)],
+        runner, clock, max_concurrency=1, slow_check_s=30.0,
+    )
+    with caplog.at_level(logging.INFO, logger="psysmon.engine.scheduler"):
+        await sched.tick()       # dispatch both; one holds the slot, the other queues
+        await holder_in.wait()
+        clock.advance(40)        # 40s elapse while the waiter is blocked on the semaphore
+        release.set()
+        await sched.drain()
+    assert "Check of waiter" not in caplog.text  # queue-wait is not "ran for"
+    assert "Check of holder of tcp ran for 40.0 seconds" in caplog.text  # genuine 40s of work
+
+
+def test_dns_stats_exposes_resolver_stats():
+    sched, _ = make([], ScriptedRunner(), ManualClock())  # default DnsCache resolver
+    stats = sched.dns_stats()
+    assert stats is not None and {"hits", "misses", "expired", "entries"} <= set(stats)
+
+
+def test_dns_stats_none_when_resolver_has_no_stats():
+    class _NoStats:
+        async def resolve(self, host):
+            return "127.0.0.1"
+
+    sched = Scheduler([], settings(), resolver=_NoStats(), runner=ScriptedRunner())
+    assert sched.dns_stats() is None
 
 
 # --- threshold paging -----------------------------------------------------------------

@@ -44,6 +44,7 @@ class Settings:
     max_concurrency: int = 50  # bound on concurrent socket/protocol checks
     numfailures: int = 2  # default threshold before paging
     pageinterval_min: int = 10  # re-page interval while down (minutes)
+    slow_check_s: float = 30.0  # log any check that runs at least this long (0 disables)
 
     # DNS cache
     dnsexpire_s: int = 900
@@ -57,6 +58,8 @@ class Settings:
 
     # Logging / process
     syslog_facility: str | None = "daemon"  # None / "none" disables syslog
+    log_level: str = "info"  # warning | info | debug — verbosity of operational logging
+    heartbeat_s: int = 300  # periodic "monitoring N hosts" summary interval; 0 disables
     foreground: bool = False  # `-d` / don't fork
 
 
@@ -112,6 +115,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--pageinterval", dest="pageinterval_min", type=int, metavar="MIN", help="re-page interval"
     )
+    p.add_argument(
+        "--slow-check", dest="slow_check_s", type=float, metavar="SEC",
+        help="log any check running at least this long (0 disables)",
+    )
 
     # DNS cache
     p.add_argument("--dnsexpire", dest="dnsexpire_s", type=int, metavar="SEC", help="DNS cache TTL")
@@ -128,6 +135,18 @@ def build_parser() -> argparse.ArgumentParser:
     # Logging / process
     p.add_argument(
         "--syslog-facility", dest="syslog_facility", metavar="FAC", help="syslog facility"
+    )
+    p.add_argument(
+        "--log-level", dest="log_level", choices=["warning", "info", "debug"],
+        help="logging verbosity (default info)",
+    )
+    p.add_argument(
+        "-v", "--verbose", dest="verbose", action="count",
+        help="set verbosity (-v=info, -vv=debug) as an absolute level; overridden by --log-level",
+    )
+    p.add_argument(
+        "--heartbeat", dest="heartbeat_s", type=int, metavar="SEC",
+        help='periodic "monitoring N hosts" summary interval (0 disables)',
     )
     p.add_argument("-d", "--no-fork", dest="no_fork", action="store_true", help="run in foreground")
     return p
@@ -150,6 +169,9 @@ def cli_overrides(argv: list[str] | None = None) -> dict[str, object]:
         out["foreground"] = True
     if raw.get("show_up"):
         out["show_up_also"] = True
+    # -v/-vv set the level only when --log-level wasn't given explicitly (mapped above).
+    if "log_level" not in out and raw.get("verbose"):
+        out["log_level"] = "debug" if raw["verbose"] >= 2 else "info"
     return out
 
 

@@ -232,6 +232,21 @@ def test_logging_none_and_invalid():
     assert any("logging facility" in w for w in res.warnings)
 
 
+def test_config_loglevel():
+    res = parse("config loglevel debug\n")
+    assert res.overrides["log_level"] == "debug"
+    assert "syslog_facility" not in res.overrides  # disjoint from `config logging`
+    bad = parse("config loglevel bogus\n")
+    assert bad.overrides["log_level"] == "info"  # unknown level -> info
+    assert any("loglevel" in w for w in bad.warnings)
+    # ...and `config logging` must not be misrouted into log_level.
+    assert "log_level" not in parse("config logging local4\n").overrides
+
+
+def test_config_heartbeat():
+    assert parse("config heartbeat 120\n").overrides["heartbeat_s"] == 120
+
+
 # --- format detection -----------------------------------------------------------------
 
 def test_detect_legacy(sample_config_text):

@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- The legacy config parser no longer silently truncates the rest of the file on a stray
+  top-level `}`; it warns and continues so trailing stanzas still parse
+  ([#42](https://github.com/IjonTichy1970/Psysmon/issues/42)).
+
 ## [0.1.0] — 2026-06-23 — initial release
 
 ### Added

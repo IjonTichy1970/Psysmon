@@ -87,12 +87,10 @@ psysmon -f /etc/psysmon.conf \
         --smtp-host smtp.example.net --mail-from psysmon@example.net
 ```
 
-If you publish the HTML status page, also copy the logo next to it (the page references it by a
-relative path):
-
-```bash
-sudo cp images/psysmon-logo.png /var/www/psysmon/
-```
+If you publish the HTML status page, the daemon automatically places its logo next to the status
+file on first publish (the page references it by a relative path), so there's nothing to copy. To
+use your own logo instead, drop a `psysmon-logo.png` into the status-file's directory beforehand —
+the daemon won't overwrite an existing one.
 
 ## 4. Run
 

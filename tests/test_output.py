@@ -158,7 +158,7 @@ def test_publish_cleans_up_temp_on_write_failure(tmp_path, monkeypatch):
         orig_write = handle.write
 
         def boom(_s):
-            orig_write("partial")
+            orig_write(b"partial")  # publish() now writes bytes via the shared atomic writer
             raise OSError("disk full")
 
         handle.write = boom
@@ -246,6 +246,99 @@ def test_render_and_publish_text(tmp_path):
 
 def test_render_and_publish_noop_without_path():
     render_and_publish([], Settings())  # status_path is None -> no file, no error
+
+
+# --- logo auto-deploy (#58) ------------------------------------------------------------
+
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def _bundled_logo() -> bytes:
+    from importlib import resources
+
+    return resources.files("psysmon.assets").joinpath("psysmon-logo.png").read_bytes()
+
+
+def test_bundled_logo_is_loadable():
+    # The logo must ship as an importable package resource so the daemon can deploy it at runtime.
+    data = _bundled_logo()
+    assert data.startswith(_PNG_MAGIC) and len(data) > 1000
+
+
+def test_render_and_publish_html_deploys_logo(tmp_path):
+    # On HTML publish the daemon drops the logo next to the status file (the page references it by
+    # a relative src), so a fresh deploy renders without the old manual copy step (#58).
+    s = Settings()
+    s.status_path = str(tmp_path / "s.html")
+    s.status_html = True
+    render_and_publish([ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
+                       s, now_wall=NOW)
+    logo = tmp_path / "psysmon-logo.png"
+    assert logo.exists()
+    assert logo.read_bytes() == _bundled_logo()  # the bundled asset, verbatim
+
+
+def test_render_and_publish_does_not_overwrite_existing_logo(tmp_path):
+    # An operator's custom logo already in place must be preserved, never clobbered (#58).
+    s = Settings()
+    s.status_path = str(tmp_path / "s.html")
+    s.status_html = True
+    custom = tmp_path / "psysmon-logo.png"
+    custom.write_bytes(b"CUSTOM-LOGO-BYTES")
+    render_and_publish([ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
+                       s, now_wall=NOW)
+    assert custom.read_bytes() == b"CUSTOM-LOGO-BYTES"
+
+
+def test_render_and_publish_text_does_not_deploy_logo(tmp_path):
+    # Text output doesn't reference the logo, so none should be written next to it.
+    s = Settings()
+    s.status_path = str(tmp_path / "s.txt")
+    s.status_html = False
+    render_and_publish([ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
+                       s, now_wall=NOW)
+    assert not (tmp_path / "psysmon-logo.png").exists()
+
+
+def test_logo_deploy_failure_never_blocks_publish(tmp_path, monkeypatch):
+    # The logo deploy is strictly best-effort: if the bundled asset can't be loaded OR can't be
+    # written, the status page must still publish (#58). Locks that contract against a future
+    # narrowing of the guards in _ensure_logo. (Separate status paths per phase so we never have
+    # to delete the 0o444 file Windows won't unlink.)
+    import psysmon.output.statuspage as sp
+
+    states = [ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)]
+
+    def settings_for(name):
+        s = Settings()
+        s.status_path = str(tmp_path / name)
+        s.status_html = True
+        return s
+
+    # (a) bundled resource unavailable -> swallowed; status file still written.
+    def boom_files(_pkg):
+        raise ModuleNotFoundError("no assets")
+
+    monkeypatch.setattr(sp.resources, "files", boom_files)
+    sa = settings_for("a.html")
+    render_and_publish(states, sa, now_wall=NOW)  # must not raise
+    assert Path(sa.status_path).read_text().startswith("<!DOCTYPE html>")
+    monkeypatch.undo()
+
+    # (b) logo write fails while the status write succeeds -> swallowed; status file still written.
+    real_atomic = sp._atomic_write
+
+    def fail_logo_write(path, data):
+        if path.endswith("psysmon-logo.png"):
+            raise OSError("disk full")
+        return real_atomic(path, data)
+
+    monkeypatch.setattr(sp, "_atomic_write", fail_logo_write)
+    sb = settings_for("b.html")
+    render_and_publish(states, sb, now_wall=NOW)  # must not raise
+    assert Path(sb.status_path).read_text().startswith("<!DOCTYPE html>")
+
+    assert not (tmp_path / "psysmon-logo.png").exists()  # neither failure left a logo behind
 
 
 # --- JSON ------------------------------------------------------------------------------

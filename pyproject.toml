@@ -43,6 +43,9 @@ psysmon = "psysmon.__main__:main"
 [tool.setuptools.packages.find]
 include = ["psysmon*"]
 
+[tool.setuptools.package-data]
+"psysmon.assets" = ["*.png"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

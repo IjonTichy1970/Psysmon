@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- The daemon now ships its status-page logo and writes it next to the HTML status file on first
+  publish, so a fresh deploy renders the logo without a manual copy step. An existing
+  `psysmon-logo.png` in the status directory is left untouched, so a custom logo is preserved
+  ([#58](https://github.com/IjonTichy1970/Psysmon/issues/58)).
+
 ## [0.1.2] — 2026-06-23 — ping false-DOWN + POP3 status accuracy
 
 ### Fixed

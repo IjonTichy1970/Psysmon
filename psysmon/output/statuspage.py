@@ -15,9 +15,11 @@ Input is the scheduler's ``node_states()`` — a list of ``(Node, NodeState)``.
 from __future__ import annotations
 
 import html
+import logging
 import os
 import tempfile
 import time
+from importlib import resources
 
 from psysmon import __version__, timefmt
 from psysmon.config.model import Node, NodeState, type_to_name
@@ -25,6 +27,11 @@ from psysmon.config.settings import Settings
 from psysmon.status import errtostr, is_up
 
 NodeStates = list[tuple[Node, NodeState]]
+
+log = logging.getLogger("psysmon.output")
+
+# Bundled in psysmon/assets/; the daemon deploys a copy next to the HTML status file it writes.
+_LOGO_NAME = "psysmon-logo.png"
 
 # Palette sampled from the logo: navy background, teal glow, logo green/yellow, alert red.
 _CSS = """
@@ -199,11 +206,20 @@ def publish(content: str, path: str) -> None:
     process to follow and overwrite. On any failure before the rename completes the temp file is
     removed, so a mid-write error (disk full, encoding error) never leaves a stray temp behind.
     """
+    _atomic_write(path, content.encode("utf-8"))
+
+
+def _atomic_write(path: str, data: bytes) -> None:
+    """Write ``data`` bytes to ``path`` atomically and symlink-safely (see :func:`publish`).
+
+    Shared by the status-file writer and the logo deploy so both get the same unguessable-temp ->
+    ``0o444`` -> ``os.replace`` guarantees and the same mid-write cleanup.
+    """
     directory = os.path.dirname(path) or "."
     fd, tmp = tempfile.mkstemp(dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
         os.chmod(tmp, 0o444)
         if os.name == "nt" and os.path.exists(path):
             try:  # Windows refuses os.replace onto a read-only file; clear the bit first.
@@ -228,6 +244,29 @@ def _unlink_quietly(path: str) -> None:
         pass
 
 
+def _ensure_logo(status_path: str) -> None:
+    """Drop the bundled logo next to the HTML status file if it isn't already there.
+
+    The page references the logo by a relative ``src``, so it must live in the same directory to
+    render. We write it once when missing and never overwrite an existing file (so an operator's
+    custom logo is preserved), using the same atomic, symlink-safe write as the status file. Any
+    failure is logged and swallowed — a missing or unreadable logo must never stop the status page
+    from publishing.
+    """
+    target = os.path.join(os.path.dirname(status_path) or ".", _LOGO_NAME)
+    if os.path.exists(target):
+        return
+    try:
+        data = resources.files("psysmon.assets").joinpath(_LOGO_NAME).read_bytes()
+    except (ModuleNotFoundError, OSError) as exc:  # FileNotFoundError is an OSError subclass
+        log.warning("psysmon: bundled logo unavailable; status page will lack it (%s)", exc)
+        return
+    try:
+        _atomic_write(target, data)
+    except OSError as exc:
+        log.warning("psysmon: could not deploy logo to %s (%s)", target, exc)
+
+
 def render_and_publish(
     node_states: NodeStates, settings: Settings, *, now_wall: float | None = None
 ) -> None:
@@ -242,7 +281,7 @@ def render_and_publish(
             org_hostname=org,
             refresh_s=settings.status_refresh_s,
             show_up_also=settings.show_up_also,
-            logo_url="psysmon-logo.png",
+            logo_url=_LOGO_NAME,
             now_wall=now,
         )
     else:
@@ -250,3 +289,5 @@ def render_and_publish(
             node_states, org_hostname=org, show_up_also=settings.show_up_also, now_wall=now
         )
     publish(content, settings.status_path)
+    if settings.status_html:
+        _ensure_logo(settings.status_path)

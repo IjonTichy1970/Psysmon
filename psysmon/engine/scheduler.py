@@ -237,7 +237,11 @@ class Scheduler:
             if not sched.alive:
                 return  # config was reloaded mid-check; this node's state is now orphaned
             if not self._eligible(sched):
-                return  # gate fell while we ran; discard the stale result
+                # Gate fell while we ran: discard the stale result, but mark suppressed now so
+                # status/JSON immediately reflect that the node is gated off (matching tick()'s
+                # ineligible branch) instead of showing a stale up host for up to one interval.
+                sched.state.suppressed = True
+                return
             sched.state.suppressed = False
             transition = apply_result(sched.state, code, self._clock.wall())
             sched.checked = True

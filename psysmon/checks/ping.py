@@ -2,12 +2,19 @@
 
 Reproduces ``icmp.c`` but modern and concurrent: a single shared raw ICMP socket opened
 lazily (the first time a ping is actually run), registered with ``loop.add_reader``; outbound
-echo requests carry a per-process-randomized, monotonic identifier/sequence, and replies are
-demultiplexed to per-(identifier, sequence) futures **only after the reply's source address is
-verified against the pinged target** (the shared socket receives every inbound echo reply, so
-matching on id/seq alone would let any host — or a spoofed packet — forge a host-is-up result).
-The socket is optionally ``bind()``-ed to the configured source IP (ACL-load-bearing). One
-unanswered echo after the retry budget -> ``Status.UNPINGABLE``.
+echo requests carry a per-process-randomized, monotonic identifier/sequence plus a per-probe
+random nonce in the payload, and replies are demultiplexed to per-(identifier, sequence)
+futures **only after the reply echoes that nonce back** (the shared socket receives every
+inbound echo reply, so matching on id/seq alone would let any host — or a spoofed packet that
+guessed the id/seq — forge a host-is-up result). Crucially the reply is *not* required to come
+from the pinged address: routers, asymmetric routing, and NAT legitimately source an echo reply
+from a different interface/address, and the nonce authenticates the reply without rejecting
+those (a strict source-IP match read such healthy gateways as ``UNPINGABLE`` — issue #29 fix).
+This assumes the responder echoes our payload back, as RFC 792 requires; the rare host that
+truncates the ICMP data below the nonce length would read ``UNPINGABLE`` — virtually all stacks
+(Linux/BSD/Windows, Cisco/Juniper) comply. The socket is optionally ``bind()``-ed to the
+configured source IP (ACL-load-bearing). One unanswered echo after the retry budget ->
+``Status.UNPINGABLE``.
 
 The raw socket is *not* opened at import time, so this module imports cleanly without
 privilege on both Windows and Linux. It is opened on first use (which requires root / raw-socket
@@ -34,7 +41,10 @@ ICMP_ECHO_REQUEST = 8
 ICMP_ECHO_REPLY = 0
 
 _ECHO_HEADER = struct.Struct("!BBHHH")  # type, code, checksum, identifier, sequence
+# Fallback payload for the standalone build_echo_request() framing helper / tests only — real
+# probes always send a fresh per-probe random nonce (see _probe), never this fixed value.
 _DEFAULT_PAYLOAD = b"psysmon-ping-payload"
+_NONCE_LEN = 16  # per-probe random payload that the reply must echo back (anti-forgery, #29)
 _RETRIES = 2  # total attempts per check = 1 + _RETRIES
 
 
@@ -62,12 +72,13 @@ def build_echo_request(ident: int, seq: int, payload: bytes = _DEFAULT_PAYLOAD) 
     return header + payload
 
 
-def parse_echo_reply(packet: bytes) -> tuple[int, int] | None:
-    """Parse a received packet, returning ``(identifier, sequence)`` for an echo reply.
+def parse_echo_reply(packet: bytes) -> tuple[int, int, bytes] | None:
+    """Parse a received packet, returning ``(identifier, sequence, payload)`` for an echo reply.
 
     The kernel hands back the full IPv4 datagram on a raw socket, so the IPv4 header (whose
     length comes from the IHL nibble) is skipped first. Returns ``None`` for any packet that is
-    not a well-formed ICMP type-0 echo reply (wrong type, truncated, etc.).
+    not a well-formed ICMP type-0 echo reply (wrong type, truncated, etc.). The payload — the
+    bytes after the 8-byte ICMP header — is returned so the caller can verify the echoed nonce.
     """
     if len(packet) < 20:  # minimum IPv4 header.
         return None
@@ -81,7 +92,7 @@ def parse_echo_reply(packet: bytes) -> tuple[int, int] | None:
     msg_type, _code, _checksum, ident, seq = _ECHO_HEADER.unpack(icmp[: _ECHO_HEADER.size])
     if msg_type != ICMP_ECHO_REPLY:
         return None
-    return ident, seq
+    return ident, seq, icmp[_ECHO_HEADER.size :]
 
 
 class PingService:
@@ -94,8 +105,8 @@ class PingService:
         # id/seq base: randomized per process so an off-path attacker can't predict the
         # in-flight (ident, seq) of a probe and forge a reply (#29). Still monotonic from there.
         self._counter = secrets.randbits(32)
-        # (ident, seq) -> (waiter, expected peer IP); the IP gates which replies may resolve it.
-        self._pending: dict[tuple[int, int], tuple[asyncio.Future[None], str]] = {}
+        # (ident, seq) -> (waiter, expected nonce); the nonce gates which replies may resolve it.
+        self._pending: dict[tuple[int, int], tuple[asyncio.Future[None], bytes]] = {}
 
     # --- socket lifecycle -------------------------------------------------------------
 
@@ -156,24 +167,28 @@ class PingService:
     # --- reply demux ------------------------------------------------------------------
 
     def _on_readable(self, sock: socket.socket) -> None:
-        """``add_reader`` callback: read a packet and wake the matching, source-verified waiter."""
+        """``add_reader`` callback: read a packet and wake the matching, nonce-verified waiter."""
         try:
-            packet, addr = sock.recvfrom(2048)
+            packet, _addr = sock.recvfrom(2048)
         except OSError:
             return
         parsed = parse_echo_reply(packet)
         if parsed is None:
             return
-        entry = self._pending.get(parsed)
+        ident, seq, payload = parsed
+        entry = self._pending.get((ident, seq))
         if entry is None:
             return
-        future, expected_ip = entry
-        # The reply must come from the host we actually pinged. The shared raw socket receives
-        # ALL inbound echo replies, so matching (ident, seq) alone would let another host — or a
-        # spoofed off-path packet that guessed the (now randomized) id/seq — satisfy the waiter
-        # and forge a host-is-up result, masking an outage and (via dependency gating) silencing
-        # a whole subtree.
-        if addr[0] != expected_ip:
+        future, expected_nonce = entry
+        # The reply must echo back the per-probe random nonce we sent. The shared raw socket
+        # receives ALL inbound echo replies, so matching (ident, seq) alone would let another
+        # host — or a spoofed off-path packet that guessed the (randomized) id/seq — satisfy the
+        # waiter and forge a host-is-up result, masking an outage and (via dependency gating)
+        # silencing a whole subtree. Only a host that actually received our request can echo the
+        # unpredictable nonce. Unlike a strict source-address match, this accepts a legitimate
+        # reply sourced from a different address (a router's egress interface, NAT, asymmetric
+        # routing) — the false-UNPINGABLE the source check caused on healthy gateways (#29 fix).
+        if not payload.startswith(expected_nonce):
             return
         if not future.done():
             future.set_result(None)
@@ -211,17 +226,18 @@ class PingService:
             return Status.UNPINGABLE
 
     async def _probe(self, ip: str, sock: socket.socket, ctx: base.CheckContext) -> int:
-        """Send up to ``1 + _RETRIES`` echoes; first matching reply -> OK, else UNPINGABLE."""
+        """Send up to ``1 + _RETRIES`` echoes; first reply echoing our nonce -> OK, else down."""
         loop = asyncio.get_running_loop()
         # Split the overall budget across attempts so the whole check still fits ctx.timeout_s.
         per_attempt = max(ctx.timeout_s / (1 + _RETRIES), 0.001)
 
         for _ in range(1 + _RETRIES):
             ident, seq = self._next_key()
+            nonce = secrets.token_bytes(_NONCE_LEN)
             future: asyncio.Future[None] = loop.create_future()
-            self._pending[(ident, seq)] = (future, ip)  # only a reply from `ip` may resolve it
+            self._pending[(ident, seq)] = (future, nonce)  # only a reply echoing `nonce` resolves
             try:
-                packet = build_echo_request(ident, seq)
+                packet = build_echo_request(ident, seq, nonce)
                 sock.sendto(packet, (ip, 0))
                 try:
                     await asyncio.wait_for(future, per_attempt)

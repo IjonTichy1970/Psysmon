@@ -20,8 +20,18 @@ def node(port: int = 0, username: str = "alice", password: str = "secret") -> No
     )
 
 
-def make_pop3_handler(pass_reply: bytes, greeting: bytes = b"+OK POP3 ready\r\n"):
-    """Build a tcp_server handler emulating a POP3 server, recording client lines seen."""
+def make_pop3_handler(
+    pass_reply: bytes | None,
+    greeting: bytes = b"+OK POP3 ready\r\n",
+    *,
+    user_reply: bytes | None = b"+OK send PASS\r\n",
+):
+    """Build a tcp_server handler emulating a POP3 server, recording client lines seen.
+
+    A ``None`` reply (``user_reply`` or ``pass_reply``) means: read the client's command, then
+    close the connection WITHOUT sending a reply — modelling a server that drops mid-auth (e.g.
+    a post-auth backend fault). An ``-ERR`` ``user_reply`` closes after the rejection.
+    """
     seen: list[bytes] = []
 
     async def handler(reader, writer):
@@ -32,10 +42,19 @@ def make_pop3_handler(pass_reply: bytes, greeting: bytes = b"+OK POP3 ready\r\n"
             return
         # USER
         seen.append(await reader.readline())
-        writer.write(b"+OK send PASS\r\n")
+        if user_reply is None:  # drop without answering USER
+            writer.close()
+            return
+        writer.write(user_reply)
         await writer.drain()
+        if user_reply.startswith(b"-ERR"):  # username rejected, server closes
+            writer.close()
+            return
         # PASS
         seen.append(await reader.readline())
+        if pass_reply is None:  # drop without answering PASS (a post-auth drop)
+            writer.close()
+            return
         writer.write(pass_reply)
         await writer.drain()
         # Optionally drain QUIT
@@ -67,8 +86,61 @@ async def test_bad_auth_on_pass(check_ctx, tcp_server):
     assert await check(node(port=port), check_ctx) == Status.BAD_AUTH
 
 
+async def test_bad_auth_on_user(check_ctx, tcp_server):
+    # The server rejects the username outright (-ERR on USER). We must classify that as BAD_AUTH
+    # and NOT go on to send PASS — previously the USER reply was read and discarded (#54).
+    handler, seen = make_pop3_handler(b"+OK logged in\r\n", user_reply=b"-ERR no such user\r\n")
+    port = await tcp_server(handler)
+
+    assert await check(node(port=port), check_ctx) == Status.BAD_AUTH
+    assert seen == [b"USER alice\r\n"]  # PASS was never sent
+
+
+async def test_garbage_user_reply_still_sends_pass(check_ctx, tcp_server):
+    # A USER reply that is neither +OK nor -ERR nor empty is not a clear rejection, so the check
+    # proceeds to PASS (which then decides the verdict) — the deliberate, faithful behavior. Here
+    # PASS succeeds, so the overall result is OK despite the odd USER reply.
+    handler, seen = make_pop3_handler(b"+OK logged in\r\n", user_reply=b"?? odd\r\n")
+    port = await tcp_server(handler)
+
+    assert await check(node(port=port), check_ctx) == Status.OK
+    assert seen[0] == b"USER alice\r\n"
+    assert seen[1] == b"PASS secret\r\n"  # PASS was still sent
+
+
+async def test_no_response_when_dropped_at_user(check_ctx, tcp_server):
+    # The connection drops after USER with no reply at all -> NO_RESPONSE: there was no response
+    # (so not BAD_AUTH) and nothing malformed was received (so not BAD_RESPONSE) (#54).
+    handler, _ = make_pop3_handler(b"+OK logged in\r\n", user_reply=None)
+    port = await tcp_server(handler)
+
+    assert await check(node(port=port), check_ctx) == Status.NO_RESPONSE
+
+
+async def test_no_response_when_dropped_at_pass(check_ctx, tcp_server):
+    # The real mail.example.net case: USER is accepted (+OK), then the server drops the
+    # connection at PASS with no reply line (a post-auth backend fault). That is NO_RESPONSE, NOT
+    # BAD_AUTH — a *correct* password can also be dropped post-auth, so reporting an auth failure
+    # would misdirect the operator. Previously this fell through to BAD_RESPONSE (#54).
+    handler, seen = make_pop3_handler(None)  # read PASS, then close without replying
+    port = await tcp_server(handler)
+
+    assert await check(node(port=port), check_ctx) == Status.NO_RESPONSE
+    assert seen[0] == b"USER alice\r\n"
+    assert seen[1] == b"PASS secret\r\n"  # PASS was sent; the server just never answered
+
+
 async def test_bad_greeting_no_response(check_ctx, tcp_server):
     handler, _ = make_pop3_handler(b"+OK", greeting=b"-ERR not ready\r\n")
+    port = await tcp_server(handler)
+
+    assert await check(node(port=port), check_ctx) == Status.NO_RESPONSE
+
+
+async def test_no_greeting_no_response(check_ctx, tcp_server):
+    # The server accepts the connection then drops it before sending any greeting (empty/EOF) ->
+    # NO_RESPONSE. Distinct from a malformed greeting; pins the empty-greeting branch.
+    handler, _ = make_pop3_handler(b"+OK", greeting=b"")
     port = await tcp_server(handler)
 
     assert await check(node(port=port), check_ctx) == Status.NO_RESPONSE

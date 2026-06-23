@@ -16,6 +16,7 @@ from psysmon.config.model import CheckType, Node, NodeState
 from psysmon.config.settings import Settings
 from psysmon.engine.clock import ManualClock
 from psysmon.engine.scheduler import Scheduler
+from psysmon.notify.base import DEFAULT_TEMPLATE, render_message
 from psysmon.output.jsonout import to_json
 from psysmon.output.statuspage import publish, render_and_publish, render_html, render_text
 from psysmon.status import Status
@@ -280,6 +281,29 @@ def test_json_down_count_excludes_suppressed_and_up():
 
 
 # --- integration with the scheduler ----------------------------------------------------
+
+def test_credentials_never_leak_into_any_output():
+    # POP3 credentials live in the config (issue #2); they must never appear in the JSON, the
+    # HTML/text status page, or a rendered alert message (#46). Locks down the non-leak invariant
+    # against a future field-loop/template change that might start dumping them.
+    secret = "s3cr3t-p@ss"
+    node = Node(
+        hostname="mail.example.net", check_type=CheckType.POP3, port=110,
+        username="systest", password=secret, label="pop3", contact="noc@example.net",
+    )
+    state = NodeState(lastcheck=Status.BAD_AUTH, downct=3, deathtime=NOW, last_up=NOW - 50)
+    states = [(node, state)]
+
+    outputs = [
+        to_json(states, now_wall=NOW),
+        render_html(states, org_hostname="o", refresh_s=30, show_up_also=True,
+                    logo_url="logo.png", now_wall=NOW),
+        render_text(states, org_hostname="o", show_up_also=True, now_wall=NOW),
+        render_message(DEFAULT_TEMPLATE, node, state, myname="mon", now_wall=NOW),
+    ]
+    for out in outputs:
+        assert secret not in out
+
 
 async def test_scheduler_states_render(tmp_path):
     clock = ManualClock()

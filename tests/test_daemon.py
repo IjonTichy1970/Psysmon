@@ -121,12 +121,74 @@ def test_reload_carries_checked_flag_so_children_stay_gated():
     assert fresh._eligible(c2) is False
 
 
-def test_reload_warns_on_duplicate_keys():
-    sched = Scheduler([Node("p", CheckType.PING)], Settings(), clock=ManualClock(), stagger=False)
-    # Two stanzas collapsing to the same (hostname, type, port) key.
+def test_reload_duplicate_keys_carry_state_to_both():
+    # Two stanzas collapsing to the same (hostname,type,port) key must both be scheduled (no
+    # silent drop), warn, AND both receive the carried-over live state the warning promises
+    # (#48). Seed a pre-existing 'dup' with distinctive state so the carry-over branch runs.
+    sched = Scheduler([Node("dup", CheckType.PING)], Settings(), clock=ManualClock(), stagger=False)
+    st = next(s for nd, s in sched.node_states() if nd.hostname == "dup")
+    st.lastcheck = Status.UNPINGABLE
+    st.downct = 4
+    st.contacted = True
+    st.deathtime = 99.0
+
     sched.reload([Node("dup", CheckType.PING), Node("dup", CheckType.PING)])
-    assert len(sched.node_states()) == 2  # both still scheduled (no silent drop)
+
+    states = [s for nd, s in sched.node_states() if nd.hostname == "dup"]
+    assert len(states) == 2  # both still scheduled (no silent drop)
+    for s in states:  # the carried state reached BOTH duplicates, not just one
+        assert s.lastcheck == Status.UNPINGABLE and s.downct == 4
+        assert s.contacted is True and s.deathtime == 99.0
     assert any("duplicate node" in w for w in sched.warnings)
+
+
+async def test_reload_loop_applies_a_good_config(tmp_path):
+    # End-to-end SIGHUP path: _reload_loop waits on the flag, re-reads + reparses the file, and
+    # calls scheduler.reload, carrying live state for surviving nodes (#45) — not just a direct
+    # scheduler.reload() call.
+    cfg = tmp_path / "psysmon.conf"
+    cfg.write_text("p ping p noc@x\n", encoding="utf-8")
+    settings = Settings()
+    settings.config_path = str(cfg)
+    sched = Scheduler([Node("p", CheckType.PING)], settings, clock=ManualClock(), stagger=False)
+    pstate = next(s for nd, s in sched.node_states() if nd.hostname == "p")
+    pstate.downct = 7
+    pstate.lastcheck = Status.UNPINGABLE
+
+    flag = asyncio.Event()
+    task = asyncio.create_task(daemon._reload_loop(sched, settings, flag))
+    try:
+        cfg.write_text("p ping p noc@x\nq ping q noc@x\n", encoding="utf-8")  # add q
+        flag.set()
+        await asyncio.sleep(0.05)
+        states = {nd.hostname: s for nd, s in sched.node_states()}
+        assert set(states) == {"p", "q"}                  # reloaded: q added, c-less p survives
+        assert states["p"].downct == 7                    # live state carried for surviving p
+        assert states["p"].lastcheck == Status.UNPINGABLE
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_reload_loop_keeps_old_config_on_parse_failure(tmp_path):
+    # If the new config fails to load, _reload_loop logs and KEEPS the running config (#45).
+    cfg = tmp_path / "psysmon.conf"
+    cfg.write_text("p ping p noc@x\n", encoding="utf-8")
+    settings = Settings()
+    settings.config_path = str(cfg)
+    sched = Scheduler([Node("p", CheckType.PING)], settings, clock=ManualClock(), stagger=False)
+
+    flag = asyncio.Event()
+    task = asyncio.create_task(daemon._reload_loop(sched, settings, flag))
+    try:
+        cfg.write_text("hosts:\n  - a\n", encoding="utf-8")  # detected MODERN -> load_roots raises
+        flag.set()
+        await asyncio.sleep(0.05)
+        hosts = {nd.hostname for nd, _ in sched.node_states()}
+        assert hosts == {"p"}  # the failed reload left the previous config in place
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def test_main_missing_config_returns_clean_error(capsys):

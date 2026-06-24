@@ -62,6 +62,13 @@ def test_recovery_after_paged():
     assert t.intent is PageIntent.RECOVERY
 
 
+def test_ack_auto_clears_on_recovery():
+    # An ack (#68) covers one outage: coming back up clears it so the next outage pages normally.
+    s = st(max_down=2, lastcheck=PING_DOWN, downct=5, contacted=True, acked=True, deathtime=10.0)
+    apply_result(s, Status.OK, now_wall=200.0)
+    assert s.acked is False
+
+
 def test_came_up_never_paged_no_recovery():
     s = st(max_down=5, lastcheck=PING_DOWN, downct=1, contacted=False)
     t = apply_result(s, Status.OK, now_wall=200.0)

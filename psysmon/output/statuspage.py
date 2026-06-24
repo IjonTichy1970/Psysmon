@@ -71,6 +71,8 @@ td.host { font-weight:600; }
 .badge.down { background:rgba(232,65,24,.18); color:#FF7A5C; }
 .badge.up { background:rgba(76,209,55,.16); color:var(--green); }
 .badge.degraded { background:rgba(244,208,63,.18); color:var(--yellow); }
+.badge.acked { background:rgba(147,164,196,.20); color:var(--muted); }
+.note { margin-top:4px; font-size:12px; color:var(--muted); font-style:italic; }
 .mono { font-variant-numeric:tabular-nums; color:var(--muted); }
 .ok-panel { background:var(--panel); border:1px solid var(--border); border-radius:10px;
   padding:40px; text-align:center; }
@@ -191,8 +193,13 @@ def _html_row(node: Node, state: NodeState, now_wall: float) -> str:
         badge = "degraded"  # reachable but lossy — its own colour, not the red down badge (#22)
     else:
         badge = "down"
+    host = _esc(node.hostname)
+    if state.acked:  # operator-acknowledged outage (#68)
+        host += ' <span class="badge acked">ACK</span>'
+    if state.note:  # operator note (#68) — escaped: it's set via the authenticated control channel
+        host += f'<div class="note">{_esc(state.note)}</div>'
     cells = [
-        f'<td class="host">{_esc(node.hostname)}</td>',
+        f'<td class="host">{host}</td>',
         f"<td>{_esc(type_to_name(node.check_type))}</td>",
         f'<td class="mono">{_esc(_port(node))}</td>',
         f'<td class="mono">{state.downct}</td>',
@@ -217,12 +224,15 @@ def render_text(
         if label:
             lines.append(f"== {label} ==")
         for node, state in grp:
+            extra = "  [ACK]" if state.acked else ""  # #68
+            if state.note:
+                extra += f"  note: {state.note}"
             lines.append(
                 f"{node.hostname:<28}{type_to_name(node.check_type):<8}{_port(node):<6}"
                 f"{state.downct:<5}{'Yes' if state.contacted else 'No':<5}"
                 f"{errtostr(state.lastcheck):<16}"
                 f"{timefmt.clock_time(state.deathtime, never_if_zero=True):<16}"
-                f"{_last_outage(state, now_wall)}"
+                f"{_last_outage(state, now_wall)}{extra}"
             )
     if not rows:
         lines.append("All systems operational.")

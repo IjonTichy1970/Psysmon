@@ -31,6 +31,8 @@ def _host(node: Node, state: NodeState) -> dict:
         "status_text": errtostr(state.lastcheck),
         "count": state.downct,
         "notified": state.contacted,
+        "acked": state.acked,  # operator-acknowledged outage (#68)
+        "note": state.note,  # operator free-text note (#68); null when unset
         "suppressed": state.suppressed,
         "deathtime": state.deathtime or None,
         "last_up": state.last_up or None,

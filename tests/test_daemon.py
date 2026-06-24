@@ -403,6 +403,7 @@ def _down_record(hostname="p"):
     return {
         "hostname": hostname, "type": "ping", "port": 0, "lastcheck": int(Status.UNPINGABLE),
         "downct": 5, "contacted": True, "lastcontacted": 0.0, "deathtime": 5.0, "last_up": 1.0,
+        "acked": False, "note": None,  # carried since schema v2 (#68)
     }
 
 

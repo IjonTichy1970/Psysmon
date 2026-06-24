@@ -286,6 +286,60 @@ async def test_contact_on_global_default_with_per_object_override():
     assert ("o", PageIntent.RECOVERY) in notifier.sent
 
 
+# --- ack / notes (#68) ----------------------------------------------------------------
+
+async def test_ack_suppresses_repage_but_recovery_still_pages():
+    clock = ManualClock()
+    runner = ScriptedRunner({"r": Status.UNPINGABLE})
+    sched, notifier = make([node("r", max_down=1)], runner, clock)  # pageinterval 60s
+    await tick_drain(sched)  # down -> DOWN page, contacted
+    assert notifier.count(PageIntent.DOWN) == 1
+    assert sched.ack("r", "ping", 0) == 1  # operator acks the outage
+    assert state_of(sched, "r").acked is True
+    clock.advance(61)
+    await tick_drain(sched)  # past the re-page interval, still down -> SUPPRESSED by the ack
+    assert notifier.count(PageIntent.DOWN) == 1
+    runner.codes["r"] = Status.OK
+    clock.advance(10)
+    await tick_drain(sched)  # recovers -> recovery still pages; ack auto-cleared
+    assert notifier.count(PageIntent.RECOVERY) == 1
+    assert state_of(sched, "r").acked is False
+
+
+async def test_ack_before_outage_suppresses_the_initial_down_page():
+    clock = ManualClock()
+    runner = ScriptedRunner({"r": Status.OK})
+    sched, notifier = make([node("r", max_down=1)], runner, clock)
+    await tick_drain(sched)  # up
+    assert sched.ack("r", "ping", 0) == 1  # pre-ack (e.g. a maintenance window)
+    runner.codes["r"] = Status.UNPINGABLE
+    clock.advance(10)
+    await tick_drain(sched)  # down + acked -> no down page, but contacted so recovery can fire
+    assert notifier.count(PageIntent.DOWN) == 0
+    st = state_of(sched, "r")
+    assert st.acked is True and st.contacted is True
+
+
+def test_set_note_clears_on_empty_and_reports_no_match():
+    clock = ManualClock()
+    sched, _ = make([node("r", max_down=1)], ScriptedRunner(), clock)
+    assert sched.set_note("r", "ping", 0, "vendor ticket 4711") == 1
+    assert state_of(sched, "r").note == "vendor ticket 4711"
+    assert sched.set_note("r", "ping", 0, "") == 1  # empty clears
+    assert state_of(sched, "r").note is None
+    assert sched.ack("nope", "ping", 0) == 0  # unknown object -> no match
+
+
+async def test_ack_and_note_survive_reload():
+    clock = ManualClock()
+    sched, _ = make([node("r", max_down=1)], ScriptedRunner({"r": Status.UNPINGABLE}), clock)
+    sched.ack("r", "ping", 0)
+    sched.set_note("r", "ping", 0, "known flaky")
+    sched.reload([node("r", max_down=1)])  # SIGHUP-style rebuild with a fresh config object
+    st = state_of(sched, "r")
+    assert st.acked is True and st.note == "known flaky"
+
+
 # --- dependency suppression -----------------------------------------------------------
 
 async def test_parent_down_freezes_children():

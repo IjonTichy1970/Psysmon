@@ -85,6 +85,7 @@ def apply_result(
             state.lastcheck = Status.OK
             state.last_up = now_wall
             state.downct = 0
+            state.acked = False  # an ack (#68) covers one outage; clear it so the next one pages
             if was_contacted:
                 state.contacted = False
                 intent = PageIntent.RECOVERY

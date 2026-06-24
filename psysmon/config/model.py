@@ -114,3 +114,5 @@ class NodeState:
     deathtime: float = 0.0  # wall-clock time the current outage began
     last_up: float = 0.0  # wall-clock time it was last seen up
     suppressed: bool = False  # currently gated off by a down ancestor ping
+    acked: bool = False  # operator acked this outage (#68): suppress paging while down
+    note: str | None = None  # operator free-text note (#68); shown on the status page (escaped)

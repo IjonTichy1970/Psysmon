@@ -1,0 +1,248 @@
+# Modern config format
+
+This is the reference for psysmon's **modern `object{}` configuration format** — the documented
+sysmon 0.93 grammar (a single `root`, named `object NAME { ... };` blocks, `dep` edges, `config`
+globals, and `set`/`$var` reuse), extended with a few psysmon-specific keys.
+
+The modern format is **opt-in and auto-detected per file**: the classic positional `sysmon.conf`
+stays the default and keeps working unchanged. A file is treated as modern when it contains an
+`object NAME {`, a `root = ...`, or a `set NAME = ...` signal; an ambiguous file (e.g. only
+`config` lines, which both formats share) is parsed as legacy. The two formats are never mixed in
+one file.
+
+> Accurate as of psysmon 0.2.0 (modern config milestones M1–M5). To migrate an existing config,
+> see [Migrating from the legacy format](#migrating-from-the-legacy-format).
+
+## A quick example
+
+```
+# Globals
+config statusfile html "/var/www/psysmon/status.html";
+config pageinterval 18;          # minutes between re-pages while down
+set noc = "noc@example.net";     # reuse a value with $noc below
+
+# An edge router and the services that depend on it
+object edge-rtr {
+    ip      "192.0.2.1";
+    type    ping;
+    desc    "edge router";
+    contact $noc;
+};
+
+object web {
+    ip      "192.0.2.10";
+    type    https;
+    url     "/health";
+    urltext "OK";
+    desc    "web health";
+    contact $noc;
+    dep     "edge-rtr";          # only checked while edge-rtr is up
+};
+```
+
+## Lexical rules
+
+- **Statements** end with `;`. Object bodies are delimited by `{ ... }`.
+- **Strings** are double-quoted: `"a value"`. There are **no escape sequences** — a string cannot
+  contain a `"` or span a newline.
+- **Barewords** are unquoted runs used for keywords, hostnames, and numbers (`ping`, `192.0.2.1`,
+  `443`). A bareword ends at whitespace or one of `" { } = ; #`. Quoting any value is always safe;
+  quote it whenever it might contain one of those characters.
+- **Comments**: `#` starts a comment to end-of-line anywhere outside a string. A `;` at the start
+  of a statement (file start, or right after a `{` or `;`) also starts a comment, matching the
+  legacy `;`/`#` convention.
+- `=` is **optional** in object attributes — `ip "h";` and `ip = "h";` are equivalent — but
+  **required** in `set NAME = "...";` and `root = "...";`.
+
+## Globals — `config` directives
+
+Top-level `config <directive> <value>;` lines set runtime options. Each maps to a setting that
+the command line can still override (**precedence: CLI > config file > built-in default**). An
+unknown directive is warned and skipped.
+
+| Directive | Value | Default | Meaning |
+|---|---|---|---|
+| `config queuetime` | seconds | `30` | Default per-host check interval |
+| `config numfailures` | integer | `2` | Default consecutive-failure threshold before paging (see note) |
+| `config pageinterval` | minutes | `10` | Re-page interval while a host stays down |
+| `config statusfile` | `html`\|`text` `"path"` | (off) | Status output format + path |
+| `config savestate` | `"path"` | (off) | Persist live state to survive restarts |
+| `config statesave_interval` | seconds | `60` | How often to flush the state file (0 = only on exit) |
+| `config state_max_age` | seconds | `86400` | Ignore a state file older than this (0 disables) |
+| `config logging` | facility \| `none` | `daemon` | Syslog facility (`none` disables syslog) |
+| `config loglevel` | `warning`\|`info`\|`debug` | `info` | Logging verbosity |
+| `config heartbeat` | seconds | `300` | "Monitoring N hosts" summary interval (0 disables) |
+| `config noheartbeat` | (no value) | — | Shorthand for `heartbeat 0` |
+| `config dnsexpire` | seconds | `900` | DNS cache TTL |
+| `config dnslog` | seconds | `600` | DNS-stats log interval |
+| `config send_pings` | integer | `1` | Global echoes per ping check (loss-tolerant ping) |
+| `config min_pings` | integer | `1` | Global replies required to count a host up |
+| `config page_on_degraded` | (no value) | off | Page on a degraded (partial-loss) ping |
+| `config maxqueued` | integer | `50` | Cap on concurrent checks |
+| `config source_ip` | `"ip"` | (auto) | Outbound bind source IP |
+| `config hostname` | `"name"` | (auto) | Org hostname shown in alerts / status page |
+| `config sender` / `config from` | `"addr"` | (none) | Alert `From:` address |
+
+`config sleeptime` is obsolete and ignored with a warning (use `queuetime` / `--interval`).
+
+> **`config numfailures` is a global default only.** Unlike the legacy positional format — where
+> `config numfailures` is *position-dependent* and snapshots into every subsequently-parsed host —
+> the modern global sets the baseline default. To give one object a different threshold, use the
+> per-object `numfailures` attribute (below). The converter relies on this distinction.
+
+### Variables — `set` / `$var`
+
+```
+set noc = "noc@example.net";
+set fast = "10";
+```
+
+`set NAME = "value";` defines a variable. `$NAME` is then expanded **anywhere** it appears in a
+later value (a string or a bareword), including as a substring (`"$noc and a note"`). A reference
+to an undefined variable is left literal with a warning. Variables must be defined before use.
+
+## Objects — `object NAME { ... };`
+
+Each monitored host/service is an `object` with a unique `NAME` (used only to wire `dep` edges).
+Inside the block, attributes are `key value;` pairs.
+
+### Structural attributes
+
+| Attribute | Value | Applies to | Notes |
+|---|---|---|---|
+| `ip` | `"host"` | all (**required**) | Hostname or IP to check |
+| `type` | keyword | all (**required**) | One of the check types below |
+| `port` | integer | tcp/udp (**required**); others optional | 1–65535; omitted ⇒ the type default |
+| `desc` | `"text"` | optional | Display label |
+| `contact` | `"addr"` | dns (**required**, non-empty); others optional | Notification address; where optional, an absent/empty contact ⇒ syslog only (no page) |
+| `url` + `urltext` | `"path"`, `"substring"` | http/https (**required**) | Path to GET, and a substring the body must contain |
+| `username` + `password` | `"u"`, `"p"` | pop3 (**required**) | POP3 credentials |
+| `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
+| `dep` | `"object-name"` | optional | Parent object for dependency suppression |
+
+**Check types** (the `type` keyword): `ping`, `tcp`, `udp`, `smtp`, `pop3`, `dns`, `http`, `https`.
+For legacy familiarity, `authdns` is accepted as an alias for `dns` and `www` for `http`. Default
+ports: smtp `25`, pop3 `110`, dns `53`, http `80`, https `443` (ping has none; tcp/udp require an
+explicit `port`).
+
+**Required fields per type** — an object missing a required field is warned and skipped; the rest
+of the config still loads:
+
+| Type | Required attributes |
+|---|---|
+| `ping`, `smtp` | `ip`, `type` |
+| `tcp`, `udp` | `ip`, `type`, `port` |
+| `http`, `https` | `ip`, `type`, `url`, `urltext` |
+| `pop3` | `ip`, `type`, `username`, `password` |
+| `dns` | `ip`, `type`, `dns-query`, `contact` |
+
+### Per-object overrides (psysmon extensions)
+
+These override the global defaults for a single object. An invalid value is warned and ignored
+(the object still loads with the global default).
+
+| Attribute | Value | Notes |
+|---|---|---|
+| `queuetime` | seconds (> 0) | Per-object check interval — poll a critical host faster than the long tail |
+| `numfailures` | integer (≥ 1) | Per-object page threshold |
+| `send_pings` / `min_pings` | integers (≥ 1, `min ≤ send`) | Per-object loss-tolerant ping; an invalid pair falls back to the globals |
+| `group` | `"name"` | Operator grouping label (display use is a future feature) |
+
+Any other attribute (a typo, or the not-yet-supported `contact_on`) is warned and ignored.
+
+## Dependencies and the monitored forest
+
+The config builds a **forest** of objects linked by `dep` edges, reproducing the legacy `{ }`
+nesting as a named graph:
+
+- An object with **no `dep`** is a top-level **root**.
+- `dep "parent"` makes the object a **child** of `parent`: it is checked only while every ancestor
+  ping is up (**dependency suppression** — an upstream outage raises one alert, not a flood).
+- `root = "name";` is an **optional, informational** hint. It does not change the structure (roots
+  are determined purely by the absence of `dep`); naming an object that doesn't exist just warns.
+
+Recoverable problems warn and degrade gracefully rather than failing the load:
+
+- **One parent only** (single-`dep` MVP). Listing more than one `dep` warns and keeps the first;
+  true multi-parent (DAG) dependencies are tracked in
+  [#62](https://github.com/IjonTichy1970/Psysmon/issues/62).
+- An **unknown `dep` target** warns and the object becomes a root.
+- A **cycle** warns and the object becomes a root (the forest is kept acyclic).
+- A **duplicate object name** warns and the duplicate is skipped.
+
+## Migrating from the legacy format
+
+A converter turns an existing positional `sysmon.conf` into the equivalent modern config:
+
+```
+python -m psysmon.config.convert /etc/psysmon.conf -o psysmon.conf.new
+# or, to stdout:
+python -m psysmon.config.convert /etc/psysmon.conf
+```
+
+It parses the legacy file through psysmon's own parser and re-emits it, so the output reflects
+psysmon's semantics and round-trips to the same monitoring tree:
+
+- `{ }` nesting becomes named `dep` edges.
+- The position-dependent `config numfailures` is resolved onto each object as a per-object
+  `numfailures` (emitted only where it differs from the assumed default).
+- Default ports are dropped; only tcp/udp ports (which have no default) are kept.
+- The legacy `authdns` query name is emitted as `dns-query`.
+- Object names are derived deterministically from hostnames, de-duplicated with a `-N` suffix.
+
+Use `-n N` (`--numfailures`) to tell the converter which default threshold the legacy config
+assumed (default `2`). The converter warns — rather than silently dropping coverage — when the
+legacy file uses something the modern grammar can't represent faithfully (a port outside 1–65535,
+a `numfailures` below 1, or a value containing a `"`), and when a globals-only file is produced
+(an objectless file auto-detects as *legacy*, so force the modern parser or add an object).
+
+## What psysmon does *not* adopt from sysmon 0.93
+
+psysmon adopts the 0.93 grammar and the keywords that map onto its model, and extends it; it does
+**not** chase byte-for-byte 0.93 fidelity. The following are intentionally not supported (each is a
+clean warning or a clear refusal, never a silent surprise):
+
+- **`include`** — not yet supported; a config using it is **rejected at load**. (A follow-up,
+  M2b, will add it with proper `$var`-across-include scoping.)
+- **`contact_on`** — not yet supported; warned and ignored. Its paging semantics need their own
+  design (see [defaults](#differences-from-sysmon-093-defaults)).
+- **Multiple `dep` edges (DAG)** — single parent only; extra edges warn and the first is kept
+  ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)).
+- **IPv6 ping** (`ping6` / `pingv6` / `icmp6`) — deferred ([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)); these `type`s warn and skip.
+- **Dropped check types** — `imap`, `nntp`, `pop2`, `umichx500`, `radius`, `bootp`, `snmp` warn and
+  skip (they were unused in practice and are out of scope for the rewrite).
+- **The 0.93 control/query protocol, client tooling interop, and the phone-home heartbeat** — these
+  were removed from psysmon entirely (the original's unauthenticated control server dumped stored
+  credentials in cleartext), and the modern grammar carries no keywords for them.
+
+## Differences from sysmon 0.93 defaults
+
+psysmon keeps its own default values rather than 0.93's — converted and newly-written configs
+behave like psysmon, not like 0.93:
+
+| Setting | psysmon | sysmon 0.93 |
+|---|---|---|
+| Check interval (`queuetime`) | **30s** | 60s |
+| Failure threshold (`numfailures`) | **2** | 4 |
+
+**`contact_on`** is not implemented yet. When it lands, note that psysmon's notifier currently
+pages on **both** transitions — a host going *down* and a host *recovering* — so `contact_on`'s
+default will be defined against that actual behavior, not the "down-only" an earlier draft assumed.
+
+## Reloading (SIGHUP)
+
+On `SIGHUP`, psysmon re-reads the config and re-applies the **host tree** — objects, `dep` edges,
+and per-object attributes — preserving the live up/down state of hosts that still exist.
+
+**File-level `config` globals are not re-applied on reload.** Intervals, paths, the logging knobs
+(`loglevel` / `heartbeat` / `dnslog`), and the global `queuetime` / `numfailures` baselines take
+effect only at startup; changing one and sending `SIGHUP` has no effect — **restart the daemon**.
+(Per-object `queuetime` / `numfailures` *do* reload, because they live on the objects.) Re-merging
+global overrides on reload is a possible future enhancement.
+
+## See also
+
+- `README.md` — overview and getting started.
+- `INSTALL.md` — installation and a systemd unit.
+- The legacy positional format remains fully supported and documented in those files; this
+  document covers only the modern format.

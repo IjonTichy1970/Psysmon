@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **End-user guide** — a complete multi-chapter user manual: install, both config formats with
+  worked examples per check type, every CLI flag, a feature tour with a feature×format availability
+  matrix, the status-code reference, and troubleshooting. Generated from one Markdown source
+  (`docs/guide/src/`) by `tools/build_guide.py` into branded multi-page HTML — published to
+  [GitHub Pages](https://ijontichy1970.github.io/Psysmon/) — and a plain-text
+  `docs/guide/psysmon-guide.txt` bundled in the sdist. README and INSTALL link to it
+  ([#64](https://github.com/IjonTichy1970/Psysmon/issues/64)).
+
 ## [0.4.0] — 2026-06-24 — Per-object/group check source; ping unbound by default
 
 ### Added

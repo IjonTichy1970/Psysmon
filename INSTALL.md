@@ -3,6 +3,11 @@
 Step-by-step setup for the PSYSMON monitoring daemon. For what it does and the config-file
 format, see [README.md](README.md); for the full option list run `psysmon --help`.
 
+> The complete **User Guide** (install, configuration, CLI, feature tour, troubleshooting) is
+> published to [GitHub Pages](https://ijontichy1970.github.io/Psysmon/) and as plain text at
+> [docs/guide/psysmon-guide.txt](docs/guide/psysmon-guide.txt). This file is the quick install
+> reference; the guide's Installation chapter is the in-depth version.
+
 ## 1. Requirements
 
 - **Python 3.11 or newer.**

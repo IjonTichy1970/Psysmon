@@ -1,0 +1,2653 @@
+PSYSMON -- USER GUIDE
+====================
+
+Generated from docs/guide/src by tools/build_guide.py. The HTML edition (with navigation)
+is published to GitHub Pages; see README.md.
+
+Contents:
+
+  1. 5-Minute Quickstart
+  2. Introduction
+  3. Getting it
+  4. Installation
+  5. Configuration
+  6. Command-line reference
+  7. Feature tour
+  8. Operating PSYSMON
+  9. Status codes
+  10. Troubleshooting & FAQ
+  11. Glossary & security notes
+  12. Appendices
+
+########################################################################################
+
+5-Minute Quickstart
+===================
+
+Get PSYSMON watching a router -- and the services behind it -- in five minutes. The rest
+of this guide explains everything in depth; this is the shortest path to a running
+monitor.
+
+Install
+-------
+
+    python3 -m venv /opt/psysmon-venv
+    /opt/psysmon-venv/bin/pip install ./psysmon-0.4.0-py3-none-any.whl
+
+Python 3.11+ is required. See Getting it and Installation for wheels vs. source,
+dependencies, and a systemd unit.
+
+A first config
+--------------
+
+Save this as /etc/psysmon.conf (the modern object{} format):
+
+    config statusfile html "/var/www/html/status.html";
+    root = "gw";
+
+    object gw  { ip "192.0.2.1";  type ping; desc "edge router"; contact "noc@example.net"; }
+    object web { ip "192.0.2.10"; type tcp; port 443; dep "gw"; contact "noc@example.net"; }
+
+web depends on gw, so it is only checked while gw is up -- one alert for the router, not
+a flood for everything behind it. That dependency suppression is the whole idea; see the
+Feature tour.
+
+Run it
+------
+
+    sudo /opt/psysmon-venv/bin/psysmon -f /etc/psysmon.conf --no-fork
+
+Ping uses a raw ICMP socket, so the daemon needs root (or CAP_NET_RAW). Point a web
+server or browser at the statusfile path you set. To page by email, configure the SMTP
+notifier (see Configuration).
+
+Next: the Introduction explains what PSYSMON is and where it came from.
+
+
+########################################################################################
+
+Introduction
+============
+
+PSYSMON is a dependency-aware network monitoring daemon -- a modern Python rewrite of the
+1998 C sysmon. It periodically checks hosts and services (ping, TCP, UDP, SMTP, POP3,
+DNS, HTTP/HTTPS), pages you when something goes down and again when it recovers, and
+writes a live status page.
+
+The core idea: dependency suppression
+-------------------------------------
+
+A flat monitor floods you: when an edge router dies, every host behind it also fails its
+check, and you get fifty pages for one outage. PSYSMON models the topology instead. You
+declare that a host depends on another (it's only reachable when its parent ping is up),
+and PSYSMON checks a subtree only while its gate is up.
+
+    One alert for the router, not a flood for everything behind it.
+
+When the router recovers, its dependents resume checking. A host whose parent is down is
+*frozen*, not failed -- its state doesn't change and it doesn't page.
+
+Heritage, and what this rewrite changes
+---------------------------------------
+
+The original sysmon (Jim Trocki, 1998) was a single-threaded C daemon driven by a
+positional config file and a cleartext TCP control port. PSYSMON keeps the observable
+behavior -- the check types, the status codes, the dependency model, the status page --
+but rebuilds the internals:
+
+- Async, concurrent checks on an asyncio scheduler instead of a serial sweep. - Two
+config formats: the original positional legacy grammar (still the default, for drop-in
+compatibility) and a richer modern object{} grammar with named dependencies, variables,
+and per-object settings. See Configuration. - Modern safety: no cleartext credential
+dump; an opt-in, token-gated, loopback-default control channel; raw-socket privilege
+dropped after startup. - New capabilities: loss-tolerant ping, per-object check
+intervals, per-object/group outbound source binding, operator acknowledge/notes, and
+JSON status output for dashboards.
+
+Who it's for
+------------
+
+System and network administrators who want topology-aware alerting without the weight of
+a full observability stack -- a single daemon, a config file, a status page, and email
+paging. It runs on Linux (root or CAP_NET_RAW for ICMP), needs Python 3.11+, and depends
+only on dnspython and httpx.
+
+If you want to understand *how it works inside* rather than how to operate it, that's
+the developer/architecture documentation (a separate guide), not this one.
+
+
+########################################################################################
+
+Getting it
+==========
+
+This chapter tells you where PSYSMON comes from and what your system needs before you
+install it. It's short and orienting -- the step-by-step install (virtual environment,
+configuration, running under systemd) lives in Installation.
+
+Where to get it
+---------------
+
+PSYSMON is published on its GitHub Releases page:
+
+<https://github.com/IjonTichy1970/Psysmon/releases>
+
+Each release attaches two build artifacts. They contain the same code -- you only need
+one.
+
+| Artifact | What it is | When to use it |
+| --- | --- | --- |
+| psysmon-<version>-py3-none-any.whl | A wheel -- a pre-built, ready-to-install package. | The normal choice. pip installs it directly, no build step. |
+| psysmon-<version>.tar.gz | A source distribution (sdist) -- the source tree packaged for installation. | When you want the source, or your tooling/policy prefers building from sdist. pip builds it on install. |
+
+Both install the same way with pip (see Installation):
+
+    pip install ./psysmon-<version>-py3-none-any.whl
+    # or the sdist:
+    pip install ./psysmon-<version>.tar.gz
+
+If you'd rather work from a git checkout instead of a release artifact -- for
+development, or to track the latest commit -- clone the repository and install from
+source. That path is covered in Installation.
+
+What you need
+-------------
+
+Platform
+~~~~~~~~
+
+PSYSMON targets Linux. ICMP ping uses a raw socket, which on Linux means the daemon must
+run as root (or with the CAP_NET_RAW capability). This is required only for ping; every
+other check type -- TCP, UDP/DNS, SMTP, POP3, authoritative DNS, and HTTP/HTTPS-content --
+works without root. So a PSYSMON instance that does no ICMP pinging can run as an
+ordinary user.
+
+How root is actually granted (via sudo, a systemd unit, etc.) is covered in Installation
+and Operating.
+
+Python
+~~~~~~
+
+Python 3.11 or newer. PSYSMON is a pure-Python application; there is nothing to compile.
+
+Dependencies
+~~~~~~~~~~~~
+
+Just two runtime dependencies:
+
+- dnspython (https://www.dnspython.org/) -- DNS resolution and the authoritative DNS
+  check.
+- httpx (https://www.python-httpx.org/) -- the HTTP/HTTPS-content check.
+
+You don't install these by hand. pip reads them from the package metadata and pulls them
+in automatically when you install the wheel or the sdist. Installing into a dedicated
+virtual environment (so these don't mix with your system Python) is the recommended
+approach -- see Installation.
+
+What you get after installing
+-----------------------------
+
+Installing PSYSMON puts four commands on your PATH:
+
+- psysmon -- the monitoring daemon itself.
+- psysmon-convert -- converts a legacy sysmon.conf to the modern object{} config format
+  (also runnable as python -m psysmon.config.convert).
+- psysmonctl -- the client for the optional runtime control channel (query status,
+  acknowledge alerts).
+- psysmon-token -- generates a token for that control channel.
+
+These are introduced in the CLI reference; the full flag list is in Appendix A.
+
+Next steps
+----------
+
+- New to PSYSMON? Start with the Quickstart.
+- Ready to install? Go to Installation.
+- Want the background first? See the Introduction.
+
+
+########################################################################################
+
+Installation
+============
+
+This chapter walks you through installing PSYSMON, verifying the install, running it as
+a daemon (including a working systemd unit), and upgrading. It folds in and supersedes
+the repository's INSTALL.md.
+
+If you just want the fastest path from zero to a running monitor, start with
+00-quickstart.md and come back here for the details. For where to obtain the release
+artifacts, see 02-getting-it.md.
+
+Requirements
+------------
+
+- Python 3.11 or newer.
+- Linux. ICMP ping uses a raw socket, which requires root (or the CAP_NET_RAW
+  capability). The non-ping checks (TCP, UDP, DNS, SMTP, POP3, HTTP/HTTPS) work without
+  root.
+- Network egress to the hosts you intend to monitor, and -- if you want email alerts -- an
+  SMTP server to relay through.
+
+The two runtime Python dependencies, dnspython (https://www.dnspython.org/) and httpx
+(https://www.python-httpx.org/), are pulled in automatically by pip. There are no other
+runtime dependencies.
+
+Console commands installed
+--------------------------
+
+Installing the psysmon package puts four commands on PATH (inside the virtual
+environment's bin/ directory):
+
+| Command | What it does |
+| --- | --- |
+| psysmon | The monitoring daemon itself. |
+| psysmon-convert | Converts a legacy sysmon.conf to the modern object{} format. Also runnable as python -m psysmon.config.convert. |
+| psysmonctl | Client for the optional runtime control channel (query status, acknowledge alerts). |
+| psysmon-token | Generates a control-channel auth token. |
+
+The control-channel tools (psysmonctl, psysmon-token) are only needed if you enable the
+opt-in control channel; see 07-operating.md. The converter is covered in
+04-configuration.md.
+
+Install into a virtual environment
+----------------------------------
+
+Always install PSYSMON into a dedicated virtual environment so its dependencies don't
+mix with the system Python.
+
+Method A -- from a release wheel (recommended)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Download the wheel (.whl) from the Releases page
+(https://github.com/IjonTichy1970/Psysmon/releases) (see 02-getting-it.md), create a
+venv, and install into it:
+
+    python3 -m venv /opt/psysmon-venv
+    /opt/psysmon-venv/bin/pip install ./psysmon-0.4.0-py3-none-any.whl
+
+The psysmon command then lives at /opt/psysmon-venv/bin/psysmon. To put it on PATH,
+symlink it:
+
+    sudo ln -s /opt/psysmon-venv/bin/psysmon /usr/local/bin/psysmon
+
+(Substitute the actual version number from the file you downloaded.)
+
+Method B -- from the sdist or a source checkout
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You can install the same way from a source tarball (.tar.gz) downloaded from the
+Releases page:
+
+    python3 -m venv /opt/psysmon-venv
+    /opt/psysmon-venv/bin/pip install ./psysmon-0.4.0.tar.gz
+
+Or from a Git checkout of the repository:
+
+    git clone https://github.com/IjonTichy1970/Psysmon.git
+    cd Psysmon
+    python3 -m venv .venv
+    ./.venv/bin/pip install .
+
+For a development install with the test tooling (pytest, pytest-asyncio, ruff), add the
+dev extra and the -e (editable) flag instead:
+
+    ./.venv/bin/pip install -e ".[dev]"
+
+The dev extra is for contributors -- end users do not need it. (Building this guide
+separately uses the docs extra; that, too, is not a runtime requirement.)
+
+Method C -- manual virtualenv setup
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you prefer to manage the environment by hand -- for example to activate it in your
+shell -- the steps are the same venv plus pip install, with the environment activated
+first:
+
+    python3 -m venv /opt/psysmon-venv
+    source /opt/psysmon-venv/bin/activate     # prepends the venv's bin/ to PATH
+    pip install ./psysmon-0.4.0-py3-none-any.whl
+    psysmon --version                         # now resolves inside the active venv
+    deactivate                                # leave the venv when done
+
+Activating the venv is convenient for interactive use, but a service manager should call
+the venv's psysmon by its full path (or via the symlink) rather than relying on an
+activated shell.
+
+Verify the install
+------------------
+
+Confirm the command resolves and reports its version:
+
+    psysmon --version
+
+If you installed without the symlink, run it by full path (/opt/psysmon-venv/bin/psysmon
+--version). For the complete list of flags, run psysmon --help or see Appendix A in
+90-appendices.md.
+
+Running as root for ICMP
+------------------------
+
+ICMP ping opens a raw socket, so the daemon must run as root. Unlike the original C
+sysmon, which was a setuid binary, the Python daemon is simply launched as a root
+process -- via sudo or a service manager. It opens the raw socket at startup and, per the
+current deploy choice, keeps root for the process lifetime (a privilege-drop option is
+tracked as issue #2 (https://github.com/IjonTichy1970/Psysmon/issues/2)).
+
+The non-ping checks (TCP, UDP, DNS, SMTP, POP3, HTTP/HTTPS) do not need root -- only ICMP
+ping does. If pings always report hosts as down, the usual cause is not running as root;
+see 09-troubleshooting.md.
+
+Foreground (first test)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+For a first run, keep the daemon attached to your terminal with --no-fork so it logs to
+stderr where you can watch it:
+
+    sudo psysmon -f /etc/psysmon.conf --no-fork
+
+Add --no-notify to suppress email while you confirm the config. Press Ctrl-C to stop.
+(This is also the simplest way to validate a config file -- a parse error is printed and
+the daemon exits.)
+
+Backgrounded
+~~~~~~~~~~~~
+
+Without --no-fork, the daemon detaches and logs to syslog (the daemon facility by
+default; change it with --syslog-facility):
+
+    sudo psysmon -f /etc/psysmon.conf
+
+For day-to-day operation, run it under a service manager instead, as shown next.
+
+Run it as a service (systemd)
+-----------------------------
+
+PSYSMON does not ship a unit file. Here is a working one. Use --no-fork so systemd
+supervises the process directly (it stays in the foreground) and journald captures its
+logs:
+
+    # /etc/systemd/system/psysmon.service
+    [Unit]
+    Description=PSYSMON network monitoring daemon
+    After=network-online.target
+    Wants=network-online.target
+
+    [Service]
+    Type=simple
+    ExecStart=/usr/local/bin/psysmon -f /etc/psysmon.conf --no-fork
+    ExecReload=/bin/kill -HUP $MAINPID
+    Restart=on-failure
+    User=root
+
+    [Install]
+    WantedBy=multi-user.target
+
+Adjust ExecStart to the path where psysmon actually lives (e.g. /opt/psysmon-
+venv/bin/psysmon if you didn't create the symlink). Then enable and start it:
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now psysmon
+    sudo systemctl status psysmon
+    journalctl -u psysmon -f          # follow the logs
+
+ExecReload wires systemctl reload psysmon to a SIGHUP, which reloads the config without
+downtime; live up/down state is preserved for hosts that still exist. Stopping the
+service (systemctl stop psysmon) sends SIGTERM, on which the daemon drains in-flight
+checks and writes a final status snapshot. Reloading, stopping, and the status page are
+covered in 07-operating.md.
+
+Upgrade
+-------
+
+To upgrade, install the new artifact over the old one in the same venv and restart the
+service:
+
+    /opt/psysmon-venv/bin/pip install --upgrade ./psysmon-<new-version>-py3-none-any.whl
+    sudo systemctl restart psysmon
+
+If you configured on-disk state persistence (config savestate / --state-file), an
+upgrade-and-restart won't re-page outages that were already known. For the full
+operational picture -- reloads, state persistence, and rolling upgrades -- see
+07-operating.md.
+
+Uninstall
+---------
+
+    sudo systemctl disable --now psysmon
+    sudo rm /etc/systemd/system/psysmon.service /usr/local/bin/psysmon
+    sudo rm -rf /opt/psysmon-venv
+
+This removes the service, the symlink, and the virtual environment. Your config file
+(/etc/psysmon.conf) and any state file are left in place; delete them separately if you
+no longer need them.
+
+Next steps
+----------
+
+With PSYSMON installed, continue to 04-configuration.md to write your config file, then
+05-cli-reference.md for the flags that override it. If something doesn't work,
+09-troubleshooting.md covers the common install-time problems.
+
+
+########################################################################################
+
+Configuration
+=============
+
+PSYSMON reads a single configuration file (default /etc/psysmon.conf, overridable with
+-f/--config). One daemon understands two configuration formats:
+
+- Legacy positional -- the original 1998 sysmon.conf grammar. This is the default: an
+existing sysmon.conf keeps working unchanged. - Modern object{} -- an opt-in, named-block
+grammar adopted in issue #3, more readable and order-independent.
+
+The format is auto-detected per file, and the two are never mixed in one file. A file is
+read as modern when it contains an object NAME {, a root = ..., or a set NAME = ...
+signal; anything else -- including a file that has only config lines, which both formats
+share -- is read as legacy.
+
+This chapter is the canonical reference for both formats and for migrating between them.
+The CLI flags that override any of these file settings live in Appendix A (generated
+from the source); precedence is always CLI > config file > built-in default. For what
+the checks actually do at runtime, see the feature tour; for how to run and reload the
+daemon, see Operating PSYSMON.
+
+    All examples below use RFC 5737 documentation IP ranges (192.0.2.0/24, 198.51.100.0/24,
+    203.0.113.0/24) and *.example.net names. Replace them with your own.
+
+---
+
+1. Legacy positional format
+---------------------------
+
+The legacy format is line-oriented and whitespace-tokenized. Each non-blank, non-comment
+line is split into up to seven fields. The first token of a line decides what it is:
+
+- A line whose first token starts with ; or # is a comment; blank lines are skipped.
+- A line beginning with config sets a global option (see config directives).
+- Any other line is a host/service stanza: hostname  type  <fields...>.
+- A line that is just } closes the current dependency block (see dependency nesting).
+
+Check-type keywords are prefix-matched (as in the original C strncmp), so tcpfoo still
+matches tcp. The historical legacy types that PSYSMON dropped (imap, nntp, radius,
+umichx500, ...) produce a warning and are skipped -- they never abort the load. In general
+the legacy parser warns and skips a bad stanza rather than failing; check the daemon log
+on startup for line N: ... warnings.
+
+Field-by-field reference per check type
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every stanza starts with the hostname (field 1) and the type keyword (field 2). The
+remaining positional fields depend on the type. contact is the notification address; an
+absent contact means syslog only, no page.
+
+| Type | Positional fields after hostname |
+|---|---|
+| ping | ping  label  [contact] |
+| smtp | smtp  label  [contact] |
+| tcp | tcp  port  label  [contact] |
+| udp | udp  port  label  [contact] |
+| www (HTTP) | www  url  url_text  label  [contact] |
+| https | https  url  url_text  label  [contact] |
+| pop3 | pop3  username  password  label  [contact] |
+| authdns (DNS) | authdns  name  contact |
+
+Notes confirmed from the parser:
+
+- label is the original "message" field -- a human-readable description. - tcp/udp
+require a numeric port (a non-numeric or non-positive port skips the stanza). -
+www/https take a url (the path to GET) and url_text (a substring that must appear in the
+response body), then the label. - pop3 takes a username and password, then the label. -
+authdns is special: it takes the DNS name to look up and then a required contact -- a
+legacy authdns stanza with no contact is rejected. It has no label field. - Default
+ports are applied automatically where they exist (smtp 25, pop3 110, authdns/DNS 53,
+www/http 80, https 443); ping has none, and tcp/udp require an explicit port.
+
+A trailing { opens a dependency block (next section).
+
+    # hostname          type    fields...                       contact
+    router.example.net  ping    edge-router                     noc@example.net
+    mx.example.net      smtp    mail-relay                      noc@example.net
+    db.example.net      tcp     5432 postgres                   dba@example.net
+    api.example.net     https   /health OK api-health           noc@example.net
+    ns1.example.net     authdns example.net                     noc@example.net
+
+    Because fields are whitespace-split, a legacy label or url_text cannot contain spaces.
+    If you need spaces in a label, that's one good reason to move to the modern format.
+
+Dependency nesting { }
+~~~~~~~~~~~~~~~~~~~~~~
+
+A stanza followed by a trailing { opens a child block: the hosts inside it are checked
+only while the parent is up. This is dependency suppression -- when an upstream router
+goes down, you get one alert for the router, not a flood for everything behind it. A
+line that is just } closes the block.
+
+In the legacy grammar only ping-like parents (ping and smtp) may open a { block -- that
+matches the original parser. A { on any other type is warned about and its block
+discarded. Nesting deeper than 64 levels is rejected with a clean config error.
+
+    router.example.net  ping  edge-router  noc@example.net  {
+        web.example.net    https /health OK  web-health  noc@example.net
+        db.example.net     tcp   5432         postgres    dba@example.net
+        sw.example.net     ping  access-switch  noc@example.net  {
+            host1.example.net  ping  host-1  noc@example.net
+        }
+    }
+
+Here web, db, and sw are suppressed when router is down; host1 is additionally
+suppressed when sw is down.
+
+config numfailures is position-dependent
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+config numfailures N sets how many consecutive failed checks a host must accumulate
+before it pages. In the legacy format this directive is position-dependent: its current
+value is snapshotted into every stanza parsed after it. It is a running value, not last-
+wins -- change it again partway down the file and only the stanzas below the second
+change get the new value.
+
+    config numfailures 2
+
+    router.example.net  ping  edge-router  noc@example.net        # threshold 2
+
+    config numfailures 5
+
+    flaky.example.net   ping  flaky-link    noc@example.net        # threshold 5
+    host2.example.net   ping  host-2        noc@example.net        # threshold 5 (still)
+
+    This positional behavior is unique to the legacy format. In the modern format config numfailures
+    is a plain global default and you set per-object thresholds with a numfailures attribute -- the
+    converter relies on this distinction (see migration).
+
+config directives (legacy) {#config-directives-legacy}
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The legacy parser's config line is config <directive> <value...>. The directive is
+prefix-matched. The complete set the legacy parser accepts:
+
+| Directive | Value | Effect |
+|---|---|---|
+| config pageinterval | minutes | Re-page interval while a host stays down |
+| config numfailures | integer | Failure threshold (position-dependent -- see above) |
+| config logging | facility \| none | Syslog facility; none disables syslog |
+| config loglevel | warning\|info\|debug | Logging verbosity |
+| config dnslog | seconds | DNS-stats log interval |
+| config dnsexpire | seconds | DNS cache TTL |
+| config heartbeat | seconds | "Monitoring N hosts" summary interval |
+| config savestate | "path" | Persist live state to survive restarts (quoted or bare path) |
+| config statusfile | html\|text path | Status-output format and path |
+| config sleeptime | -- | Obsolete; ignored with a warning (use --interval) |
+
+Valid syslog facilities are the usual set (kern, user, mail, daemon, auth, syslog, lpr,
+news, uucp, cron, authpriv, local0-local7); an unknown one warns and falls back to
+daemon. An unknown loglevel falls back to info. config statusfile needs exactly the two
+arguments <html|text> <path>.
+
+Anything the legacy format can't express on a line (source-IP binding, per-object
+intervals, loss-tolerant ping, control channel, contact_on, ...) must come from the
+command line with a legacy config -- or you move to the modern format, which has
+directives for all of them.
+
+---
+
+2. Modern object{} format
+-------------------------
+
+The modern format describes the same monitoring tree as named blocks instead of
+positions. It is order-independent: declare objects in any order and wire them together
+by name. A modern file is recognized by an object NAME {, root = ..., or set NAME = ....
+
+A minimal example:
+
+    # Globals
+    config statusfile html "/var/www/psysmon/status.html";
+    config pageinterval 18;              # minutes between re-pages while down
+    set noc = "noc@example.net";         # reuse a value with $noc below
+
+    object edge-rtr {
+        ip      "192.0.2.1";
+        type    ping;
+        desc    "edge router";
+        contact $noc;
+    };
+
+    object web {
+        ip      "192.0.2.10";
+        type    https;
+        url     "/health";
+        urltext "OK";
+        desc    "web health";
+        contact $noc;
+        dep     "edge-rtr";              # only checked while edge-rtr is up
+    };
+
+Lexical rules
+~~~~~~~~~~~~~
+
+- Statements end with ;. Object and group bodies are delimited by { ... }. - Strings are
+double-quoted ("a value") with no escape sequences -- a string cannot contain a " or span
+a newline. - Barewords are unquoted runs used for keywords, hostnames, and numbers
+(ping, 192.0.2.1, 443). A bareword ends at whitespace or one of " { } = ; #. Quoting any
+value is always safe; quote it whenever it might contain one of those characters. -
+Comments: # starts a comment to end-of-line anywhere outside a string. A ; at the start
+of a statement (file start, or right after a { or another ;) also begins a comment,
+matching the legacy ;/# convention -- so ;, ;;, and ; like this are comment lines. - = is
+optional in object attributes -- ip "h"; and ip = "h"; are equivalent -- but required in
+set NAME = "..."; and root = "...";. - An unterminated string is the one lexical error
+that aborts the load with a clear message; a missing ; only warns.
+
+root and the object graph
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- root = "name"; is an optional, informational hint. It does not change the structure
+(roots are determined purely by which objects have no dep); naming a nonexistent object
+just warns. - object NAME { ... }; defines one monitored host/service. NAME is used only
+to wire dep edges; it must be unique (a duplicate name warns and is skipped).
+
+Structural attributes
+~~~~~~~~~~~~~~~~~~~~~
+
+Inside an object body, attributes are key value; pairs:
+
+| Attribute | Value | Applies to | Notes |
+|---|---|---|---|
+| ip | "host" | all (required) | Hostname or IP to check |
+| type | keyword | all (required) | A check type (below) |
+| port | integer | tcp/udp (required); others optional | 1-65535; omitted => the type default |
+| desc | "text" | optional | Display label (the legacy label) |
+| contact | "addr" | dns (required); others optional | Notification address; absent/empty => syslog only, no page |
+| url + urltext | "path", "substring" | http/https (required) | Path to GET, and a substring the body must contain |
+| username + password | "u", "p" | pop3 (required) | POP3 credentials |
+| dns-query | "name" | dns (required) | The DNS name to look up |
+| dep | "object-name" | optional | Parent object for dependency suppression |
+
+Check types (type keyword): ping, tcp, udp, smtp, pop3, dns, http, https. For legacy
+familiarity, authdns is accepted as an alias for dns and www for http. Default ports:
+smtp 25, pop3 110, dns 53, http 80, https 443 (ping has none; tcp/udp require an
+explicit port).
+
+Required fields per type -- an object missing a required field is warned and skipped; the
+rest of the config still loads:
+
+| Type | Required attributes |
+|---|---|
+| ping, smtp | ip, type |
+| tcp, udp | ip, type, port |
+| http, https | ip, type, url, urltext |
+| pop3 | ip, type, username, password |
+| dns | ip, type, dns-query, contact |
+
+Dependencies and the forest
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The config builds a forest linked by dep edges, reproducing the legacy { } nesting as a
+named graph:
+
+- An object with no dep is a top-level root. - dep "parent" makes the object a child of
+parent: it is checked only while every ancestor ping is up.
+
+Recoverable problems warn and degrade gracefully rather than failing the load:
+
+- One parent only (single-dep MVP). Listing more than one dep warns and keeps the first.
+True named multi-parent (DAG) dependencies are planned (#62) and not yet implemented. -
+An unknown dep target warns and the object becomes a root. - A cycle warns and the
+object becomes a root (the forest is kept acyclic).
+
+Variables -- set / $var
+~~~~~~~~~~~~~~~~~~~~~~
+
+    set noc  = "noc@example.net";
+    set fast = "10";
+
+set NAME = "value"; defines a variable. $NAME is then expanded anywhere it later appears
+in a value -- a string or a bareword, including as a substring ("$noc and a note"). A
+reference to an undefined variable is left literal with a warning. Variables must be
+defined before use.
+
+    include is reserved, not yet supported. A config that uses include is rejected at load
+    with an error (it's a planned follow-up under #3). Do not rely on it working today.
+
+Per-object overrides
+~~~~~~~~~~~~~~~~~~~~
+
+These override the global defaults for one object. An invalid value is warned and
+ignored (the object still loads with the global default).
+
+| Attribute | Value | Notes |
+|---|---|---|
+| queuetime | seconds (> 0) | Per-object check interval -- poll a critical host faster than the tail |
+| numfailures | integer (>= 1) | Per-object page threshold |
+| send_pings / min_pings | integers (>= 1, min <= send) | Per-object loss-tolerant ping; an invalid pair falls back to the globals |
+| group | "name" | Operator grouping label (status-page headings + a JSON field); a matching group "name" { ... } block can give the group default settings |
+| contact_on | down\|up\|both\|none | Which transitions page this object (overrides global) |
+| source | "ip" \| auto | Outbound bind source for this object's check (see below) |
+
+Any other attribute (a typo, or a not-yet-supported key) is warned about and ignored.
+
+contact_on selects which state transitions send a page -- for one object (the attribute)
+or globally (config contact_on ... / --contact-on); the per-object value wins:
+
+- both *(default)* -- page on a host going down and on its recovery.
+- down -- page on outages only; suppress recovery pages.
+- up -- page on recovery only.
+- none -- never page this object (still monitored and shown on the status page).
+
+An object with no contact address never pages regardless of contact_on.
+
+Outbound bind source -- source
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+source controls which local address a check's probes go out from. The per-object
+resolution is per-object source > the object's group source > the per-type default >
+unbound. The per-type default differs by check type, and this is a common source of
+confusion:
+
+- ping (ICMP) is unbound by default. The kernel routes each probe by destination,
+regardless of config source_ip. This matches a plain ping with no -I and is right for
+hosts reached over a VPN or a dynamic interface. - All other checks
+(tcp/udp/smtp/pop3/dns) default to the global config source_ip (the ACL-egress address),
+or unbound if none is set.
+
+Set source to:
+
+- an IPv4 address (source "203.0.113.5";) -- bind this object's probes to that local
+address. Works for ping too. (IPv6 source binding is rejected at load; that's planned
+under #24.) - auto (source auto;) -- keep this object unbound (route by destination) even
+when a group default or config source_ip would otherwise bind it. This is the explicit
+opt-out.
+
+    HTTP/HTTPS exception: source is not applied to http/https checks (the HTTP client offers no
+    per-request source bind).
+
+Group scopes -- group "NAME" { ... }
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A top-level group "NAME" { ... } block gives every object that joins the group (via the
+group "NAME" attribute) shared default settings. Today it carries source; it's a scope,
+so future per-group defaults slot in the same way. A per-object value always wins over
+the group default, and the membership attribute works with or without a matching block
+(a block-less group is just a display label). Group/object declaration order doesn't
+matter.
+
+    group "vpn-sites" {
+        source auto;            # these hosts route freely (unbound)
+    };
+    group "dmz" {
+        source "192.0.2.9";     # bind DMZ checks to this egress address
+    };
+
+    object gw {
+        ip "198.51.100.1"; type ping;
+        group "vpn-sites";      # inherits: source auto
+    };
+    object mail {
+        ip "198.51.100.2"; type smtp; port 25;
+        group "dmz";
+        source "203.0.113.5";   # per-object source WINS over the dmz default
+    };
+
+config directives (modern)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Top-level config <directive> <value>; lines set runtime options. Each maps to a setting
+the CLI can still override (CLI > config file > default). An unknown directive warns and
+is skipped.
+
+| Directive | Value | Default | Meaning |
+|---|---|---|---|
+| config queuetime | seconds | 30 | Default per-host check interval |
+| config numfailures | integer | 2 | Default failure threshold (a global baseline -- see note) |
+| config pageinterval | minutes | 10 | Re-page interval while a host stays down |
+| config statusfile | html\|text "path" | (off) | Status output format + path |
+| config savestate | "path" | (off) | Persist live state to survive restarts |
+| config statesave_interval | seconds | 60 | How often to flush the state file (0 = only on exit) |
+| config state_max_age | seconds | 86400 | Ignore a state file older than this (0 disables) |
+| config logging | facility \| none | daemon | Syslog facility (none disables syslog) |
+| config loglevel | warning\|info\|debug | info | Logging verbosity |
+| config heartbeat | seconds | 300 | "Monitoring N hosts" summary interval (0 disables) |
+| config noheartbeat | (no value) | -- | Shorthand for heartbeat 0 |
+| config dnsexpire | seconds | 900 | DNS cache TTL |
+| config dnslog | seconds | 600 | DNS-stats log interval |
+| config send_pings | integer | 1 | Global echoes per ping check (loss-tolerant ping) |
+| config min_pings | integer | 1 | Global replies required to count a host up |
+| config page_on_degraded | (no value) | off | Page on a degraded (partial-loss) ping |
+| config contact_on | down\|up\|both\|none | both | Default transitions that page (per-object override) |
+| config maxqueued | integer | 50 | Cap on concurrent checks |
+| config source_ip | "ip" | (auto) | Default outbound bind source for connection checks. Ping ignores it (ping is unbound by default; see source) |
+| config hostname | "name" | (auto) | Org hostname shown in alerts / status page |
+| config sender / config from | "addr" | (none) | Alert From: address |
+
+config sleeptime is obsolete and ignored with a warning (use queuetime / --interval).
+
+    config numfailures is a global default only in the modern format. Unlike the legacy
+    positional behavior, it just sets the baseline. To give one object a different threshold, use its
+    per-object numfailures attribute.
+
+Control / query channel. The opt-in control channel (control channel docs) is configured
+with these directives; it is off by default and binds loopback 127.0.0.1:2026 when
+enabled, refusing to start on a non-loopback address without TLS:
+
+    config control;                                       # enable (off by default)
+    config control_bind "127.0.0.1";                      # default; non-loopback requires TLS
+    config control_port 2026;                             # default
+    config control_token_file "/etc/psysmon/control.token";
+    # config control_tls_cert "/etc/psysmon/control.crt"; # required for a non-loopback bind
+    # config control_tls_key  "/etc/psysmon/control.key";
+
+Generate the bearer token with psysmon-token; reads (status, version) need no token, but
+mutations (ack, note, reload) do, and with no token file configured all mutations are
+disabled. See the CLI reference for psysmonctl and psysmon-token.
+
+    Legacy configs have no control directives -- enable the channel via the CLI flags
+    (--control, --control-token-file, ...) instead.
+
+Reloading (SIGHUP)
+~~~~~~~~~~~~~~~~~~
+
+On SIGHUP, PSYSMON re-reads the config and re-applies the host tree -- objects, dep
+edges, and per-object attributes (queuetime / numfailures and friends) -- preserving the
+live up/down state of hosts that still exist. File-level config globals are not re-
+applied on reload: intervals, paths, the logging knobs, and the global queuetime /
+numfailures baselines take effect only at startup. To change a global, restart the
+daemon. See Operating PSYSMON.
+
+---
+
+3. Legacy vs. modern, and migration
+-----------------------------------
+
+Side-by-side
+~~~~~~~~~~~~
+
+| | Legacy positional | Modern object{} |
+|---|---|---|
+| Default? | Yes (and auto-detected) | Opt-in (auto-detected by object/root/set) |
+| Structure | Position; { } nesting | Named objects + dep edges |
+| Spaces in values | No (whitespace-split) | Yes (quoted strings) |
+| Dependency parents | ping/smtp only | any type via dep |
+| numfailures | Position-dependent | Global default + per-object attribute |
+| Per-object interval / ping counts / source / contact_on | Not expressible (CLI only) | Per-object attributes |
+| Variables / reuse | No | set / $var |
+| Control channel in file | No (CLI only) | config control_* |
+| Org identity / mail-from in file | No (CLI only) | config hostname / sender |
+
+Legacy field <-> modern attribute mapping (canonical)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This is the canonical mapping table (Appendix C points here).
+
+| Legacy positional field | Modern attribute | Notes |
+|---|---|---|
+| hostname (field 1) | ip "host"; | |
+| type keyword (field 2) | type keyword; | www -> http, authdns -> dns (aliases accepted either way) |
+| port (tcp/udp) | port N; | Default ports omitted in modern; kept only for tcp/udp |
+| label / "message" | desc "text"; | |
+| contact | contact "addr"; | |
+| url, url_text (www/https) | url "path";, urltext "substring"; | |
+| username, password (pop3) | username "u";, password "p"; | |
+| name (authdns) | dns-query "name"; | |
+| { ... } child nesting | dep "parent"; on the child | Legacy ping/smtp parents become named edges |
+| config numfailures N (positional) | per-object numfailures N; | Resolved onto each object, not replayed as a global |
+| config savestate "path" | config savestate "path"; | |
+| config statusfile html /p | config statusfile html "/p"; | |
+| config pageinterval/logging/loglevel/dnslog/dnsexpire/heartbeat | same config <name> | Direct equivalents |
+| config sleeptime | -- | Obsolete in both; ignored |
+
+The converter -- psysmon-convert
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+psysmon-convert turns an existing positional sysmon.conf into the equivalent modern
+config. It installs alongside the psysmon daemon command:
+
+    psysmon-convert /etc/psysmon.conf -o psysmon.conf.new   # write a file
+    psysmon-convert /etc/psysmon.conf                       # or print to stdout
+    psysmon-convert - -o out.conf                           # read legacy from stdin
+
+If the command isn't on your PATH (for example, you installed into a virtualenv you
+haven't activated), use the module form with the same Python that has PSYSMON installed:
+
+    /path/to/venv/bin/python -m psysmon.config.convert /etc/psysmon.conf -o psysmon.conf.new
+
+It parses the legacy file through PSYSMON's own parser and re-emits it, so the output
+reflects PSYSMON's semantics and round-trips to the same monitoring tree:
+
+- { } nesting becomes named dep edges. - The position-dependent config numfailures is
+resolved onto each object as a per-object numfailures (emitted only where it differs
+from the assumed default). - Default ports are dropped; only tcp/udp ports are kept. -
+The legacy authdns query name is emitted as dns-query. - Object names are derived from
+hostnames, de-duplicated with a -N suffix.
+
+Use -n N (--numfailures) to tell the converter which default threshold the legacy config
+assumed (default 2). The converter warns rather than silently dropping coverage when the
+legacy file uses something the modern grammar can't represent faithfully (a port outside
+1-65535, a numfailures below 1, or a value containing a "). It also warns if the result
+is globals-only with no objects: an objectless file auto-detects as *legacy*, so add an
+object or force the modern parser.
+
+---
+
+4. Worked examples
+------------------
+
+Each check type below is shown in both formats. The two columns describe the same check.
+
+ping
+~~~~
+
+    # legacy
+    router.example.net  ping  edge-router  noc@example.net
+
+    # modern
+    object router {
+        ip      "192.0.2.1";
+        type    ping;
+        desc    "edge router";
+        contact "noc@example.net";
+    };
+
+tcp
+~~~
+
+    # legacy  -- port is required
+    db.example.net  tcp  5432  postgres  dba@example.net
+
+    # modern
+    object db {
+        ip      "192.0.2.20";
+        type    tcp;
+        port    5432;
+        desc    "postgres";
+        contact "dba@example.net";
+    };
+
+udp
+~~~
+
+    # legacy
+    ntp.example.net  udp  123  ntp  noc@example.net
+
+    # modern
+    object ntp {
+        ip      "192.0.2.21";
+        type    udp;
+        port    123;
+        desc    "ntp";
+        contact "noc@example.net";
+    };
+
+smtp
+~~~~
+
+    # legacy  -- smtp uses the default port 25
+    mx.example.net  smtp  mail-relay  noc@example.net
+
+    # modern
+    object mx {
+        ip      "192.0.2.25";
+        type    smtp;
+        desc    "mail relay";
+        contact "noc@example.net";
+    };
+
+pop3
+~~~~
+
+    # legacy  -- user, password, label  (note: values can't contain spaces)
+    pop.example.net  pop3  probeuser  probepass  pop3-login  noc@example.net
+
+    # modern
+    object pop {
+        ip       "192.0.2.26";
+        type     pop3;
+        username "probeuser";
+        password "probepass";
+        desc     "pop3 login";
+        contact  "noc@example.net";
+    };
+
+authdns / dns
+~~~~~~~~~~~~~
+
+    # legacy  -- name to look up, then the REQUIRED contact (no label field)
+    ns1.example.net  authdns  example.net  noc@example.net
+
+    # modern  -- dns requires both dns-query AND contact
+    object ns1 {
+        ip        "192.0.2.53";
+        type      dns;
+        dns-query "example.net";
+        contact   "noc@example.net";
+    };
+
+www / http and https
+~~~~~~~~~~~~~~~~~~~~
+
+    # legacy  -- url, match-text, label  (no spaces in url_text)
+    api.example.net  https  /health  OK  api-health  noc@example.net
+
+    # modern  -- url + urltext required for http/https
+    object api {
+        ip      "192.0.2.10";
+        type    https;
+        url     "/health";
+        urltext "OK";
+        desc    "api health";
+        contact "noc@example.net";
+    };
+
+Topology: a router with dependents
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    # legacy  -- only the ping parent opens a { } block
+    router.example.net  ping  edge-router  noc@example.net  {
+        web.example.net  https /health OK  web-health  noc@example.net
+        db.example.net   tcp   5432         postgres    dba@example.net
+    }
+
+    # modern  -- flat objects joined by dep
+    set noc = "noc@example.net";
+
+    object router {
+        ip "192.0.2.1"; type ping; desc "edge router"; contact $noc;
+    };
+    object web {
+        ip "192.0.2.10"; type https; url "/health"; urltext "OK";
+        desc "web health"; contact $noc;
+        dep "router";
+    };
+    object db {
+        ip "192.0.2.20"; type tcp; port 5432; desc "postgres";
+        contact "dba@example.net";
+        dep "router";
+    };
+
+web and db are checked only while router is up -- one alert for the router, not three.
+
+Topology: a mail server with SMTP + POP3
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    # legacy
+    mail.example.net  smtp  mail-submit  noc@example.net
+    mail.example.net  pop3  probeuser probepass  mail-retrieve  noc@example.net
+
+    # modern  -- two objects, same host, distinct names
+    object mail-smtp {
+        ip "198.51.100.2"; type smtp; desc "mail submit"; contact "noc@example.net";
+    };
+    object mail-pop3 {
+        ip "198.51.100.2"; type pop3;
+        username "probeuser"; password "probepass";
+        desc "mail retrieve"; contact "noc@example.net";
+    };
+
+Topology: an HTTP health check with url + urltext
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A health endpoint that must return a known marker string, polled faster than the default
+and not re-paged too often:
+
+    object health {
+        ip        "203.0.113.10";
+        type      https;
+        url       "/healthz";
+        urltext   "ready";       # this substring must appear in the response body
+        desc      "service health";
+        contact   "noc@example.net";
+        queuetime 10;            # poll every 10s instead of the 30s default
+        numfailures 3;          # require 3 consecutive failures before paging
+    };
+
+---
+
+See also
+--------
+
+- CLI reference and Appendix A -- every command-line flag (generated from the source),
+which overrides any file setting. - Feature tour -- what each check type actually does
+and the dependency model. - Status codes -- the result states a check can report,
+including PSYSMON's Degraded. - Operating PSYSMON -- starting, reloading (SIGHUP), and
+the control channel. - Troubleshooting -- reading the line N: ... config warnings.
+
+
+########################################################################################
+
+Command-line reference
+======================
+
+This chapter orients you to PSYSMON's command-line interface: the console-script
+commands it installs, how the daemon's flags are grouped, and -- most importantly -- the
+precedence rule that decides which value wins when the command line and the config file
+disagree.
+
+This is a map, not an inventory. The complete, alphabetised flag list (with every
+default) is generated straight from psysmon --help into Appendix A, so it never drifts
+from the code. Reach for that when you need the exact spelling of an option; reach for
+this chapter when you want to understand what the options *do* and how they layer.
+
+The commands
+------------
+
+Installing PSYSMON puts four console scripts on your PATH:
+
+| Command | What it is |
+| --- | --- |
+| psysmon | The monitoring daemon itself -- the subject of this chapter. |
+| psysmon-convert | Converts a legacy sysmon.conf to the modern object{} format. |
+| psysmonctl | Client for the opt-in runtime control channel (query status, acknowledge alerts). |
+| psysmon-token | Generates a bearer token file for the control channel. |
+
+psysmon-convert can also be invoked as python -m psysmon.config.convert. The control-
+channel tools (psysmonctl, psysmon-token) are covered with the feature itself in the
+feature tour and operating chapters; the rest of this chapter is about the psysmon
+daemon.
+
+Two flags short-circuit everything else:
+
+    psysmon --version      # print the version and exit
+    psysmon --help         # print the full flag list and exit
+
+--help is the authoritative source for flags -- Appendix A is just its rendered output.
+
+How the flags are grouped
+-------------------------
+
+Every daemon flag overrides a single runtime setting. Most of those settings were
+*hardcoded* in the original 1998 C sysmon (the source IP, the org hostname, the mail
+transport, ports, intervals, thresholds); PSYSMON lifts them into the config file and
+the command line. They fall into eight logical groups.
+
+Files and output
+~~~~~~~~~~~~~~~~
+
+Where PSYSMON reads its config and writes its status page.
+
+- -f / --config PATH -- config file path (default /etc/psysmon.conf).
+- --status-file PATH -- where to write the status page.
+- --status-format html|text -- status file format (HTML by default).
+- --status-refresh SECONDS -- auto-refresh interval baked into the HTML page.
+- --show-up -- list *up* hosts too; by default the page shows only down hosts ("Bad
+  Hosts").
+
+    psysmon -f /etc/psysmon.conf --status-file /var/www/psysmon/status.html --show-up
+
+Identity and network
+~~~~~~~~~~~~~~~~~~~~
+
+How PSYSMON identifies itself and sources its outbound traffic.
+
+- --source-ip IP -- outbound bind source for connection checks (the address your firewall
+ACLs see). This is IPv4 and applies to TCP/UDP/SMTP/POP3/DNS/HTTP checks; ping is
+unbound by default and ignores it. The source can also be set per object or group in the
+modern config (source); see Configuration. - --hostname NAME -- the hostname shown in
+alert emails and the status-page title.
+
+    psysmon --source-ip 203.0.113.10 --hostname monitor.example.net
+
+Scheduling and thresholds
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+How often hosts are checked, how many checks run at once, and when a failure becomes a
+page.
+
+- --interval SEC -- default per-host check interval. - --max-concurrency N -- cap on
+concurrent checks. - --numfailures N -- consecutive failures before a host is reported. -
+--pageinterval MIN -- re-page interval while a host stays down (minutes). - --slow-check
+SEC -- log any check that runs at least this long (0 disables). - --send-pings N / --min-
+pings M -- loss-tolerant ping: send N echoes, require M replies to count up. The default
+1/1 is the historical first-reply-wins behaviour; a non-zero reply count below --min-
+pings reports *Degraded* (a PSYSMON-only status -- see Status codes). - --page-on-
+degraded -- page on a degraded (partial-loss) ping instead of treating it as
+informational. - --contact-on down|up|both|none -- which transitions page (default both:
+down *and* recovery). Overridable per object in the modern config.
+
+    psysmon --interval 60 --numfailures 5 --pageinterval 15 \
+            --send-pings 5 --min-pings 3 --page-on-degraded
+
+Alerting (SMTP)
+~~~~~~~~~~~~~~~
+
+Where email alerts are relayed and whether they're sent at all.
+
+- --smtp-host HOST (default localhost) and --smtp-port PORT (default 25).
+- --mail-from ADDR -- the alert From: address.
+- -n / --no-notify -- disable all paging (handy while testing a new config).
+
+    psysmon --smtp-host smtp.example.net --smtp-port 25 --mail-from noc@example.net
+
+DNS cache
+~~~~~~~~~
+
+Tuning for the resolver cache PSYSMON keeps for monitored hostnames.
+
+- --dnsexpire SEC -- cache TTL (default 900).
+- --dnslog SEC -- interval for periodic DNS-cache statistics logging (default 600).
+
+    psysmon --dnsexpire 1800 --dnslog 300
+
+State persistence
+~~~~~~~~~~~~~~~~~
+
+On-disk up/down state so a restart or upgrade doesn't re-page outages you already know
+about.
+
+- --state-file PATH -- persist state here. State persistence is off when this is unset. -
+--state-save-interval SEC -- how often to flush the file (0 saves only on shutdown). -
+--state-max-age SEC -- ignore a state file older than this on load (0 disables the check;
+default 86400).
+
+    psysmon --state-file /var/lib/psysmon/state.json --state-save-interval 60
+
+The same path can be set in the config with config savestate "<path>"; see Operating.
+
+Logging and process
+~~~~~~~~~~~~~~~~~~~
+
+Verbosity, the periodic heartbeat summary, and whether the daemon forks.
+
+- --syslog-facility FAC -- syslog facility (default daemon; none disables syslog). -
+--log-level warning|info|debug -- logging verbosity (default info). - -v / -vv --
+shorthand for verbosity: -v sets info, -vv sets debug. This sets an *absolute* level and
+is overridden by an explicit --log-level. - --heartbeat SEC -- interval for the periodic
+"monitoring N hosts" summary (0 disables; default 300). - -d / --no-fork -- run in the
+foreground (logs to stderr instead of detaching). Use this for a first test run and when
+supervising under systemd.
+
+    psysmon --no-fork -vv --heartbeat 600
+
+Control channel
+~~~~~~~~~~~~~~~
+
+The opt-in JSON-over-TLS query/control channel, off by default. Full setup is in the
+feature tour.
+
+- --control -- enable the channel. - --control-bind ADDR (default 127.0.0.1) and
+--control-port PORT (default 2026). A non-loopback bind requires TLS. - --control-token-
+file PATH -- file holding the bearer token required for mutating actions. - --control-
+tls-cert PATH / --control-tls-key PATH -- TLS certificate and key.
+
+    psysmon --control --control-token-file /etc/psysmon/control.token
+
+Precedence: command line > config file > built-in defaults
+----------------------------------------------------------
+
+PSYSMON builds its effective configuration in three layers, each overriding the one
+before:
+
+1. Built-in defaults -- the values baked into the daemon (e.g. numfailures is 2, the SMTP
+host is localhost, the check interval is 30 seconds). 2. Config file -- any config
+<directive> lines in your psysmon.conf override the matching defaults. 3. Command line --
+any flag you pass overrides both the file and the defaults.
+
+Only options you *explicitly set* participate. A flag you don't pass is genuinely absent
+-- it does not silently re-assert a default over a value your config file set. So the
+command line is purely additive: it changes exactly the settings you name and leaves
+everything else to the file (or the defaults).
+
+This makes the command line the right place for deployment-specific values that you
+don't want to hardcode into a shared config file -- the outbound source IP, the monitor's
+hostname, SMTP details -- and for temporary overrides while testing.
+
+Note that not every flag has a matching config directive: the legacy config file
+recognises a fixed set of config globals (such as statusfile, pageinterval, numfailures,
+dnsexpire, dnslog, heartbeat, logging, loglevel, and savestate). Settings without a
+legacy directive -- the SMTP host, the source IP, the daemon hostname -- come from the
+command line (or the modern config). See Configuration for the full directive list.
+
+Worked examples
+~~~~~~~~~~~~~~~
+
+Override the page threshold for one run. The config file sets config numfailures 5, but
+tonight you want to be paged faster:
+
+    # psysmon.conf has:  config numfailures 5
+    psysmon -f /etc/psysmon.conf --numfailures 2
+
+The effective threshold is 2 -- the CLI wins. Drop the flag and it reverts to the file's
+5.
+
+Suppress alerts while validating a config. Test a new config in the foreground with
+paging off, without editing the file:
+
+    psysmon -f /etc/psysmon.conf --no-fork --no-notify
+
+--no-fork and --no-notify win over whatever the file says; everything else (status path,
+SMTP host, intervals) still comes from the file.
+
+Layer all three sources at once. Suppose the file sets config pageinterval 18 and
+nothing about the SMTP host or the source IP:
+
+    psysmon -f /etc/psysmon.conf --pageinterval 5 --smtp-host smtp.example.net --source-ip 203.0.113.10
+
+The effective settings come from all three layers: pageinterval is 5 minutes (CLI
+overrides the file's 18), smtp-host is smtp.example.net and source-ip is 203.0.113.10
+(both CLI, since the file has no directive for either), and the check interval is still
+the built-in 30 seconds (no one overrode the default).
+
+Verbosity is order-independent, not last-wins. --log-level always beats -v/-vv, no
+matter which comes first on the line:
+
+    psysmon -vv --log-level warning      # effective level: warning
+
+See also
+--------
+
+- Configuration -- the config-file directives these flags override, and the per-object
+source / contact-on overrides. - Operating -- running the daemon, reloading, and state
+persistence in practice. - Status codes -- the meaning of Degraded and the other check
+results. - Appendix A -- the full, generated --help flag list with all defaults.
+
+
+########################################################################################
+
+Feature tour
+============
+
+This chapter walks through the main features of psysmon, each with a minimal snippet and
+an availability badge so you can see at a glance where it works. The badges are:
+
+- (all formats) -- available in the legacy positional sysmon.conf, the modern object{}
+config, *and* on the command line. - (modern config only) -- only expressible in the
+modern object{} config format.
+
+For the full configuration grammar see Configuration and the modern-format reference;
+for every CLI flag see Appendix A; for the meaning of each status string see Status
+codes. This chapter shows representative snippets, not the exhaustive reference tables
+(those are generated from the code).
+
+Examples use only the RFC-5737 documentation address ranges (192.0.2.0/24,
+198.51.100.0/24, 203.0.113.0/24), *.example.net hostnames, and noc@example.net contacts.
+
+---
+
+Dependency suppression (all formats)
+------------------------------------
+
+Monitored objects form a tree: a child is checked only while its parent (a ping target,
+typically the upstream router) is reachable. When the parent goes down you get one alert
+for the parent instead of a storm for everything behind it.
+
+In the legacy format, nesting with { } encodes the dependency:
+
+    router.example.net ping router.example.net noc@example.net {
+        web.example.net ping web.example.net noc@example.net {
+            web.example.net tcp 443 https noc@example.net
+        }
+    }
+
+In the modern format, the same structure is named dep edges:
+
+    object edge-rtr {
+        ip "192.0.2.1"; type ping; contact "noc@example.net";
+    };
+    object web {
+        ip "192.0.2.10"; type https; url "/health"; urltext "OK";
+        contact "noc@example.net";
+        dep "edge-rtr";          # only checked while edge-rtr is up
+    };
+
+Each object has one parent today (single dep). Listing more than one dep warns and keeps
+the first; true multi-parent (DAG) dependencies are planned (#62
+(https://github.com/IjonTichy1970/Psysmon/issues/62)) and not yet implemented. An
+unknown dep target, or a cycle, warns and the object becomes a root.
+
+A *degraded* (lossy-but-answering) parent does not suppress its subtree -- a router that
+still forwards packets shouldn't mask real outages behind it. Only a fully-down ancestor
+suppresses.
+
+---
+
+Threshold alerting, re-page, and recovery notices (all formats)
+---------------------------------------------------------------
+
+After *N* consecutive failures an object is reported down and you are paged once; while
+it stays down you are re-paged on an interval; and you get a notice again when it
+recovers.
+
+    config numfailures 5         ; consecutive failures before alerting (default 2)
+    config pageinterval 18       ; minutes between re-pages while down (default 10)
+
+These are also CLI flags: --numfailures N and --pageinterval MIN. In the modern format
+they are config numfailures / config pageinterval directives, and the modern format adds
+a per-object numfailures override (see below).
+
+You can also control *which* transitions page, with contact_on. Globally it's a modern-
+config directive (config contact_on ...) or the --contact-on CLI flag -- the flag is the
+only way to set it for a legacy config (the legacy parser has no contact_on directive).
+Per object it's modern-format only:
+
+    config contact_on down;      ; page on outages only; suppress recovery pages
+
+The values are down, up, both, and none; the default is both (page on down *and* on
+recovery), which preserves psysmon's historical behavior. An object with no contact
+address never pages regardless of contact_on.
+
+---
+
+The SMTP email notifier (all formats)
+-------------------------------------
+
+Email is the built-in notification transport. The contact address comes from the
+object's contact; the SMTP transport, sender, and the org hostname shown in alerts are
+settings:
+
+    sudo psysmon --config /etc/psysmon.conf \
+      --smtp-host mail.example.net --smtp-port 25 \
+      --mail-from noc@example.net --hostname noc.example.net
+
+In the modern format these can also come from the config file (config sender / config
+from for the From: address, config hostname for the org hostname); a legacy config sets
+them only via the CLI flags above (it has no such directives). The SMTP host/port have
+no config directive in either format -- they are CLI-only. An object with an absent or
+empty contact logs to syslog only -- it does not page. Use -n / --no-notify to suppress
+paging entirely (results still show on the status page).
+
+---
+
+Status output: HTML, text, and JSON (all formats)
+-------------------------------------------------
+
+psysmon publishes a status file atomically (readers never see a partial file). Choose
+the format and path with config statusfile <html|text> "path", --status-file PATH, and
+--status-format {html,text}:
+
+    config statusfile html "/var/www/psysmon/status.html";
+
+- HTML "Bad Hosts" page -- a dark-themed page listing down hosts (the default view), with
+a browser auto-refresh (--status-refresh SECONDS). Suppressed hosts are hidden by
+default; use --show-up to list up hosts too. All dynamic content is HTML-escaped. - Text
+table -- a flat variant (--status-format text). - JSON -- all nodes, each with a
+suppressed flag, for dashboards and automation.
+
+When objects have a group set (modern format), the HTML page lists them under per-group
+headings (with an "Ungrouped" bucket) and the JSON carries a group field per host. See
+Operating for how to publish and serve the status file.
+
+---
+
+Loss-tolerant ping and the Degraded status (all formats)
+--------------------------------------------------------
+
+A normal ping counts a host up on the first reply. Loss-tolerant ping sends several
+echoes and requires a minimum number of replies:
+
+    sudo psysmon --config /etc/psysmon.conf --send-pings 5 --min-pings 3
+
+- --send-pings N -- echoes sent per ping check.
+- --min-pings M -- replies required to count the host up.
+
+The config send_pings / config min_pings directives set these globally in the modern
+format; a legacy config has no such directives, so set them with the CLI flags above.
+(The modern format also adds per-object send_pings / min_pings -- see below.)
+
+With fewer than M but more than zero replies, the host reports the psysmon-only Degraded
+status -- reachable but lossy -- instead of flapping between up and Unpingable. Zero
+replies still reads Unpingable. The defaults are 1/1, exactly the previous first-reply-
+wins behavior, so nothing changes unless you opt in.
+
+A degraded host shows with its own badge on the status page and does not suppress its
+dependents (a lossy router still forwards). It is informational by default -- to make a
+degraded result page like a normal outage, add --page-on-degraded (or config
+page_on_degraded).
+
+send_pings / min_pings can also be set per object in the modern format (see below).
+
+---
+
+State persistence (savestate) (all formats)
+-------------------------------------------
+
+By default a restart forgets what was already down and could re-page outages the
+operator already knows about. On-disk state persistence avoids that:
+
+    config savestate "/var/lib/psysmon/state.json";
+
+Equivalent CLI flags: --state-file PATH (off when unset), --state-save-interval SEC (how
+often to flush; default 60, 0 saves only on shutdown), and --state-max-age SEC (ignore a
+state file older than this on load; default 86400). The file is written atomically and
+merged back on startup by (hostname, type, port). A node that was down and already paged
+stays that way without re-paging; the re-page timer restarts fresh. A missing,
+unreadable, wrong-schema, or stale file is ignored with a log line and the daemon starts
+clean.
+
+---
+
+Leveled syslog logging (all formats)
+------------------------------------
+
+psysmon logs operational detail to syslog at selectable verbosity:
+
+    config loglevel info;        ; warning | info | debug (default info)
+    config heartbeat 300;        ; "monitoring N hosts" summary interval, seconds (0 disables)
+    config dnslog 600;           ; DNS-cache stats interval, seconds
+
+- info (the default) logs host down/recovery and pages, a periodic monitoring N hosts -
+U up, D down, S suppressed heartbeat, periodic DNS-cache stats, and slow-check
+durations. - debug adds a per-check result line.
+
+CLI equivalents: --log-level {warning,info,debug}, and -v / -vv as an absolute level (-v
+= info, -vv = debug; --log-level wins if both are given). The heartbeat interval is
+--heartbeat SEC (default 300, 0 disables), the DNS-stats interval is --dnslog SEC, and
+the slow-check threshold is --slow-check SEC (default 30, 0 disables -- logs any check
+that runs at least that long). The syslog facility itself is config logging / --syslog-
+facility (default daemon; none disables syslog).
+
+---
+
+Auto-deployed status-page logo (all formats)
+--------------------------------------------
+
+On its first publish, the daemon writes its status-page logo (psysmon-logo.png) next to
+the HTML status file, so a fresh deploy renders the logo without a manual copy step. An
+existing psysmon-logo.png in the status directory is left untouched, so a custom logo is
+preserved. Nothing to configure -- it follows wherever statusfile points.
+
+---
+
+Per-object check cadence -- queuetime / interval (modern config only)
+--------------------------------------------------------------------
+
+The global check interval is config queuetime <sec> (default 30; CLI --interval SEC).
+The modern format adds a per-object queuetime so a critical router can be polled faster
+than the long tail:
+
+    object edge-rtr {
+        ip "192.0.2.1"; type ping; contact "noc@example.net";
+        queuetime 10;            # poll this object every 10s
+    };
+
+A per-object value greater than zero overrides the global default for that object only.
+
+---
+
+Per-object loss-tolerant ping -- send_pings / min_pings (modern config only)
+---------------------------------------------------------------------------
+
+Beyond the global ping tolerance shown earlier, the modern format lets you tune it per
+object:
+
+    object edge-rtr {
+        ip "192.0.2.1"; type ping; contact "noc@example.net";
+        send_pings 5;
+        min_pings  3;            # this host alone: 5 echoes, 3 replies = up
+    };
+
+Both must be integers >= 1 with min_pings <= send_pings; an invalid pair is warned and
+falls back to the globals.
+
+---
+
+Per-object paging policy -- contact_on (modern config only)
+----------------------------------------------------------
+
+The contact_on setting exists globally in all formats (above). The modern format adds a
+per-object override that wins over the global value:
+
+    object noisy-link {
+        ip "192.0.2.50"; type ping; contact "noc@example.net";
+        contact_on down;         # page on outages only for this object
+    };
+
+Values are down, up, both, none. An object with no contact never pages regardless.
+
+---
+
+Grouping -- group and the group { } scope (modern config only)
+-------------------------------------------------------------
+
+A group "name" attribute labels an object; the status views then list objects under per-
+group headings (with an "Ungrouped" bucket) and add a group field to the JSON.
+
+A top-level group "NAME" { ... } block additionally gives every member shared default
+settings. Today it carries source (below); it is a scope, so future per-group defaults
+slot in the same way. A per-object value always wins over the group default, and the
+membership attribute works with or without a matching block (a block-less group is just
+a display label). Declaration order doesn't matter -- defaults are resolved after the
+whole file is read.
+
+    group "dmz" {
+        source "192.0.2.9";      # bind DMZ checks to this egress address
+    }
+
+    object mail {
+        ip "198.51.100.2"; type smtp; port 25;
+        group "dmz";             # inherits source "192.0.2.9"
+    };
+
+---
+
+Clean DNS checks -- dns-query (modern config only)
+-------------------------------------------------
+
+A dns (authoritative) check looks up a name against the target server. In the modern
+format the name to query is the dns-query attribute (a required field for dns, along
+with a non-empty contact):
+
+    object auth-ns {
+        ip "192.0.2.53"; type dns;
+        dns-query "www.example.net";
+        contact "noc@example.net";
+    };
+
+(authdns is accepted as an alias for type dns.)
+
+---
+
+Per-object / per-group outbound source -- source (modern config only) (#70 (https://github.com/IjonTichy1970/Psysmon/issues/70))
+-------------------------------------------------------------------------------------------------------------------------------
+
+source controls which local address a check's probes go out from. Resolution per object
+is: per-object source > the object's group source > the per-type default > unbound. It
+is IPv4-only (an IPv6 source is rejected at load).
+
+The per-type default differs:
+
+- Ping (ICMP) is unbound by default -- it routes each probe by destination and ignores
+the global config source_ip. This is the right behavior for hosts reached over a VPN or
+a dynamic interface, and it matches a plain ping with no -I. - All other checks
+(tcp/udp/smtp/pop3/dns) default to the global config source_ip (the ACL-egress address),
+or unbound if none is set.
+
+Set source to:
+
+- an IPv4 address (source "203.0.113.5";) -- bind this object's probes to that local
+address; works for ping too (e.g. to pin a stable VPN local address) and for the
+connection checks. - auto (source auto;) -- keep this object unbound (route by
+destination) even when a group default or config source_ip would otherwise bind it. This
+is the explicit opt-out.
+
+    object vpn-gw {
+        ip "198.51.100.1"; type ping;
+        source auto;             # route freely (unbound) even if a group default would bind
+    };
+    object dmz-mail {
+        ip "198.51.100.2"; type smtp; port 25;
+        source "203.0.113.5";    # bind this connection check to a fixed egress address
+    };
+
+source is not applied to http/https checks (the underlying HTTP client offers no per-
+request source bind); those remain unbound.
+
+---
+
+Named multi-dependency -- planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62))
+-------------------------------------------------------------------------------------------
+
+Today every object has exactly one parent (a single dep). Listing more than one dep
+warns and keeps the first. True multi-parent (DAG) dependencies -- an object suppressed
+only when *all* of several parents are down -- are planned and not yet implemented.
+
+---
+
+The control / query channel -- psysmonctl / psysmon-token (opt-in)
+-----------------------------------------------------------------
+
+psysmon can expose an opt-in TCP channel for querying live status and performing runtime
+actions -- acknowledge an alert, attach a note, trigger a reload -- without editing the
+config. It is off by default; when enabled it binds 127.0.0.1:2026 (loopback only) and
+refuses to start on a non-loopback address unless TLS is configured.
+
+Enable it (CLI for either config format):
+
+    psysmon --config /etc/psysmon.conf --control \
+      --control-token-file /etc/psysmon/control.token
+
+or in the modern config:
+
+    config control;                               # enable (off by default)
+    config control_token_file "/etc/psysmon/control.token";
+
+Mutating actions (ack, note, reload) require a bearer token; reads (status, version) do
+not. Generate the token with psysmon-token (a 0600 file; the daemon never auto-creates
+it). With no token file configured, the channel still serves reads but all mutations are
+disabled (fail closed). The bundled psysmonctl client drives it:
+
+    psysmonctl status                              # sanitized status (JSON) -- no token needed
+    psysmonctl ack  router.example.net ping        # silence paging while this object is down
+    psysmonctl note web.example.net https 443 "vendor ticket 4711"
+    psysmonctl reload                              # re-read the config (same as SIGHUP)
+
+ack suppresses paging while the object stays down (initial page *and* re-pages) and
+auto-clears on recovery; note attaches operator free-text shown on the status page and
+in the JSON. Both survive a reload and a restart. The status read serves the same
+sanitized output as the status page -- stored credentials are never exposed, and there is
+no remote shutdown command.
+
+Full operational details and the security model are in Operating and the control-channel
+documentation.
+
+---
+
+Availability matrix
+-------------------
+
+| Feature | Legacy | Modern | CLI |
+|---|---|---|---|
+| Dependency suppression (single parent) | Yes ({ } nesting) | Yes (dep) | -- (structure is config-only) |
+| Named multi-dependency (DAG) | Planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62)) | Planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62)) | Planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62)) |
+| Threshold alerting (numfailures) | Yes | Yes | --numfailures |
+| Re-page interval (pageinterval) | Yes | Yes | --pageinterval |
+| Recovery notices | Yes | Yes | -- |
+| Paging policy (contact_on) -- global | No (CLI only) | Yes (config contact_on) | --contact-on |
+| Paging policy (contact_on) -- per object | No | Yes | No |
+| SMTP email notifier | Yes | Yes | --smtp-host / --smtp-port / --mail-from / -n |
+| Status output (HTML / text / JSON) | Yes | Yes | --status-file / --status-format / --show-up / --status-refresh |
+| Status-page logo auto-deploy | Yes | Yes | -- (follows statusfile) |
+| Object grouping on status views | No | Yes (group) | No |
+| Loss-tolerant ping + Degraded -- global | No (CLI only) | Yes (config send_pings / min_pings) | --send-pings / --min-pings |
+| Loss-tolerant ping -- per object | No | Yes (send_pings / min_pings) | No |
+| Page on degraded | No (CLI only) | Yes (config page_on_degraded) | --page-on-degraded |
+| State persistence (savestate) | Yes | Yes | --state-file / --state-save-interval / --state-max-age |
+| Leveled syslog logging | Yes | Yes | --log-level / -v / -vv / --heartbeat / --dnslog / --slow-check / --syslog-facility |
+| Per-object check cadence (queuetime) | No (global only) | Yes | --interval (global only) |
+| Per-object page threshold (numfailures) | No (global only) | Yes | --numfailures (global only) |
+| DNS check query name (dns-query) | Yes (positional) | Yes (dns-query) | -- |
+| Per-object / per-group source (#70 (https://github.com/IjonTichy1970/Psysmon/issues/70)) | No | Yes | No (global --source-ip only) |
+| Control channel (psysmonctl / psysmon-token) | Enable via CLI | Enable via config control or CLI | --control / --control-bind / --control-port / --control-token-file / --control-tls-cert / --control-tls-key |
+
+See CLI reference and Appendix A for the complete flag list, Configuration for the full
+directive set, and Status codes for every status string including Degraded.
+
+
+########################################################################################
+
+Operating PSYSMON
+=================
+
+This chapter covers day-to-day operation once PSYSMON is installed and a config is in
+place: how to run it, how to read what it tells you, how to reload or restart it safely,
+what survives a restart, and how to acknowledge or annotate alerts at runtime without
+touching the config file.
+
+If you haven't installed it yet, start with Installation (including the systemd service
+unit) and Configuration. For the full flag list see Appendix A; for the meaning of each
+status code see Status codes.
+
+Running it
+----------
+
+PSYSMON runs as a long-lived daemon. ICMP ping needs a raw socket, so it must run as
+root on Linux (via sudo or a service manager); the non-ping checks
+(TCP/UDP/SMTP/POP3/DNS/HTTP) work without it.
+
+Foreground (--no-fork)
+~~~~~~~~~~~~~~~~~~~~~~
+
+For a first test, or any time you want to watch it work, run it attached to your
+terminal:
+
+    sudo psysmon -f /etc/psysmon.conf --no-fork
+
+--no-fork (also -d) keeps the process in the foreground and sends log output to stderr
+instead of syslog. This is the way to validate a config -- a parse error prints and the
+daemon exits -- and to watch checks happen live. Add --no-notify (-n) to suppress email
+while you experiment. Ctrl-C stops it (a clean SIGINT -- see *Stopping* below).
+
+This is also the form to run under a service manager that supervises the process itself
+(see *systemd*, below).
+
+Backgrounded (daemonized)
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For normal standalone use, run without --no-fork:
+
+    sudo psysmon -f /etc/psysmon.conf
+
+It detaches from the terminal and logs to syslog -- the daemon facility by default.
+Change the facility with --syslog-facility <fac>, or turn syslog off entirely with
+config logging none. After it backgrounds, your terminal goes quiet; the logs are in
+syslog (journalctl or /var/log/...), not on screen. If you need to see output directly,
+run it foreground instead.
+
+Under systemd
+~~~~~~~~~~~~~
+
+The recommended production setup is a systemd unit running PSYSMON with --no-fork, so
+systemd supervises the process directly and journald captures the logs. PSYSMON doesn't
+ship a unit file -- Installation has a complete, working psysmon.service to copy. The key
+lines are:
+
+    ExecStart=/usr/local/bin/psysmon -f /etc/psysmon.conf --no-fork
+    ExecReload=/bin/kill -HUP $MAINPID
+    Restart=on-failure
+    User=root
+
+With that in place, the everyday commands are:
+
+    sudo systemctl enable --now psysmon    # start now and on boot
+    sudo systemctl status psysmon          # is it running?
+    sudo systemctl reload psysmon          # re-read the config (SIGHUP) -- no downtime
+    sudo systemctl restart psysmon         # full restart (see "Reload vs restart")
+    sudo systemctl stop psysmon            # graceful stop
+    journalctl -u psysmon -f               # follow the logs
+
+Reading the status output
+-------------------------
+
+PSYSMON publishes a status file -- HTML or flat text, selected by config statusfile (the
+directive sets both the path and the format) or by --status-file <path> plus --status-
+format <html|text>. Point a browser or web server at the path you configured. HTML is
+the default format.
+
+By default the view is down-only -- the "Bad Hosts" page. Hosts that are up don't appear,
+and children suppressed behind a down parent are omitted (so a router outage doesn't
+fill the page with everything behind it). Pass --show-up to list up hosts too. The HTML
+page auto-refreshes on an interval (--status-refresh, default 30s).
+
+If any objects carry a group label (set in the modern config -- see Configuration), the
+page lists them under per-group headings, with an "Ungrouped" bucket for the rest; the
+JSON view (below) carries a group field per host so a dashboard can filter on it. With
+no groups in use the page renders flat.
+
+The columns
+~~~~~~~~~~~
+
+Both the HTML table and the text table use the same eight columns (carried over from the
+original sysmon):
+
+| Column | Meaning |
+| --- | --- |
+| HostName | The monitored object's hostname. An ACK badge appears here when the outage has been acknowledged, and any operator note is shown beneath it. |
+| Type | The check type -- ping, tcp, smtp, pop3, dns, http, etc. |
+| Port | The port checked (shown as -- when not applicable, e.g. for ping). |
+| Count | Consecutive-failure count for this object. |
+| Notified | Yes once an alert has been sent for the current outage, No otherwise. |
+| Status | The current status code (e.g. up, Conn Ref, Host Down, Degraded). See Status codes. |
+| Time Failed | Wall-clock time the object went down (its "death time"); Never if it has never been seen down. |
+| Last Outage | Elapsed time since the object was last seen up, or Never if it has never been up. |
+
+The Status cell is colour-coded on the HTML page: green for up, red for down, and a
+distinct yellow badge for Degraded -- a partial-packet-loss ping result (reachable but
+lossy), a PSYSMON-only status that does *not* suppress the objects behind it. See Status
+codes for Degraded and the rest.
+
+The ACK badge and notes
+~~~~~~~~~~~~~~~~~~~~~~~
+
+When you acknowledge an outage (see *Acknowledging and annotating*, below), the object
+still shows as down but gains an ACK badge next to its hostname -- paging is suppressed
+while it stays down, but the status code is unchanged. An operator note, if set, appears
+as italic text under the hostname (HTML) or after the row (text). Both are HTML-escaped
+on the page.
+
+The JSON view
+~~~~~~~~~~~~~
+
+PSYSMON also exposes a JSON view of every monitored object. It is not written as a file
+next to the status page -- it is served live by the optional control channel (psysmonctl
+status, see *Acknowledging and annotating*, below), which returns the same sanitized
+JSON. Unlike the HTML page, the JSON lists every monitored object (up, down, and
+suppressed) so the blast radius of an outage is queryable. The top level is:
+
+    {
+      "generated": <unix time>,
+      "down":  <count of down, non-suppressed hosts>,
+      "total": <total monitored objects>,
+      "hosts": [ ... ]
+    }
+
+Each entry in hosts carries:
+
+| Field | Meaning |
+| --- | --- |
+| hostname, type, port, label, contact | The object's identity and configured contact. |
+| group | Operator group label, or null when unset. |
+| up | true if the last check was a healthy "up" result. |
+| degraded | true for a partial-loss ping (reachable but lossy). |
+| status | The numeric status code. |
+| status_text | The human-readable status string (the same text the page shows). |
+| count | Consecutive-failure count. |
+| notified | Whether an alert has been sent for the current outage. |
+| acked | true if the outage is operator-acknowledged. |
+| note | The operator note, or null when unset. |
+| suppressed | true if the object is suppressed behind a down parent. |
+| deathtime | When it went down (or null). |
+| last_up | When it was last seen up (or null). |
+
+The status file is published atomically -- written to an unguessable temp file and
+renamed into place -- so a reader, dashboard, or web server never sees a half-written
+file.
+
+Logging
+-------
+
+When backgrounded, PSYSMON logs to syslog (daemon facility by default); under systemd
+with --no-fork, journald captures stderr. Verbosity is set with config loglevel or
+--log-level <warning|info|debug> (or the shorthand -v = info, -vv = debug; an explicit
+--log-level wins over -v). The default is info.
+
+| Level | What it logs |
+| --- | --- |
+| warning | Problems only. |
+| info (default) | Host down / recovery transitions and pages; a periodic heartbeat (monitoring N hosts - U up, D down, S suppressed); periodic DNS-cache stats (dnscache periodic - ... hits ... misses ... expired); and slow-check durations (Check of <host> of <type> ran for N seconds). |
+| debug | Everything in info, plus a per-check result line. |
+
+Three of those have their own knobs:
+
+- Heartbeat interval -- config heartbeat <sec> / --heartbeat, default 300s; 0 disables
+it. - DNS-stats interval -- config dnslog <sec> / --dnslog. - Slow-check threshold --
+--slow-check <sec>, default 30s; 0 disables the slow-check log line.
+
+If you backgrounded the daemon and see no logs, they're in syslog -- not your terminal.
+Check journalctl / /var/log, or re-run with --no-fork to log to stderr. See
+Troubleshooting.
+
+Reload vs restart
+-----------------
+
+PSYSMON reloads its config on SIGHUP with no downtime:
+
+    sudo systemctl reload psysmon     # or: sudo kill -HUP <pid>
+
+A reload re-reads the config file and re-applies the monitored tree (objects, dependency
+nesting, contacts). Live up/down state is preserved for hosts that still exist after the
+reload, so a SIGHUP doesn't re-page known outages or forget what's already down. (An in-
+flight check that completes after the reload is discarded rather than applied to the
+just-replaced state, so a reload never causes a duplicate page or a lost transition.)
+Operator acks and notes also survive a reload.
+
+Some changes need a full restart (systemctl restart) to take effect:
+
+- Global runtime settings -- anything in the Settings layer, such as the source IP,
+status path/format, SMTP settings, intervals, thresholds, and the logging knobs
+(loglevel / heartbeat / dnslog) and the control-channel options. These are read at
+startup and merged from CLI over config over defaults; a reload re-applies the
+*monitored tree*, not the daemon-level settings, so apply these with a restart. - A
+brand-new raw-ping bind source. Raw ping sockets are opened at startup while the process
+is privileged, keyed by source address (see the per-object/group source in
+Configuration). If a SIGHUP reload introduces a *new* source address that wasn't bound
+at startup, ping for that target falls back to unbound (routing by destination), and the
+fallback is logged. To actually bind ping to a new source you must restart so the socket
+can be opened. (Ping is unbound by default regardless of the global source_ip; only an
+explicit per-object/group source binds it.)
+
+When in doubt, a restart applies everything -- at the cost of re-running each object's
+first check. With state persistence enabled (below), a restart still won't re-page
+outages you already know about.
+
+Stopping
+--------
+
+A graceful stop is SIGTERM (or SIGINT / Ctrl-C in the foreground):
+
+    sudo systemctl stop psysmon     # or: sudo kill -TERM <pid>
+
+On a graceful stop the daemon drains in-flight checks, writes a final status snapshot,
+and (if state persistence is enabled) flushes the saved state so the next start picks up
+where it left off.
+
+State persistence across restarts and upgrades
+----------------------------------------------
+
+By default, PSYSMON starts with a clean slate each time it launches -- which means a
+restart or an upgrade would re-discover existing outages and page you again for hosts
+you already know are down. Enable savestate to avoid that:
+
+    config savestate "/var/lib/psysmon/state.json"
+
+(or --state-file <path>; off when unset). With it enabled:
+
+- The state file is written atomically on a periodic flush (--state-save-interval,
+default 60s; 0 saves only on a graceful shutdown) and again on a clean stop. - On
+startup the saved state is merged back in by (hostname, type, port). An object that was
+down and already paged stays that way without re-paging; its re-page timer restarts
+fresh. - Operator acks and notes are carried with the saved state, so they survive a
+restart too. - A missing, unreadable, wrong-schema, or stale state file (older than
+--state-max-age, default 24h; 0 disables the age check) is ignored with a log line, and
+the daemon starts clean.
+
+This is what makes the upgrade procedure below safe: with savestate on, an upgrade
+restart doesn't flood you with re-pages for outages already in progress.
+
+Acknowledging and annotating alerts at runtime
+----------------------------------------------
+
+You can acknowledge an outage or attach an operator note without editing the config, via
+the opt-in control channel and the bundled psysmonctl client. This is the runtime
+equivalent of "I've seen it, stop paging me" and "here's the ticket number," and it's
+the recommended way to manage an active incident.
+
+The channel is off by default. When enabled it binds 127.0.0.1:2026 (loopback only) and
+refuses to start on a non-loopback address without TLS. Mutating actions (ack, note,
+reload) require a bearer token; reads (status, version) don't. Generate the token once
+with psysmon-token, then enable the channel:
+
+    psysmon-token /etc/psysmon/control.token
+    sudo psysmon -f /etc/psysmon.conf \
+         --control --control-token-file /etc/psysmon/control.token
+
+Then drive it with psysmonctl:
+
+    psysmonctl status                                    # sanitized status (JSON) -- no token
+    psysmonctl ack  router.example.net ping              # silence paging while down (needs token)
+    psysmonctl note web.example.net https 443 "vendor ticket 4711"
+    psysmonctl note web.example.net https 443 ""         # empty text clears the note
+    psysmonctl reload                                    # same as SIGHUP
+
+- ack suppresses paging while the object stays down -- both the initial page and the
+periodic re-pages -- and auto-clears when the object recovers, so a *future* outage pages
+normally. It does not change the status code; the object still shows DOWN, with the ACK
+badge on the status page. - note attaches operator free-text, shown next to the object
+on the status page (escaped) and in the JSON. It persists until cleared.
+
+Both are live state and survive a SIGHUP reload and a restart (carried with the saved
+state). Objects are addressed by hostname + type [+ port]; the port defaults to 0
+(ping). psysmonctl reload is exactly equivalent to a SIGHUP.
+
+For the full setup -- config directives, the 0600 token-file permission requirement,
+exposing the channel beyond localhost with TLS, and the security model -- see the control
+channel reference and the security notes.
+
+Upgrading
+---------
+
+To upgrade an installed PSYSMON:
+
+    /opt/psysmon-venv/bin/pip install --upgrade ./psysmon-<new-version>-py3-none-any.whl
+    sudo systemctl restart psysmon
+
+With savestate enabled (above), the restart preserves in-progress outage state, so the
+upgrade won't re-page hosts that were already down. If you run from source or a
+different install layout, adjust the pip path accordingly -- see Installation and Getting
+it. Always confirm the running version afterward:
+
+    psysmon --version
+
+The version also appears in the status-page footer, so you can verify a remote instance
+upgraded by reloading its status page.
+
+
+########################################################################################
+
+Status codes
+============
+
+Every check returns one status code. Code 0 (up) means the service is fully up; every
+nonzero code is a distinct failure reason. The code's short text appears in the Status
+column of the HTML status page and the text status file; the JSON output carries both
+the integer code (the status field) and that short text (the status_text field).
+
+The table below is generated from the daemon's own psysmon.status module, so it always
+matches the running code.
+
+| Code | Status text | Meaning |
+|---|---|---|
+| 0 | up | The service answered normally; fully up. |
+| 1 | Conn Ref | The host is reachable but refused the connection on that port (nothing listening / actively rejected). |
+| 2 | Net Unrch | No route to the host's network (a router/path is down). |
+| 3 | Host Down | The host itself is down / unreachable on its network. |
+| 4 | Conn Timed Out | The connection attempt timed out with no response. |
+| 5 | No dns entry | The hostname did not resolve (no DNS record / lookup failed). |
+| 6 | Unpingable | No ICMP echo reply within the retry budget (ping only). |
+| 7 | Thrttl | Rate-limited / throttled by the service. |
+| 8 | No Auth | Authentication was required but not provided. |
+| 9 | No Srvr Resp | Connected, but the server sent no (valid) response. |
+| 10 | Conn in prog | A connection is still in progress (transient). |
+| 11 | Bad Auth | Authentication was attempted and rejected (bad credentials). |
+| 12 | Bad Resp | The server responded, but not as expected (e.g. a DNS reply that is malformed or from the wrong source; an HTTP body missing the expected text). |
+| 13 | Wedged | The service is wedged / stuck (legacy X.500 condition). |
+| 14 | Degraded | Loss-tolerant ping got some replies but fewer than min_pings -- reachable but lossy. Does not reset an outage; pages only with --page-on-degraded. (psysmon addition, #22.) |
+
+Up, degraded, and reachable
+---------------------------
+
+Two distinctions matter for how a code affects the rest of your monitoring:
+
+- up vs. not -- only code 0 resets an outage and stops paging. A Degraded host (a loss-
+tolerant ping that got *some* replies but fewer than min_pings) is not up: it stays
+visible as a problem and does not clear an outage. It pages only if you set --page-on-
+degraded. - Reachable (for dependency gating) -- a host's dependents are checked only
+while the host is *reachable*, which means up _or_ degraded. A lossy-but-answering
+router still forwards packets, so PSYSMON does not suppress everything behind it; only a
+fully-down ancestor freezes its subtree. See Feature tour -> dependency suppression and
+Troubleshooting.
+
+Which codes a given check can produce depends on the check type -- e.g. Unpingable comes
+only from ping, Bad Auth only from POP3, and Bad Resp from DNS (malformed/wrong-source
+reply) or HTTP (body missing the expected text). See the Feature tour for what each
+check verifies.
+
+
+########################################################################################
+
+Troubleshooting & FAQ
+=====================
+
+This chapter collects the questions operators hit most often, framed as "symptom -> cause
+-> fix." Each answer points to the chapter with the full detail. For the meaning of a
+specific status word on the page, see Status codes; for the complete flag list, see the
+CLI reference and Appendix A in the appendices.
+
+Ping and reachability
+---------------------
+
+Every ping fails / a host reads "Unpingable" / I get a permission error at startup
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Raw ICMP needs privilege. psysmon opens its raw sockets at startup, which requires root
+or the CAP_NET_RAW capability on Linux; without it the daemon can't open the unbound
+ping socket and surfaces a clean startup error. (Ping is a Linux feature -- raw ICMP
+demux relies on the event loop's add_reader, which isn't available on the Windows event
+loop.)
+
+Fixes:
+
+- Run the daemon as root, or grant the capability to the interpreter, e.g. setcap
+cap_net_raw+ep /path/to/venv/bin/python (see Installation). - What matters is opening
+the raw socket *as* root (or with CAP_NET_RAW) at startup. The daemon currently keeps
+root for the rest of its run; a privilege-drop option exists in the code but is not
+enabled (issue #2).
+
+If a *single* host reads Unpingable while others ping fine, that's a real result: no
+echo reply came back within the retry budget. A host that answers *some* but fewer than
+the required number of probes reads Degraded, not Unpingable (see the loss-tolerant ping
+question below).
+
+A VPN-reached host reads "Unpingable" even though I set a global source IP
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This is expected, and it changed in 0.4.0. Ping is now unbound by default and ignores
+the global config source_ip -- the kernel routes each ICMP probe by destination.
+source_ip still binds the *connection* checks (tcp/udp/smtp/pop3/dns) for firewall-ACL
+egress, but no longer binds ping.
+
+If pings to a VPN host were succeeding before only because source_ip pinned them to the
+right local address, set that address explicitly on the object (or its group):
+
+    object vpn-gw {
+        ip      "198.51.100.1";
+        type    ping;
+        source  "203.0.113.5";    # pin ping to this local (VPN) address
+    }
+
+The note in Configuration applies: a *literal* per-VPN IP is fragile if that address
+changes across reboots or VPN restarts. For a host that should simply route freely, use
+source auto; (the explicit "stay unbound" opt-out) rather than binding a fixed address.
+
+I added a per-object ping source and reloaded with SIGHUP, but it isn't binding
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+psysmon opens its raw ping sockets at startup, while privileged, and keeps them across
+the later privilege drop. A *brand-new* source introduced by a SIGHUP reload can't open
+a new bound raw socket after privilege is gone, so probes for it fall back to the
+unbound socket (logged once as a cannot bind source ... routing affected checks unbound
+until restart warning).
+
+Fix: restart the daemon to bind a newly-added source. Other reload changes to the host
+tree (adding objects, editing dep edges, per-object queuetime / numfailures) apply on
+SIGHUP as usual -- see the reload notes in Operating and Configuration.
+
+Alerting and paging
+-------------------
+
+A host shows "Degraded" on the status page but never pages
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+That's the default. Degraded is a loss-tolerant-ping result -- the host answered some
+echoes but fewer than min_pings, so it's reachable but lossy. It is deliberately not
+treated as "down": it shows with its own badge and is informational only, so a flapping-
+but-up router doesn't wake anyone.
+
+To make a degraded result page like a normal outage, set --page-on-degraded (or config
+page_on_degraded;). Loss-tolerant ping only kicks in when you raise send_pings above 1
+(with min_pings between 1 and send_pings); the defaults of 1/1 reproduce the old first-
+reply-wins behavior, where a host is simply up or Unpingable. See Configuration and the
+feature tour.
+
+A related consequence: because a degraded (lossy-but-answering) router still forwards
+packets, psysmon does not suppress the hosts behind it. Only a fully-down ancestor
+suppresses its subtree.
+
+SMTP / email alerts never fire
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Walk these in order:
+
+1. Notifier configured? Alerts go out over SMTP. Check config sender / config from (the
+From: address, also settable with --mail-from) and the SMTP target (smtp_host defaults
+to localhost, smtp_port to 25). Confirm notifications aren't globally disabled -- -n /
+--no-notify turns paging off. 2. A contact on the object? An object with no contact
+address never pages, regardless of anything else (it's still monitored and shown --
+syslog only). For dns objects a non-empty contact is required; for other types an absent
+contact means "syslog only." 3. Does contact_on cover this transition? contact_on
+selects which transitions page: both (default -- down and recovery), down (outages only),
+up (recovery only), or none (never). If you set it to down, recovery e-mails won't fire;
+none silences the object entirely. It can be set globally (config contact_on ... /
+--contact-on) or per object, with the per-object value winning. 4. Acknowledged? If you
+ran psysmonctl ack <host> <type>, paging is suppressed while the object stays down (it
+auto-clears on recovery). See the control-channel section below.
+
+Details and examples are in Configuration; the alert lifecycle is in Operating.
+
+A host behind a down parent isn't being checked at all
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This is dependency suppression working as designed, not a bug. An object with dep
+"parent" is checked only while every ancestor ping is reachable; when the parent goes
+down, psysmon stops checking the children and freezes their state, so an upstream outage
+raises one alert instead of a flood. When the parent recovers, checking of the subtree
+resumes automatically.
+
+Notes:
+
+- Suppression is gated on the ancestor being *reachable*, which includes Degraded -- a
+lossy router still forwards, so its subtree keeps being checked. Only a fully-down
+ancestor suppresses. - Each object has a single parent today (one dep edge). Listing
+more than one dep warns and keeps the first; true multi-parent (DAG) dependencies are
+planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62)).
+
+See the dependency model in Configuration and the feature tour.
+
+Status file and output
+----------------------
+
+The status file isn't updating
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The daemon publishes the status file periodically and writes it atomically (it renders
+to an unguessable temp file in the target directory and renames it into place), so a
+reader never sees a partial file -- and a stale file usually means the write itself isn't
+landing. Check:
+
+- Path -- config statusfile html "/path" (or text), or --status-file / --status-format.
+No status path set means no status file is written at all. - Permissions -- the daemon
+must be able to create a temp file in, and rename within, the target directory. A
+directory it can't write to, or a path under a directory that doesn't exist, blocks the
+publish. - Process -- confirm the daemon is actually running and hasn't exited (check
+syslog). The page also carries a browser auto-refresh (--status-refresh, default 30s);
+if the file is current but your browser shows old data, that's just the refresh
+interval.
+
+See Operating for the publish cycle and Configuration for the status directives.
+
+Control channel
+---------------
+
+The control channel refuses to start
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+By design, so you can't accidentally expose it:
+
+- Non-loopback bind needs TLS. The channel binds 127.0.0.1:2026 by default. If you set
+control_bind to a non-loopback address, you must also provide control_tls_cert and
+control_tls_key; if they're missing or fail to load, the daemon refuses to start rather
+than expose a plaintext control channel. - Not enabled. The channel is off by default --
+enable it with config control; / --control.
+
+psysmonctl ack / note / reload are rejected
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Mutating actions require a bearer token; reads (status, version) do not. Generate a
+token file with psysmon-token <path> (it writes a random token at mode 0600; the daemon
+never auto-creates it), point --control-token-file / config control_token_file at it,
+and pass --token-file to psysmonctl. With no token file configured the channel still
+serves reads but all mutations are disabled (fail closed). The token file must be 0600 --
+the daemon refuses a group- or world-readable file on POSIX.
+
+Full setup, the security model, and the psysmonctl command list are in Operating.
+
+Configuration loading
+---------------------
+
+My config uses include and the daemon won't load it
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+include is not yet supported -- a config using it is rejected at load. It's reserved for
+a future release (with proper $var-across-include scoping); for now, keep your
+configuration in a single file. See the "what's not adopted" notes in Configuration.
+
+The first directive or hostname in my file looks mangled
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If the file was saved with a UTF-8 byte-order mark (BOM), older builds glued the BOM
+onto the first line. Current psysmon strips a leading BOM on load (for both the daemon
+and psysmon-convert), so re-saving under a recent version resolves it.
+
+A whole block of objects didn't load, or a type was skipped
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+psysmon warns and skips rather than failing the whole load when an object is malformed
+or unsupported, so the rest of the config still comes up. Check syslog (raise verbosity
+with config loglevel debug / -vv) for the specific warning. Common causes:
+
+- An object missing a required field for its type (e.g. a tcp/udp object with no port,
+an http/https object without url + urltext) is warned and skipped. - A dropped check
+type (imap, nntp, pop2, umichx500, radius, bootp, snmp) warns and skips -- these aren't
+in scope for the rewrite. - IPv6 ping types (ping6 / pingv6 / icmp6) warn and skip; IPv6
+is deferred (#24 (https://github.com/IjonTichy1970/Psysmon/issues/24)). An IPv6 source
+is likewise rejected at load. - An unknown dep target, a dependency cycle, or a
+duplicate object name each warn and degrade gracefully (the object becomes a root, or
+the duplicate is skipped).
+
+The full required-fields and check-type tables are in Configuration.
+
+I changed a global config setting and reloaded, but nothing happened
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+File-level config globals -- intervals, paths, logging knobs (loglevel / heartbeat /
+dnslog), and the global queuetime / numfailures baselines -- take effect only at startup.
+SIGHUP re-applies the host tree (objects, dep edges, per-object attributes) but does not
+re-merge global overrides. Restart the daemon to change a global. (Per-object queuetime
+/ numfailures *do* reload, because they live on the objects.) This is detailed in
+Configuration and Operating.
+
+See also
+--------
+
+- Status codes -- the meaning of every status word on the page.
+- CLI reference and appendices -- the full flag list.
+- Configuration -- directives, per-object overrides, dependencies, reload.
+- Operating -- running the daemon, the alert lifecycle, and the control channel.
+
+
+########################################################################################
+
+Glossary & security notes
+=========================
+
+This chapter collects the vocabulary used throughout the guide, then sets out the
+security posture an operator needs to understand before deploying PSYSMON: running as
+root for raw ICMP, how the control channel is locked down, and where cleartext
+credentials live. For the operational side of running the daemon, see Operating PSYSMON;
+for the meaning of each status code, see Status codes.
+
+Glossary
+--------
+
+Object : A single monitored thing -- a host or a service on a host. Every object has an
+identity of hostname + check type [+ port] (e.g. web.example.net / https / 443). That
+identity is how an object is addressed everywhere: on the status page, in the JSON, in
+the saved state file, and in psysmonctl ack / note commands. A bare host being pinged
+uses port 0.
+
+dep : A *dependency edge* in the modern object{} config -- a named link from a child
+object to the parent it sits behind. In the legacy config the same relationship is
+expressed by { } nesting. A dep is the mechanism that drives dependency suppression
+(below). Each object currently has at most a single dep edge (one parent). Named multi-
+parent dependencies (an object behind two upstreams) are *planned* and tracked as issue
+#62; they are not yet implemented. See Configuration.
+
+Dependency suppression : Monitored objects form a tree. A child is only checked while
+its parent (a ping target, typically the upstream router) is reachable. When the parent
+goes down you get one alert for the parent instead of a storm for everything behind it;
+the children freeze in place and are shown as *suppressed*. Suppression keys on
+reachability, not strict up-ness: a parent that is fully down (e.g. Unpingable)
+suppresses its subtree, but a Degraded (lossy but answering) parent does not -- a router
+that still forwards packets shouldn't mask real outages behind it.
+
+root : The top of the monitoring tree in a modern config -- the single object (or
+objects) that have no parent. Everything else hangs off a root via dep edges. See
+Configuration.
+
+group : An optional label attached to an object (the modern config's group "NAME"
+attribute, or a group "NAME" { ... } scope block that applies a default to everything
+inside it). Groups drive the status views: the HTML "Bad Hosts" page lists objects under
+per-group headings (with an "Ungrouped" bucket), and the JSON carries a group field per
+host for dashboards to filter on. Groups are presentational; they do not affect
+dependency suppression.
+
+reachable vs up : Two different bars. *Up* means a check fully succeeded (status up).
+*Reachable* means the host answered well enough to forward traffic to its dependents --
+which includes both up and Degraded. Dependency suppression uses *reachable*; the status
+page and "did the service pass" logic use *up*. A Degraded host is reachable but not up.
+
+Degraded : A PSYSMON-only status (added in #22) with no equivalent in the original
+sysmon. It comes only from a loss-tolerant ping: the host replied to some echoes but
+fewer than the required min_pings, so it is reachable but lossy. Degraded is not counted
+as up, does not suppress the objects behind it, and is informational by default (it does
+not page unless you set page_on_degraded / --page-on-degraded). See Status codes.
+
+Loss-tolerant ping : A ping check that sends send_pings echoes and requires min_pings
+replies to count the host up. Some-but-fewer replies report Degraded; zero replies
+report Unpingable. The defaults (send_pings 1 / min_pings 1) reproduce the historical
+first-reply-wins behavior, so nothing changes unless you raise them. See Configuration
+and the feature tour.
+
+Status code : The result of a single check -- up plus a set of distinct failure reasons
+(Conn Ref, Net Unrch, Host Down, Unpingable, Bad Auth, Degraded, and more). Codes and
+their display strings are defined in code and rendered into the table in Status codes;
+don't memorize them from here.
+
+Gate : Informal term for the suppression relationship -- a ping parent "gates" its
+dependents. While the gate is closed (parent unreachable), the children behind it are
+not checked. This is why getting ping targets right matters: a forged or false-positive
+"up" on a gate would silence its whole subtree (the kind of bug closed in #29 and #53).
+
+Re-page interval : How often the daemon re-alerts about an object that is *still* down,
+after the initial page. Controlled by config pageinterval / --pageinterval (minutes).
+You are paged once when an object crosses its failure threshold, re-paged on this
+interval while it stays down, and notified again on recovery (subject to contact_on).
+See Operating PSYSMON.
+
+Notifier : The component that delivers alerts. Email (SMTP) ships out of the box; the
+notifier is a pluggable interface so webhook/SMS/chat transports can be added.
+Notifications can be disabled globally with -n / --no-notify.
+
+source (auto) : The outbound bind address for an object's probes, set per object (source
+"203.0.113.5";) or for a whole group (introduced in #70). Precedence is per-object >
+group default > global config source_ip. source auto forces the target to stay unbound
+(the kernel picks the route) even when a group default or source_ip would otherwise bind
+it -- useful for hosts reached over a VPN or a dynamic interface. Note: ping is unbound
+by default and ignores the global source_ip; only an explicit per-object/group source
+binds ping. Connection checks (tcp/udp/smtp/pop3/dns) default to source_ip. The source
+value is IPv4-only, and HTTP/HTTPS checks are always unbound. See Configuration.
+
+savestate : Optional on-disk persistence of live monitoring state, so a restart or
+upgrade doesn't forget what was already down and re-page known outages. Enabled with
+config savestate "<path>" or --state-file <path> (off when unset). The file is written
+atomically, merged back in on startup by (hostname, type, port), and a
+missing/unreadable/stale file is ignored with a log line. Operator ack flags and note
+text ride along in this state. See Operating PSYSMON.
+
+Security notes
+--------------
+
+These are operator-facing notes. The control channel's full design lives in
+docs/control-channel.md; this section is what you need to deploy safely.
+
+Running as root
+~~~~~~~~~~~~~~~
+
+Raw ICMP ping requires a raw socket, which on Linux requires elevated privilege. PSYSMON
+is therefore started as root (there is no setuid binary). It opens the raw ICMP
+socket(s) while privileged at startup and then keeps root for the process lifetime -- it
+does *not* currently drop to an unprivileged user. A privilege-drop helper exists in the
+code (it would drop to an unprivileged uid/gid such as nobody/nogroup while keeping the
+already-open socket descriptors), but it is not wired in today; tightening the run-as-
+root posture is tracked as security issue #2.
+
+A few practical consequences:
+
+- Linux + root (or CAP_NET_RAW). Opening the raw ICMP socket needs root or the
+CAP_NET_RAW capability on Linux; the non-ping checks need neither. Privilege handling is
+POSIX-oriented. - New ping sources need a restart. Because raw sockets are opened at
+startup while privileged, a brand-new source address introduced by a later SIGHUP reload
+can't open a fresh socket -- it falls back to unbound (and logs that) until you restart
+the daemon. - Narrowing the posture -- dropping privilege after the sockets open, or
+running with only CAP_NET_RAW instead of full root -- is tracked as security issue #2;
+today the daemon runs as root throughout.
+
+The control / query channel
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The control channel is an opt-in TCP service for querying live status and performing
+runtime actions (acknowledge an alert, attach a note, trigger a reload) without editing
+the config. It is a deliberate, security-first replacement for sysmon 0.93's always-on
+cleartext protocol. Its model, at an operator level:
+
+- Off by default. Nothing listens unless you enable it with config control / --control.
+- Loopback by default. When enabled it binds 127.0.0.1:2026. It refuses to start on a
+non-loopback address unless TLS is configured (control_tls_cert + control_tls_key), so
+you cannot accidentally expose a plaintext control channel -- a missing/broken cert means
+the daemon declines to start rather than listening in the clear. - Reads are token-free;
+mutations are token-gated. status and version need no token. ack, note, and reload
+require a bearer token compared in constant time. With no token file configured the
+channel still serves reads but all mutations are disabled (fail closed). - Sanitized
+output. status returns the same sanitized output as the status page -- stored credentials
+are never exposed, and there is no raw-config or secret dump (the 0.93 mistake). - No
+remote kill. There is deliberately no remote shutdown/kill command. The channel is also
+bounded (max request size, read/write deadlines, a concurrent-connection cap) so it
+can't starve the monitoring loop, and errors return a fixed short code on the wire with
+detail only in the daemon log.
+
+For confidentiality beyond loopback, TLS provides the transport security and the bearer
+token provides authentication; client certificates / mTLS are out of scope for now. See
+the CLI reference and docs/control-channel.md.
+
+The control token file
+~~~~~~~~~~~~~~~~~~~~~~
+
+Generate the token with the bundled psysmon-token command -- the daemon never auto-
+creates it:
+
+    psysmon-token /etc/psysmon/control.token          # writes a random token, mode 0600
+    psysmon-token /etc/psysmon/control.token --force  # rotate (overwrite) an existing one
+
+Point --control-token-file / config control_token_file at that file. The token file must
+be 0600 -- the daemon refuses a group- or world-readable token file on POSIX. The same
+file is read by psysmonctl (via --token-file) when you run a mutating command, so it
+needs to be readable by the operator account that drives the client, and by no one else.
+
+Cleartext credentials in config files
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The POP3 service check authenticates with a username and password, and those credentials
+are stored in cleartext in the config file (the modern config's username / password
+attributes). There is no secret store or encryption-at-rest today.
+
+Practical guidance:
+
+- Treat the config file as a secret. Restrict its permissions (e.g. owned by the root
+account that starts the daemon, not group/world-readable) so the stored POP3 credentials
+aren't exposed to other local users. - Prefer a dedicated, low-privilege mailbox account
+for monitoring rather than a credential that grants access to anything sensitive. - Note
+that the status output never exposes these credentials -- neither the status page nor the
+control channel's status reply includes them. The exposure surface is the config file on
+disk, not the wire. The fact that these credentials live in the config in cleartext is
+tracked as issue #2.
+
+State file permissions
+~~~~~~~~~~~~~~~~~~~~~~
+
+If you enable savestate, the state file records each object's up/down state plus
+operator ack flags and note text. It does not contain credentials, but it does reveal
+your monitoring topology and current outage state. Put it somewhere only the daemon
+account can read and write (e.g. under a dedicated /var/lib/psysmon/ directory), and
+don't place it in a world-writable directory -- the daemon hardens against a symlink race
+on the *status* file (#28), but you should still own the directories holding both the
+state file and the control token.
+
+What was removed from the original
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For completeness: this rewrite removes two long-standing exposures from the original
+line -- the phone-home heartbeat, and the always-on cleartext control protocol that sent
+stored passwords/SNMP communities over the network and exposed an unauthenticated remote
+KILLIT. The modern control channel above is the clean-break replacement. See
+Introduction and docs/control-channel.md for the history.
+
+
+########################################################################################
+
+Appendices
+==========
+
+Appendix A -- Command-line reference
+-----------------------------------
+
+Every flag the daemon accepts, generated from psysmon --help so it can never drift from
+the build. Command-line options override the config file, which overrides the built-in
+defaults (see CLI reference for the precedence rule with worked examples).
+
+    usage: psysmon [-h] [--version] [-f PATH] [--status-file PATH]
+                   [--status-format {html,text}] [--status-refresh SECONDS]
+                   [--show-up] [--source-ip IP] [--hostname NAME] [--interval SEC]
+                   [--max-concurrency N] [--numfailures N] [--pageinterval MIN]
+                   [--slow-check SEC] [--send-pings N] [--min-pings N]
+                   [--page-on-degraded] [--contact-on {down,up,both,none}]
+                   [--dnsexpire SEC] [--dnslog SEC] [--state-file PATH]
+                   [--state-save-interval SEC] [--state-max-age SEC]
+                   [--smtp-host HOST] [--smtp-port PORT] [--mail-from ADDR] [-n]
+                   [--syslog-facility FAC] [--log-level {warning,info,debug}] [-v]
+                   [--heartbeat SEC] [-d] [--control] [--control-bind ADDR]
+                   [--control-port PORT] [--control-token-file PATH]
+                   [--control-tls-cert PATH] [--control-tls-key PATH]
+
+    Dependency-aware network monitoring daemon.
+
+    options:
+      -h, --help            show this help message and exit
+      --version             show program's version number and exit
+      -f PATH, --config PATH
+                            config file path
+      --status-file PATH    status output path
+      --status-format {html,text}
+                            status file format
+      --status-refresh SECONDS
+                            HTML status auto-refresh interval
+      --show-up             list up hosts too (not just down)
+      --source-ip IP        outbound bind source IP
+      --hostname NAME       hostname shown in alerts/status
+      --interval SEC        check interval
+      --max-concurrency N   concurrent check cap
+      --numfailures N       fails before page
+      --pageinterval MIN    re-page interval
+      --slow-check SEC      log any check running at least this long (0 disables)
+      --send-pings N        echoes per ping check (loss-tolerant ping; default 1)
+      --min-pings N         replies required to count a host up (default 1; fewer
+                            non-zero -> degraded)
+      --page-on-degraded    escalate/page on a degraded (partial-loss) ping
+                            (default: informational only)
+      --contact-on {down,up,both,none}
+                            which transitions page: down | up | both | none
+                            (default both; per-object override)
+      --dnsexpire SEC       DNS cache TTL
+      --dnslog SEC          DNS stats interval
+      --state-file PATH     persist monitoring state here to survive restarts (off
+                            when unset)
+      --state-save-interval SEC
+                            how often to flush the state file (0 saves only on
+                            shutdown)
+      --state-max-age SEC   ignore a state file older than this on load (0
+                            disables the check)
+      --smtp-host HOST      SMTP server host
+      --smtp-port PORT      SMTP server port
+      --mail-from ADDR      alert From: address
+      -n, --no-notify       do not notify
+      --syslog-facility FAC
+                            syslog facility
+      --log-level {warning,info,debug}
+                            logging verbosity (default info)
+      -v, --verbose         set verbosity (-v=info, -vv=debug) as an absolute
+                            level; overridden by --log-level
+      --heartbeat SEC       periodic "monitoring N hosts" summary interval (0
+                            disables)
+      -d, --no-fork         run in foreground
+      --control             enable the control/query channel (off by default)
+      --control-bind ADDR   control channel bind address (default 127.0.0.1; a
+                            non-loopback bind needs TLS)
+      --control-port PORT   control channel port (default 2026)
+      --control-token-file PATH
+                            file holding the bearer token required for mutating
+                            control actions
+      --control-tls-cert PATH
+                            TLS certificate for the control channel
+      --control-tls-key PATH
+                            TLS private key for the control channel
+
+Appendix B -- Status codes
+-------------------------
+
+The full status-code table lives in its own chapter: Status codes.
+
+Appendix C -- Legacy <-> modern attribute map
+------------------------------------------
+
+The full legacy-field <-> modern-attribute mapping table, the side-by-side examples, and
+the converter (psysmon-convert) usage live in Configuration -> Legacy vs. modern. That
+chapter is the single source for migration so the mapping never drifts between two
+copies.
+
+
+########################################################################################

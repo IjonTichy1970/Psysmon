@@ -6,14 +6,15 @@ edges, ``config`` globals, ``set``/``$var`` reuse), extended with psysmon-specif
 legacy positional parser (:mod:`psysmon.config.legacy`) stays the default, and
 :mod:`psysmon.config.detect` picks the format per file.
 
-**Implemented so far (#3 milestones 1–2):** the *tokenizer* (:func:`tokenize`) and the
-**global directives**. :func:`parse` interprets top-level ``config <directive> ...;`` lines into
-a settings-``overrides`` dict (keyed by :class:`~psysmon.config.settings.Settings` field names,
-exactly like the legacy parser) plus ``set NAME = "..."`` / ``$NAME`` variable substitution. The
-monitored graph — ``root`` and ``object{}`` blocks (M3/M4) — and ``include`` (a follow-up) are
-not parsed yet: a config that uses them is *refused* with a clean :class:`ParseError` rather than
-loaded as an empty monitor (and on SIGHUP the running config is kept). An empty / comment-only /
-globals-only file yields a normal (objectless) result.
+**Implemented so far (#3 milestones 1–3):** the *tokenizer* (:func:`tokenize`), the **global
+directives**, and the **``object{}`` monitored graph**. :func:`parse` interprets top-level
+``config <directive> ...;`` lines into a settings-``overrides`` dict (keyed by
+:class:`~psysmon.config.settings.Settings` field names, exactly like the legacy parser),
+``set NAME = "..."`` / ``$NAME`` substitution, and ``object NAME { ... };`` blocks into a
+``Node`` forest (single ``dep`` edges resolved into ``Node.children``). Per-object *override*
+attributes (``queuetime``/``send_pings``/``numfailures``/...) are M4; ``include`` is a follow-up
+that still raises rather than silently dropping coverage. An empty / comment-only / globals-only
+file yields a normal (objectless) result.
 
 Lexical grammar (matches the 0.93 lexer's observable behavior):
 
@@ -37,6 +38,7 @@ from enum import Enum, auto
 # and the legacy facility allow-list (the single source of valid syslog facilities). These are
 # format-neutral despite currently living in the legacy module — hoist to a shared module later.
 from psysmon.config.legacy import _FACILITIES, ParseError, ParseResult
+from psysmon.config.model import DEFAULT_PORT, CheckType, Node
 
 # Characters that end a bareword (and are otherwise their own tokens or comment/string starts).
 _SPECIAL = set('"{}=;#')
@@ -169,28 +171,55 @@ _FLAG_DIRECTIVES = {                   # value-less booleans
 _LOGLEVELS = ("warning", "info", "debug")
 _VAR_RE = re.compile(r"\$([A-Za-z_]\w*)")  # a $NAME reference (set / $var substitution)
 
+# --- object `type <T>` keyword -> CheckType (M3) -------------------------------------------
+_TYPE_KEYWORDS = {
+    "ping": CheckType.PING,
+    "tcp": CheckType.TCP,
+    "udp": CheckType.UDP,
+    "smtp": CheckType.SMTP,
+    "pop3": CheckType.POP3,
+    "dns": CheckType.DNS, "authdns": CheckType.DNS,
+    "http": CheckType.HTTP, "www": CheckType.HTTP,
+    "https": CheckType.HTTPS,
+}
+_DROPPED_TYPES = frozenset({"imap", "nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
+_DEFERRED_TYPES = frozenset({"ping6", "pingv6", "icmp6"})  # IPv6 ping -> #24
+# Structural attributes M3 understands; anything else (the M4 per-object overrides, or a typo)
+# warns and is ignored.
+_OBJECT_ATTRS = frozenset({
+    "ip", "type", "port", "desc", "contact", "url", "urltext", "username", "password",
+    "dns-query", "dep",
+})
+
 
 class _Parser:
-    """Walks the token stream, interpreting global ``config`` directives + ``set``/``$var`` (M2).
+    """Walks the token stream, interpreting global ``config``/``set`` (M2) + ``object{}`` (M3).
 
-    Statements are sequences of tokens up to a ``;``. ``config`` and ``set`` are handled here;
-    the monitored graph (``root`` / ``object{}``) and ``include`` raise a clean
-    :class:`ParseError` (not parsed yet). Unknown directives / malformed values warn and skip,
-    matching the legacy parser's never-hard-fail-a-recoverable-config stance.
+    Statements end at a ``;`` (or a ``{ ... }`` object body). ``config``/``set`` populate the
+    overrides + variables; ``object NAME { ... };`` and ``root = "..."`` build the monitored
+    ``Node`` forest (resolved from single ``dep`` edges); ``include`` raises (a follow-up).
+    Unknown directives, malformed values, and objects that fail required-field validation warn
+    and skip — matching the legacy parser's never-hard-fail-a-recoverable-config stance.
     """
 
     def __init__(self, tokens: list[Token], numfailures: int) -> None:
         self._toks = tokens
         self._i = 0
-        self.numfailures = numfailures  # running default threshold; used per-object in M4
+        self.numfailures = numfailures  # running default threshold; per-object override is M4
         self.vars: dict[str, str] = {}
         self.overrides: dict[str, object] = {}
         self.warnings: list[str] = []
+        # objects in declaration order + a name index; deps resolved into a forest at the end.
+        self._objects: list[tuple[str, Node, str | None, int]] = []
+        self._object_index: dict[str, Node] = {}
+        self.root_name: str | None = None
+        self.root_line = 0
 
     def parse_top(self) -> ParseResult:
         while self._i < len(self._toks):
             self._statement()
-        return ParseResult(roots=[], overrides=self.overrides, warnings=self.warnings)
+        roots = self._build_forest()
+        return ParseResult(roots=roots, overrides=self.overrides, warnings=self.warnings)
 
     # --- low-level helpers ------------------------------------------------------------
     def _warn(self, line: int, message: str) -> None:
@@ -231,11 +260,12 @@ class _Parser:
         elif word == "set":
             self._i += 1
             self._set(tok.line)
-        elif word in ("root", "object"):
-            raise ParseError(
-                f"line {tok.line}: monitored objects (`{word} ...`) aren't parsed yet — this "
-                "milestone is in progress (#3); use the legacy format to monitor hosts for now"
-            )
+        elif word == "root":
+            self._i += 1
+            self._root(tok.line)
+        elif word == "object":
+            self._i += 1
+            self._object(tok.line)
         elif word == "include":
             raise ParseError(
                 f"line {tok.line}: `include` isn't supported yet (a follow-up milestone, #3)"
@@ -358,18 +388,258 @@ class _Parser:
             return
         self.overrides["status_path"] = self._subst(line, values[1].value)
 
+    # --- objects + dependency graph (M3) ----------------------------------------------
+    def _root(self, line: int) -> None:
+        args, terminated = self._collect_to_semi()
+        if not terminated:
+            self._warn(line, "statement missing a terminating ';'")
+        if (len(args) >= 2 and args[0].kind is TokenKind.EQUALS
+                and args[1].kind is TokenKind.STRING):
+            self.root_name = self._subst(line, args[1].value)
+            self.root_line = line
+        else:
+            self._warn(line, 'malformed root (expected: root = "name";); skipping')
+
+    def _object(self, line: int) -> None:
+        name = self._take_word()
+        if name is None:
+            self._warn(line, "object needs a name; skipping")
+            if self._peek_kind() is TokenKind.LBRACE:
+                self._skip_block()
+            else:
+                self._collect_to_semi()
+            return
+        if not self._take(TokenKind.LBRACE):
+            self._warn(line, f"object '{name}' is missing '{{'; skipping")
+            self._collect_to_semi()
+            return
+        attrs: dict[str, tuple[int, list[Token]]] = {}
+        while self._i < len(self._toks):
+            tok = self._toks[self._i]
+            if tok.kind is TokenKind.RBRACE:
+                self._i += 1
+                self._take(TokenKind.SEMI)  # optional trailing ';'
+                self._add_object(line, name, attrs)
+                return
+            if tok.kind is not TokenKind.WORD:
+                self._warn(tok.line, f"unexpected token in object '{name}'; skipping")
+                self._collect_attr()
+                continue
+            self._i += 1
+            values = self._collect_attr()
+            if values and values[0].kind is TokenKind.EQUALS:
+                values = values[1:]  # tolerate `key = value` (object attrs are `key value`)
+            if len(values) > 1:
+                self._warn(tok.line, f"'{tok.value}' takes one value (missing ';'?)")
+            if tok.value in attrs:
+                # Keep the first (matches the single-dep MVP decision for a repeated `dep`).
+                self._warn(tok.line, f"duplicate '{tok.value}' in '{name}'; keeping the first")
+            else:
+                attrs[tok.value] = (tok.line, values)
+        self._warn(line, f"object '{name}' is missing its closing '}}' (reached end of file)")
+        self._add_object(line, name, attrs)
+
+    def _take_word(self) -> str | None:
+        if self._peek_kind() is TokenKind.WORD:
+            value = self._toks[self._i].value
+            self._i += 1
+            return value
+        return None
+
+    def _take(self, kind: TokenKind) -> bool:
+        if self._peek_kind() is kind:
+            self._i += 1
+            return True
+        return False
+
+    def _peek_kind(self) -> TokenKind | None:
+        return self._toks[self._i].kind if self._i < len(self._toks) else None
+
+    def _collect_attr(self) -> list[Token]:
+        """Collect an attribute's value tokens up to ';' (consumed) or '}' (left for the caller).
+
+        A modern object does not nest (``{}``-nesting is replaced by named ``dep`` edges), so an
+        inner ``{ ... }`` in an attribute value is malformed: skip the balanced block + a trailing
+        ';' and warn, rather than letting the inner ``}`` masquerade as the object's close and leak
+        the rest of the body into top-level parsing.
+        """
+        collected: list[Token] = []
+        while self._i < len(self._toks):
+            tok = self._toks[self._i]
+            if tok.kind is TokenKind.RBRACE:
+                return collected  # don't consume; the object loop closes the block
+            self._i += 1
+            if tok.kind is TokenKind.SEMI:
+                return collected
+            if tok.kind is TokenKind.LBRACE:
+                self._warn(tok.line, "unexpected '{' in object body; skipping the block")
+                self._skip_balanced()
+                self._take(TokenKind.SEMI)
+                return collected
+            collected.append(tok)
+        return collected
+
+    def _skip_block(self) -> None:
+        """Skip a balanced ``{ ... }`` (and a trailing ';') after a malformed object header."""
+        if self._take(TokenKind.LBRACE):
+            self._skip_balanced()
+            self._take(TokenKind.SEMI)
+
+    def _skip_balanced(self) -> None:
+        """Consume tokens through the ``}`` that matches an already-consumed ``{``."""
+        depth = 1
+        while self._i < len(self._toks) and depth > 0:
+            kind = self._toks[self._i].kind
+            self._i += 1
+            if kind is TokenKind.LBRACE:
+                depth += 1
+            elif kind is TokenKind.RBRACE:
+                depth -= 1
+
+    def _add_object(self, line: int, name: str, attrs: dict[str, tuple[int, list[Token]]]) -> None:
+        node, dep_name = self._build_node(line, name, attrs)
+        if node is None:
+            return  # required-field validation failed; the object was warned + skipped
+        if name in self._object_index:
+            self._warn(line, f"duplicate object name '{name}'; skipping the duplicate")
+            return
+        self._object_index[name] = node
+        self._objects.append((name, node, dep_name, line))
+
+    def _build_node(
+        self, line: int, name: str, attrs: dict[str, tuple[int, list[Token]]]
+    ) -> tuple[Node | None, str | None]:
+        """Build a :class:`Node` from an object's attributes, or ``(None, None)`` if it fails the
+        per-type required-field validation (mirroring the legacy parser, for converter parity)."""
+        resolved = {key: self._subst(kl, toks[0].value) if toks else "" for key, (kl, toks) in
+                    attrs.items()}
+
+        host = resolved.get("ip")
+        if not host:
+            self._warn(line, f"object '{name}' has no 'ip'; skipping")
+            return None, None
+        type_kw = resolved.get("type")
+        ctype = _TYPE_KEYWORDS.get(type_kw) if type_kw is not None else None
+        if ctype is None:
+            self._warn(line, self._type_error(name, type_kw))
+            return None, None
+
+        node = Node(hostname=host, check_type=ctype, max_down=self.numfailures)
+        default_port = DEFAULT_PORT.get(ctype)
+        if default_port is not None:
+            node.port = default_port
+
+        if ctype in (CheckType.TCP, CheckType.UDP):
+            port = self._port(line, name, resolved.get("port"))
+            if port is None:
+                return None, None
+            node.port = port
+        elif ctype in (CheckType.HTTP, CheckType.HTTPS):
+            if not resolved.get("url") or not resolved.get("urltext"):
+                self._warn(line, f"object '{name}': {type_kw} needs 'url' and 'urltext'; skipping")
+                return None, None
+            node.url, node.url_text = resolved["url"], resolved["urltext"]
+        elif ctype is CheckType.POP3:
+            if not resolved.get("username") or not resolved.get("password"):
+                self._warn(line, f"object '{name}': pop3 needs 'username' and 'password'; skipping")
+                return None, None
+            node.username, node.password = resolved["username"], resolved["password"]
+        elif ctype is CheckType.DNS:
+            # Legacy authdns requires a name AND a contact (a DNS check that pages nobody is what
+            # the legacy parser rejected at load) — keep parity.
+            if not resolved.get("dns-query") or not resolved.get("contact"):
+                self._warn(line, f"object '{name}': dns needs 'dns-query' and 'contact'; skipping")
+                return None, None
+            node.username = resolved["dns-query"]  # the name to look up (legacy convention)
+        else:  # ping-like (ping, smtp): a port may still override the default
+            if "port" in resolved:
+                port = self._port(line, name, resolved.get("port"))
+                if port is not None:
+                    node.port = port
+
+        # `desc`/`contact` are optional named attrs (legacy required a positional label); an empty
+        # label is fine at runtime (display keys off check_type) — but the M5 converter must
+        # synthesize a non-empty label (e.g. the hostname) when emitting back to legacy.
+        if "desc" in resolved:
+            node.label = resolved["desc"]
+        if "contact" in resolved:
+            node.contact = resolved["contact"]
+
+        for key, (kl, _toks) in attrs.items():
+            if key not in _OBJECT_ATTRS:
+                self._warn(kl, f"object '{name}': attribute '{key}' isn't supported yet; ignoring")
+
+        dep_name = resolved.get("dep") or None
+        return node, dep_name
+
+    def _port(self, line: int, name: str, raw: str | None) -> int | None:
+        if raw is None:
+            self._warn(line, f"object '{name}' needs a 'port'; skipping")
+            return None
+        # Plain digits only (reject the `+80`/`8_0` that Python int() would otherwise accept) and
+        # a valid TCP/UDP range.
+        canonical = raw.strip()
+        if not canonical.isdigit() or not (0 < int(canonical) <= 65535):
+            self._warn(line, f"object '{name}': invalid port '{raw}'; skipping")
+            return None
+        return int(canonical)
+
+    @staticmethod
+    def _type_error(name: str, type_kw: str | None) -> str:
+        if type_kw is None:
+            return f"object '{name}' has no 'type'; skipping"
+        if type_kw in _DEFERRED_TYPES:
+            return f"object '{name}': IPv6 ping ('{type_kw}') isn't supported yet (#24); skipping"
+        if type_kw in _DROPPED_TYPES:
+            return f"object '{name}': check type '{type_kw}' is not supported; skipping"
+        return f"object '{name}': invalid type '{type_kw}'; skipping"
+
+    def _build_forest(self) -> list[Node]:
+        """Resolve single ``dep`` edges into the ``Node.children`` forest (multi-dep is #62)."""
+        if self.root_name is not None and self.root_name not in self._object_index:
+            self._warn(self.root_line, f"root '{self.root_name}' names no object")
+        roots: list[Node] = []
+        for name, node, dep_name, line in self._objects:
+            if dep_name is None:
+                roots.append(node)
+                continue
+            parent = self._object_index.get(dep_name)
+            if parent is None:
+                self._warn(line, f"'{name}': dep '{dep_name}' names no object; making it a root")
+                roots.append(node)
+            elif self._reaches(node, parent):
+                self._warn(line, f"'{name}': dep '{dep_name}' forms a cycle; making it a root")
+                roots.append(node)
+            else:
+                parent.children.append(node)
+        return roots
+
+    @staticmethod
+    def _reaches(start: Node, target: Node) -> bool:
+        """True if ``target`` is ``start`` or in its subtree (so linking start->target cycles)."""
+        stack, seen = [start], set()
+        while stack:
+            node = stack.pop()
+            if node is target:
+                return True
+            if id(node) in seen:
+                continue
+            seen.add(id(node))
+            stack.extend(node.children)
+        return False
+
 
 def parse(text: str, *, numfailures: int = 2) -> ParseResult:
-    """Parse modern-format ``text`` into a :class:`ParseResult` (#3 milestones 1–2).
+    """Parse modern-format ``text`` into a :class:`ParseResult` (#3 milestones 1–3).
 
-    Interprets top-level ``config <directive> ...;`` lines into a settings-``overrides`` dict and
-    ``set`` / ``$var`` substitution. The monitored graph (``root`` / ``object{}``, M3/M4) and
-    ``include`` (a follow-up) are not parsed yet — a config using them is refused with a clean
-    :class:`ParseError` rather than loaded as an empty monitor (and SIGHUP keeps the running
-    config). An empty / comment-only / globals-only file yields a normal (objectless) result.
+    Interprets global ``config <directive> ...;`` lines into a settings-``overrides`` dict, ``set``
+    / ``$var`` substitution, and ``object NAME { ... };`` blocks into a monitored ``Node`` forest
+    (``dep`` edges resolved into ``Node.children``; single-dep MVP, the multi-parent DAG is #62).
+    Per-object *override* attributes (``queuetime``/``send_pings``/``numfailures``/...) are M4, and
+    ``include`` is a follow-up — both warn/raise rather than silently dropping coverage.
 
-    ``numfailures`` (the caller's ``settings.numfailures``) is the running default threshold; a
-    top-level ``config numfailures`` lands in ``overrides`` here, while the per-object snapshot it
-    feeds is interpreted with the objects in M4.
+    ``numfailures`` (the caller's ``settings.numfailures``) seeds each object's ``max_down``; a
+    top-level ``config numfailures`` also lands in ``overrides``. Malformed/invalid input warns and
+    is skipped (never a hard failure), except a lexical error, which raises :class:`ParseError`.
     """
     return _Parser(tokenize(text), numfailures).parse_top()

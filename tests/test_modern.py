@@ -6,6 +6,7 @@ import pytest
 
 from psysmon.config.detect import ConfigFormat, detect
 from psysmon.config.legacy import ParseError
+from psysmon.config.model import CheckType
 from psysmon.config.modern import Token, TokenKind, parse, tokenize
 from psysmon.config.settings import merge
 
@@ -142,12 +143,12 @@ def test_parse_comment_only_is_clean_empty_result():
     assert res.roots == [] and res.overrides == {} and res.warnings == []
 
 
-def test_parse_objects_refused_until_m3():
-    # Globals parse now (M2), but the monitored graph (root/object) is refused until M3 — fail
-    # loud rather than load a daemon that monitors nothing.
-    with pytest.raises(ParseError) as exc:
-        parse('root = "gw";\nobject gw {\n  ip "192.0.2.1";\n  type ping;\n};\n')
-    assert "aren't parsed yet" in str(exc.value)
+def test_parse_objects_build_a_node_forest():
+    # M3: objects parse into a Node forest (root/object no longer raise).
+    res = parse('root = "gw";\nobject gw {\n  ip "192.0.2.1";\n  type ping;\n};\n')
+    assert res.warnings == []
+    assert [n.hostname for n in res.roots] == ["192.0.2.1"]
+    assert res.roots[0].check_type is CheckType.PING
 
 
 def test_parse_propagates_lexical_error():
@@ -244,10 +245,14 @@ def test_globals_only_config_parses_without_objects():
     assert res.overrides["org_hostname"] == "y"  # $x substituted from `set`
 
 
-def test_root_and_include_are_refused():
-    for snippet in ('root = "gw";\n', 'include "other.conf";\n'):
-        with pytest.raises(ParseError):
-            parse(snippet)
+def test_include_is_refused():
+    with pytest.raises(ParseError):
+        parse('include "other.conf";\n')
+
+
+def test_root_naming_missing_object_warns_not_raises():
+    res = parse('root = "gw";\n')  # no object named gw
+    assert res.roots == [] and any("names no object" in w for w in res.warnings)
 
 
 def test_all_overrides_are_valid_settings_fields():
@@ -300,6 +305,174 @@ def test_var_substitution_edge_cases():
     res = parse('config hostname "$y";\nset y = "later";\nset z = "$z";\nset n = "a$1b";\n')
     assert res.overrides["org_hostname"] == "$y"  # $y used before it was set
     assert any("undefined variable $y" in w for w in res.warnings)
+
+
+# --- M3: object{} blocks + dependency forest ------------------------------------------
+
+def test_object_per_type_fields():
+    res = parse(
+        'object gw { ip "192.0.2.1"; type ping; desc "gateway"; contact "noc@example.net"; };\n'
+        'object web { ip "192.0.2.20"; type https; url "/health"; urltext "OK"; };\n'
+        'object ns { ip "192.0.2.53"; type dns; dns-query "example.net"; '
+        'contact "noc@example.net"; };\n'
+        'object svc { ip "192.0.2.30"; type tcp; port 22; desc "ssh"; };\n'
+        'object box { ip "192.0.2.40"; type pop3; username "u"; password "p"; };\n'
+    )
+    assert res.warnings == []
+    by = {n.hostname: n for n in res.roots}
+    assert by["192.0.2.1"].check_type is CheckType.PING and by["192.0.2.1"].label == "gateway"
+    assert by["192.0.2.1"].contact == "noc@example.net"
+    web = by["192.0.2.20"]
+    assert web.check_type is CheckType.HTTPS and (web.url, web.url_text) == ("/health", "OK")
+    assert web.port == 443  # type default
+    assert by["192.0.2.53"].username == "example.net"  # dns-query -> the name to look up
+    assert by["192.0.2.30"].port == 22 and by["192.0.2.30"].check_type is CheckType.TCP
+    box = by["192.0.2.40"]
+    assert (box.username, box.password, box.port) == ("u", "p", 110)
+
+
+def test_dep_builds_children_tree():
+    res = parse(
+        'object gw { ip "192.0.2.1"; type ping; };\n'
+        'object web { ip "192.0.2.20"; type tcp; port 443; dep "gw"; };\n'
+    )
+    assert [n.hostname for n in res.roots] == ["192.0.2.1"]            # only gw is a root
+    assert [c.hostname for c in res.roots[0].children] == ["192.0.2.20"]  # web nested under gw
+
+
+def test_dep_can_reference_a_later_object():
+    # Forward references work: deps resolve after all objects are parsed.
+    res = parse(
+        'object web { ip "192.0.2.20"; type tcp; port 443; dep "gw"; };\n'
+        'object gw { ip "192.0.2.1"; type ping; };\n'
+    )
+    gw = next(n for n in res.roots if n.hostname == "192.0.2.1")
+    assert [c.hostname for c in gw.children] == ["192.0.2.20"]
+
+
+def test_object_missing_required_field_skipped():
+    assert any("no 'ip'" in w for w in parse('object x { type ping; };\n').warnings)
+    assert any("needs a 'port'" in w for w in parse('object x { ip "h"; type tcp; };\n').warnings)
+    assert any("'url' and 'urltext'" in w
+               for w in parse('object x { ip "h"; type https; };\n').warnings)
+    assert any("invalid type" in w
+               for w in parse('object x { ip "h"; type frobnicate; };\n').warnings)
+    # all of the above produced no node
+    for cfg in ('object x { type ping; };\n', 'object x { ip "h"; type tcp; };\n'):
+        assert parse(cfg).roots == []
+
+
+def test_dropped_and_deferred_types_skip():
+    dropped = parse('object x { ip "h"; type imap; };\n')
+    assert dropped.roots == [] and any("not supported" in w for w in dropped.warnings)
+    v6 = parse('object x { ip "h"; type ping6; };\n')
+    assert v6.roots == [] and any("#24" in w for w in v6.warnings)
+
+
+def test_unknown_object_attribute_warns_but_keeps_object():
+    # An M4 / unknown attribute is ignored with a warning; the object still builds.
+    res = parse('object gw { ip "192.0.2.1"; type ping; queuetime 10; bogus "x"; };\n')
+    assert [n.hostname for n in res.roots] == ["192.0.2.1"]
+    assert any("queuetime" in w for w in res.warnings)
+    assert any("bogus" in w for w in res.warnings)
+
+
+def test_multi_dep_keeps_first_and_warns():
+    # Single-dep MVP: a repeated `dep` keeps the first; the DAG is #62.
+    res = parse(
+        'object a { ip "192.0.2.1"; type ping; };\n'
+        'object b { ip "192.0.2.2"; type ping; };\n'
+        'object c { ip "192.0.2.3"; type tcp; port 22; dep "a"; dep "b"; };\n'
+    )
+    a = next(n for n in res.roots if n.hostname == "192.0.2.1")
+    assert [ch.hostname for ch in a.children] == ["192.0.2.3"]  # c under the FIRST dep (a)
+    assert any("duplicate 'dep'" in w for w in res.warnings)
+
+
+def test_dependency_cycle_is_broken():
+    res = parse(
+        'object a { ip "192.0.2.1"; type ping; dep "b"; };\n'
+        'object b { ip "192.0.2.2"; type ping; dep "a"; };\n'
+    )
+    assert any("cycle" in w for w in res.warnings)
+
+    def assert_acyclic(nodes, seen):
+        for n in nodes:
+            assert id(n) not in seen  # no node reachable twice -> finite, acyclic
+            seen.add(id(n))
+            assert_acyclic(n.children, seen)
+
+    assert_acyclic(res.roots, set())
+
+
+def test_dep_to_unknown_object_becomes_root():
+    res = parse('object x { ip "192.0.2.1"; type tcp; port 22; dep "ghost"; };\n')
+    assert [n.hostname for n in res.roots] == ["192.0.2.1"]
+    assert any("names no object" in w for w in res.warnings)
+
+
+def test_duplicate_object_name_skipped():
+    res = parse(
+        'object dup { ip "192.0.2.1"; type ping; };\n'
+        'object dup { ip "192.0.2.2"; type ping; };\n'
+    )
+    assert [n.hostname for n in res.roots] == ["192.0.2.1"]  # the second 'dup' is skipped
+    assert any("duplicate object name" in w for w in res.warnings)
+
+
+def test_malformed_object_header_recovers():
+    # A missing name is warned + skipped (the block is drained) without derailing the next object.
+    res = parse(
+        'object { ip "192.0.2.9"; type ping; };\n'         # no name
+        'object good { ip "192.0.2.1"; type ping; };\n'
+    )
+    assert [n.hostname for n in res.roots] == ["192.0.2.1"]
+    assert any("needs a name" in w for w in res.warnings)
+
+
+# --- M3 review follow-ups -------------------------------------------------------------
+
+def test_dns_requires_contact():
+    # Parity with legacy authdns: a dns object with no contact is rejected.
+    no_contact = parse('object ns { ip "192.0.2.53"; type dns; dns-query "x.example.net"; };\n')
+    assert no_contact.roots == [] and any("dns needs" in w for w in no_contact.warnings)
+    ok = parse('object ns { ip "192.0.2.53"; type dns; dns-query "x.example.net"; '
+               'contact "noc@example.net"; };\n')
+    assert [n.hostname for n in ok.roots] == ["192.0.2.53"] and ok.warnings == []
+
+
+def test_inner_brace_in_object_body_is_skipped_not_leaked():
+    # A user porting legacy {}-nesting (or any stray inner block) must not derail parsing: the
+    # outer object still builds, the inner block is skipped + warned, nothing leaks to top level.
+    res = parse(
+        'object parent { ip "192.0.2.1"; type ping;\n'
+        '  object child { ip "192.0.2.2"; type ping; };\n'   # nested object -> not supported
+        '};\n'
+        'object after { ip "192.0.2.9"; type ping; };\n'
+    )
+    hosts = [n.hostname for n in res.roots]
+    assert "192.0.2.1" in hosts and "192.0.2.9" in hosts     # parent + after both build
+    assert "192.0.2.2" not in hosts                          # nested child dropped (no {}-nesting)
+    assert any("'{'" in w for w in res.warnings)             # the inner block was flagged
+    assert not any("unknown statement" in w for w in res.warnings)  # no top-level leakage
+
+
+def test_object_attr_tolerates_equals():
+    # `ip = "h"` (legacy / set-style '=') is tolerated as `ip "h"`.
+    res = parse('object x { ip = "192.0.2.1"; type = ping; };\n')
+    assert [n.hostname for n in res.roots] == ["192.0.2.1"]
+
+
+def test_object_port_range_validation():
+    for bad in ("0", "70000", "+80", "8_0", "notaport"):
+        res = parse(f'object x {{ ip "h"; type tcp; port {bad}; }};\n')
+        assert res.roots == [] and any("invalid port" in w for w in res.warnings)
+    assert parse('object x { ip "h"; type tcp; port 65535; };\n').roots[0].port == 65535
+
+
+def test_missing_semicolon_between_attrs_warns():
+    res = parse('object x { ip "192.0.2.1" type ping; };\n')  # missing ';' after ip's value
+    assert any("missing ';'" in w for w in res.warnings)
 
 
 # --- detect() routes the modern grammar -----------------------------------------------

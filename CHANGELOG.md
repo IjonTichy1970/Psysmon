@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-24 — End-user guide on GitHub Pages
+
 ### Added
 - **End-user guide** — a complete multi-chapter user manual: install, both config formats with
   worked examples per check type, every CLI flag, a feature tour with a feature×format availability
@@ -277,7 +279,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.0...v0.2.1

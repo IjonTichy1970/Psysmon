@@ -17,6 +17,13 @@ All notable changes to this project are documented here. The format is based on
   long tail; [#23](https://github.com/IjonTichy1970/Psysmon/issues/23)), plus per-object
   loss-tolerant ping (`send_pings`/`min_pings`), per-object `numfailures`, and a `group` label
   ([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)).
+- **Legacy → modern config converter** — `python -m psysmon.config.convert old.conf` reads a
+  legacy positional `sysmon.conf` and writes the equivalent modern `object{}` config (`-o` to a
+  file, otherwise stdout), so you can migrate at your own pace. It runs the config through
+  psysmon's own parser, so the output reflects psysmon's semantics: `{ }` nesting becomes named
+  `dep` edges, the position-dependent `numfailures` is resolved onto each object, default ports
+  are dropped, and the result round-trips to the same monitoring tree
+  ([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)).
 
 ## [0.1.4] — 2026-06-23 — state persistence + loss-tolerant ping
 

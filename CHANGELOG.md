@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-24 — psysmon-convert command + config-format docs + BOM fix
+
 ### Added
 - `psysmon-convert` command — the legacy→modern config converter now installs as a console script
   (`psysmon-convert old.conf -o new.conf`), alongside the `psysmon` daemon command, so it no longer
@@ -209,7 +211,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.2...v0.1.3

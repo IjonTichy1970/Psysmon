@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-24 — Control channel + operator ACK/notes, contact_on, object grouping
+
 ### Added
 - **`contact_on`** — choose which transitions page: per object (`contact_on down|up|both|none;`
   in the modern config) or globally (`config contact_on …` / `--contact-on`). `down` pages on
@@ -244,7 +246,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.3...v0.1.4

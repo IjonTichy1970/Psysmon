@@ -60,7 +60,11 @@ def build(argv: list[str] | None = None) -> tuple[Scheduler, Settings]:
         logger.warning("config: %s", warning)
     settings = merge(overrides, cli)  # CLI > config file > defaults
     notifier = SmtpNotifier(settings) if settings.notify_enabled else None
-    ping = PingService(settings.source_ip)
+    # PingService validates the loss-tolerance pair, so a bad --send-pings/--min-pings is a clean
+    # startup error (main() catches ValueError) rather than a per-check failure (#22).
+    ping = PingService(
+        settings.source_ip, send_pings=settings.send_pings, min_pings=settings.min_pings
+    )
     scheduler = Scheduler(roots, settings, ping_service=ping, notifier=notifier)
     for warning in scheduler.warnings:
         logger.warning("schedule: %s", warning)

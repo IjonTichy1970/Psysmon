@@ -147,6 +147,8 @@ class _FakeSocket:
         self.sent: list[tuple[bytes, object]] = []
         self.closed = False
         self.reply_for_sent = True  # if True, the next packet is "answered"
+        self.answer_limit = None  # if set, only the first N sends are answered (loss simulation)
+        self._answered = 0
         self.reply_src = None  # override the reply's source addr (default: from the target)
         self.mangle = False  # if True, reply with a bumped (ident,seq) that won't match
         self.mangle_payload = False  # if True, reply with the right (ident,seq) but a wrong nonce
@@ -156,7 +158,11 @@ class _FakeSocket:
 
     def sendto(self, packet, addr):
         self.sent.append((packet, addr))
-        if self.reply_for_sent:
+        answer = self.reply_for_sent
+        if answer and self.answer_limit is not None:
+            answer = self._answered < self.answer_limit  # drop sends past the loss limit
+        if answer:
+            self._answered += 1
             # Echo it back as a reply (flip type 8 -> 0), wrapped in an IPv4 header, exactly as
             # the kernel would hand it to the raw socket — from the target's address, unless a
             # source override is set (a different source must STILL be accepted: the nonce, not
@@ -377,6 +383,105 @@ async def test_check_unsendable_route_error_maps_to_status():
     ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
     assert await svc.check(node(), ctx) == Status.HOST_DOWN
     assert not svc._pending  # the pending future was cleaned up despite the send error
+
+
+# --- loss-tolerant ping (send_pings / min_pings -> OK / Degraded / Unpingable, #22) -------
+
+
+def test_invalid_ping_counts_rejected_at_construction():
+    # A bad global pair is rejected up front (so the daemon reports a clean startup error).
+    with pytest.raises(ValueError):
+        ping.PingService(send_pings=2, min_pings=3)  # can't require more replies than sent
+    with pytest.raises(ValueError):
+        ping.PingService(send_pings=0, min_pings=0)  # both must be >= 1
+
+
+async def test_loss_tolerant_all_replies_is_ok():
+    svc = ping.PingService(send_pings=4, min_pings=3)
+    sock = _FakeSocket()  # answers every echo
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await svc.check(node(), ctx) == Status.OK
+    assert len(sock.sent) == 4  # all four echoes were sent (not first-reply-wins)
+    assert not svc._pending
+
+
+async def test_loss_tolerant_partial_loss_is_degraded():
+    # 2 of 4 replies, min_pings=3 -> reachable but lossy -> the new DEGRADED code.
+    svc = ping.PingService(send_pings=4, min_pings=3)
+    sock = _FakeSocket()
+    sock.answer_limit = 2
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await svc.check(node(), ctx) == Status.DEGRADED
+    assert len(sock.sent) == 4
+    assert not svc._pending
+
+
+async def test_loss_tolerant_at_threshold_is_ok():
+    # received == min_pings exactly -> OK (the boundary is inclusive).
+    svc = ping.PingService(send_pings=4, min_pings=2)
+    sock = _FakeSocket()
+    sock.answer_limit = 2
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await svc.check(node(), ctx) == Status.OK
+
+
+async def test_loss_tolerant_total_loss_is_unpingable():
+    # Zero replies keeps the unchanged total-loss verdict, not DEGRADED.
+    svc = ping.PingService(send_pings=4, min_pings=2)
+    sock = _FakeSocket()
+    sock.reply_for_sent = False
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await svc.check(node(), ctx) == Status.UNPINGABLE
+    assert len(sock.sent) == 4
+    assert not svc._pending
+
+
+async def test_per_node_counts_override_global_default():
+    # The service default is 1/1 (single-probe path), but a node asking for send_pings=3 takes
+    # the loss-tolerant path and sends three echoes.
+    svc = ping.PingService()  # 1/1 globally
+    sock = _FakeSocket()
+    sock.answer_limit = 0  # nothing answers
+    _install_fake_socket(svc, sock)
+
+    n = Node(hostname="h.net", check_type=CheckType.PING, send_pings=3, min_pings=2)
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await svc.check(n, ctx) == Status.UNPINGABLE
+    assert len(sock.sent) == 3  # the per-node send_pings=3 took effect, not the global 1
+
+
+async def test_per_node_invalid_counts_are_clamped():
+    # A programmatic per-node min_pings > send_pings is clamped to a sane range (not left to mean
+    # "can never read up"). The legacy grammar can't produce this; a future per-node config (#3)
+    # should reject it at load instead.
+    svc = ping.PingService()
+    sock = _FakeSocket()  # answers all
+    _install_fake_socket(svc, sock)
+
+    n = Node(hostname="h.net", check_type=CheckType.PING, send_pings=3, min_pings=9)
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await svc.check(n, ctx) == Status.OK  # 3/3 replies, min clamped to 3 -> OK
+    assert len(sock.sent) == 3
+
+
+async def test_default_counts_use_single_probe_path():
+    # 1/1 (the default) must still take the unchanged single-probe + retry path, not the
+    # loss-tolerant one — first reply wins, exactly one send when answered.
+    svc = ping.PingService()  # 1/1
+    sock = _FakeSocket()
+    _install_fake_socket(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=2.0)
+    assert await svc.check(node(), ctx) == Status.OK
+    assert len(sock.sent) == 1  # single-probe path: answered on the first attempt, no extra sends
 
 
 # --- prepare() / lazy reader attach (no privilege, fake socket) --------------------------

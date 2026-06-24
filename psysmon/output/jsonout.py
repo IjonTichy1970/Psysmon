@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 
 from psysmon.config.model import Node, NodeState
-from psysmon.status import errtostr, is_up
+from psysmon.status import Status, errtostr, is_up
 
 NodeStates = list[tuple[Node, NodeState]]
 
@@ -25,6 +25,7 @@ def _host(node: Node, state: NodeState) -> dict:
         "label": node.label,
         "contact": node.contact,
         "up": is_up(state.lastcheck),
+        "degraded": state.lastcheck == Status.DEGRADED,  # reachable but lossy (#22)
         "status": int(state.lastcheck),
         "status_text": errtostr(state.lastcheck),
         "count": state.downct,

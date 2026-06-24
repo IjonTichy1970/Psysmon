@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Loss-tolerant ping. `--send-pings N` / `--min-pings M` make a ping check send `N` echoes and
+  require `M` replies to count the host up; with some-but-fewer-than-`M` replies it reports a new
+  `Degraded` status (reachable but lossy) instead of flapping between up and `Unpingable`, and
+  zero replies still reads `Unpingable`. The defaults (1/1) are exactly the previous
+  first-reply-wins behavior, so nothing changes unless you opt in. A degraded host shows with its
+  own badge on the status page, does **not** suppress the things behind it (a lossy router still
+  forwards), and is informational by default — `--page-on-degraded` makes it page like a normal
+  outage ([#22](https://github.com/IjonTichy1970/Psysmon/issues/22)).
 - Optional on-disk persistence of live monitoring state, so a restart or software upgrade no
   longer forgets what was already down and re-pages outages the operator already knows about.
   Enable it with `config savestate "<path>"` or `--state-file <path>` (off when unset); the file

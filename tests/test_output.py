@@ -69,6 +69,15 @@ def test_html_all_operational_when_none_down():
     assert "All systems operational" in h
 
 
+def test_html_degraded_row_uses_its_own_badge():
+    # A degraded (loss-tolerant ping, #22) node is not up, so it shows on the down-only page —
+    # but with its own badge class, not the red "down" one.
+    h = html_for([ns("lossy.net", CheckType.PING, Status.DEGRADED, last_up=NOW - 50)])
+    assert "lossy.net" in h
+    assert "badge degraded" in h
+    assert ">Degraded<" in h
+
+
 def test_html_escapes_hostname():
     h = html_for([ns("<script>evil", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)])
     assert "<script>evil" not in h
@@ -357,6 +366,18 @@ def test_json_includes_all_nodes_with_suppressed_flag():
     assert hosts["hidden.net"]["suppressed"] is True  # full blast radius queryable in JSON
     assert hosts["up.net"]["up"] is True
     assert hosts["down.net"]["status_text"] == "Unpingable"
+
+
+def test_json_marks_degraded_node():
+    states = [
+        ns("lossy.net", CheckType.PING, Status.DEGRADED),
+        ns("up.net", CheckType.TCP, Status.OK, port=22),
+    ]
+    hosts = {h["hostname"]: h for h in json.loads(to_json(states, now_wall=NOW))["hosts"]}
+    assert hosts["lossy.net"]["degraded"] is True and hosts["lossy.net"]["up"] is False
+    assert hosts["lossy.net"]["status"] == int(Status.DEGRADED)
+    assert hosts["lossy.net"]["status_text"] == "Degraded"
+    assert hosts["up.net"]["degraded"] is False
 
 
 def test_json_down_count_excludes_suppressed_and_up():

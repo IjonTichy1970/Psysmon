@@ -24,7 +24,7 @@ from importlib import resources
 from psysmon import __version__, timefmt
 from psysmon.config.model import Node, NodeState, type_to_name
 from psysmon.config.settings import Settings
-from psysmon.status import errtostr, is_up
+from psysmon.status import Status, errtostr, is_up
 
 NodeStates = list[tuple[Node, NodeState]]
 
@@ -67,6 +67,7 @@ td.host { font-weight:600; }
   font-size:12px; font-weight:700; }
 .badge.down { background:rgba(232,65,24,.18); color:#FF7A5C; }
 .badge.up { background:rgba(76,209,55,.16); color:var(--green); }
+.badge.degraded { background:rgba(244,208,63,.18); color:var(--yellow); }
 .mono { font-variant-numeric:tabular-nums; color:var(--muted); }
 .ok-panel { background:var(--panel); border:1px solid var(--border); border-radius:10px;
   padding:40px; text-align:center; }
@@ -158,8 +159,12 @@ def render_html(
 
 
 def _html_row(node: Node, state: NodeState, now_wall: float) -> str:
-    up = is_up(state.lastcheck)
-    badge = "up" if up else "down"
+    if is_up(state.lastcheck):
+        badge = "up"
+    elif state.lastcheck == Status.DEGRADED:
+        badge = "degraded"  # reachable but lossy — its own colour, not the red down badge (#22)
+    else:
+        badge = "down"
     cells = [
         f'<td class="host">{_esc(node.hostname)}</td>',
         f"<td>{_esc(type_to_name(node.check_type))}</td>",

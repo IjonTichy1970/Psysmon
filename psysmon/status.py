@@ -30,6 +30,9 @@ class Status(IntEnum):
     BAD_AUTH = 11
     BAD_RESPONSE = 12
     X500_WEDGED = 13
+    # psysmon-only code, outside the legacy 0..13 range: a loss-tolerant ping that got some
+    # replies but fewer than min_pings — reachable but lossy (#22). 0.93 never had a code for it.
+    DEGRADED = 14
 
 
 # errtostr() — human-readable status, used in the status file's "Status" column.
@@ -48,6 +51,7 @@ _STATUS_TEXT: dict[int, str] = {
     Status.BAD_AUTH: "Bad Auth",
     Status.BAD_RESPONSE: "Bad Resp",
     Status.X500_WEDGED: "Wedged",
+    Status.DEGRADED: "Degraded",
 }
 
 
@@ -57,5 +61,21 @@ def errtostr(value: int) -> str:
 
 
 def is_up(value: int) -> bool:
-    """True if the code means the service is up."""
+    """True if the code means the service is fully up.
+
+    ``DEGRADED`` is deliberately *not* up — a lossy host is shown as a problem and does not reset
+    an outage. For "is this host reachable enough to check what's behind it", use
+    :func:`is_reachable`.
+    """
     return value == Status.OK
+
+
+def is_reachable(value: int) -> bool:
+    """True if the host is reachable enough to forward to its dependents (up *or* degraded).
+
+    Dependency suppression gates a child on its ancestor pings being reachable, not strictly up:
+    a degraded (lossy-but-answering) router still forwards packets, so suppressing everything
+    behind it would mask real outages there. Only a fully-down ancestor (UNPINGABLE, etc.)
+    suppresses its subtree. ``DEGRADED`` only ever comes from a loss-tolerant ping (#22).
+    """
+    return value == Status.OK or value == Status.DEGRADED

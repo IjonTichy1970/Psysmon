@@ -14,10 +14,11 @@ Design:
   :meth:`Scheduler.run` ticks, then sleeps until the heap head's due time (or a stop). This is
   O(k log n) in the number actually due per wakeup, vs. the old O(n) scan.
 * **Dependency suppression** is an explicit eligibility gate: a node is eligible iff every
-  ping ancestor is currently up (``lastcheck == OK``). An ineligible node is re-queued
-  *without* being checked, so its state freezes — matching the C tree-walk that never visits a
-  subtree behind a down parent. A node whose ancestor chain contains a *non-ping* is
-  unreachable by the original's rules and is dropped from scheduling with a warning.
+  ping ancestor is currently *reachable* (up, or — with loss-tolerant ping — degraded; a lossy
+  router still forwards, so its subtree is not masked). An ineligible node is re-queued *without*
+  being checked, so its state freezes — matching the C tree-walk that never visits a subtree
+  behind a down parent. A node whose ancestor chain contains a *non-ping* is unreachable by the
+  original's rules and is dropped from scheduling with a warning.
 * A check result is **discarded** if the node's gate fell while the check was in flight
   (re-checked at completion), so a parent going down mid-check can't produce a stale alarm.
 * **Ping** runs on the shared :class:`~psysmon.checks.ping.PingService` (one raw socket) and is
@@ -42,7 +43,7 @@ from psysmon.config.settings import Settings
 from psysmon.engine.clock import Clock, SystemClock
 from psysmon.engine.dnscache import DnsCache
 from psysmon.engine.state import PageIntent, apply_result, maybe_repage
-from psysmon.status import errtostr, is_up
+from psysmon.status import errtostr, is_reachable
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +153,9 @@ class Scheduler:
         self._settings = settings
         self._clock = clock or SystemClock()
         self._resolver = resolver or DnsCache(settings.dnsexpire_s, settings.dnslog_s)
-        self._ping = ping_service or PingService(settings.source_ip)
+        self._ping = ping_service or PingService(
+            settings.source_ip, send_pings=settings.send_pings, min_pings=settings.min_pings
+        )
         self._notifier = notifier or _NullNotifier()
         self._runner = runner or self._default_runner
         self._on_state_change = on_state_change
@@ -162,6 +165,7 @@ class Scheduler:
         self._default_interval = settings.interval_s
         self._pageinterval_s = settings.pageinterval_min * 60
         self._slow_check_s = settings.slow_check_s
+        self._page_on_degraded = settings.page_on_degraded
         self._sem = asyncio.Semaphore(settings.max_concurrency)
         self._stop = asyncio.Event()
         self._dirty = asyncio.Event()
@@ -229,13 +233,15 @@ class Scheduler:
     # --- eligibility ------------------------------------------------------------------
 
     def _eligible(self, sched: _Scheduled) -> bool:
-        """True iff every ping ancestor has been checked and is currently up.
+        """True iff every ping ancestor has been checked and is currently reachable.
 
         Requiring ``checked`` (not just the initial ``lastcheck == 0``) means a child isn't
         probed until its parent ping has a real result — so a node behind a down parent is
-        never checked, matching the C sweep instead of leaking one check at startup.
+        never checked, matching the C sweep instead of leaking one check at startup. Reachable is
+        up *or* degraded (:func:`is_reachable`): a lossy-but-answering router still forwards, so
+        gating its children off would hide genuine outages behind it (#22).
         """
-        return all(a.checked and is_up(a.state.lastcheck) for a in sched.gate)
+        return all(a.checked and is_reachable(a.state.lastcheck) for a in sched.gate)
 
     # --- the loop ---------------------------------------------------------------------
 
@@ -333,7 +339,9 @@ class Scheduler:
                 sched.state.suppressed = True
                 return
             sched.state.suppressed = False
-            transition = apply_result(sched.state, code, self._clock.wall())
+            transition = apply_result(
+                sched.state, code, self._clock.wall(), page_on_degraded=self._page_on_degraded
+            )
             sched.checked = True
             await self._handle_paging(sched, transition)
             if transition.state_changed:

@@ -94,6 +94,11 @@ file on first publish (the page references it by a relative path), so there's no
 use your own logo instead, drop a `psysmon-logo.png` into the status-file's directory beforehand —
 the daemon won't overwrite an existing one.
 
+A few other useful flags: `--state-file <path>` (or `config savestate "<path>"`) persists up/down
+state so a restart or upgrade doesn't re-page known outages; `--send-pings N --min-pings M` turn
+ping into a loss-tolerant check that reports a distinct *Degraded* status on partial packet loss
+instead of flapping (add `--page-on-degraded` to alert on it; the default 1/1 is unchanged).
+
 ## 4. Run
 
 ICMP ping needs a raw socket, so run PSYSMON **as root**. (Unlike the original C `sysmon`, which

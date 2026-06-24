@@ -288,6 +288,16 @@ def test_main_missing_config_returns_clean_error(capsys):
     assert "config file not found" in err
 
 
+def test_main_invalid_ping_counts_clean_error(tmp_path, capsys):
+    # An invalid --send-pings/--min-pings pair is rejected at startup as a clean 'psysmon: ...'
+    # error (PingService validates in build(), main() catches ValueError), not a traceback (#22).
+    cfg = tmp_path / "psysmon.conf"
+    cfg.write_text("p ping p noc@x\n", encoding="utf-8")
+    rc = main(["-f", str(cfg), "-d", "--send-pings", "2", "--min-pings", "3"])
+    assert rc == 1
+    assert "psysmon:" in capsys.readouterr().err
+
+
 def test_main_deeply_nested_config_is_clean_error(tmp_path, capsys):
     # A pathologically deep config is reported as a clean 'psysmon: ...' error + exit 1, not an
     # uncaught RecursionError/ParseError traceback at startup (#36).

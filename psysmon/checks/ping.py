@@ -28,13 +28,16 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import logging
 import secrets
 import socket
 import struct
 
 from psysmon.checks import base
 from psysmon.config.model import Node
-from psysmon.status import Status
+from psysmon.status import Status, errtostr
+
+logger = logging.getLogger(__name__)
 
 # ICMP message types we care about.
 ICMP_ECHO_REQUEST = 8
@@ -45,7 +48,21 @@ _ECHO_HEADER = struct.Struct("!BBHHH")  # type, code, checksum, identifier, sequ
 # probes always send a fresh per-probe random nonce (see _probe), never this fixed value.
 _DEFAULT_PAYLOAD = b"psysmon-ping-payload"
 _NONCE_LEN = 16  # per-probe random payload that the reply must echo back (anti-forgery, #29)
-_RETRIES = 2  # total attempts per check = 1 + _RETRIES
+_RETRIES = 2  # total attempts per single-probe check = 1 + _RETRIES
+
+
+def _validate_counts(send_pings: int, min_pings: int) -> tuple[int, int]:
+    """Validate a (send_pings, min_pings) pair, raising ``ValueError`` on an invalid combination.
+
+    Both must be >= 1 and ``min_pings`` cannot exceed ``send_pings`` (you can't require more
+    replies than you send). Called for the global defaults at construction — so a bad CLI/config
+    value is rejected at startup (``main`` reports it as a clean ``psysmon: ...`` error).
+    """
+    if send_pings < 1 or min_pings < 1:
+        raise ValueError(f"send_pings and min_pings must be >= 1 (got {send_pings}/{min_pings})")
+    if min_pings > send_pings:
+        raise ValueError(f"min_pings ({min_pings}) cannot exceed send_pings ({send_pings})")
+    return send_pings, min_pings
 
 
 def icmp_checksum(data: bytes) -> int:
@@ -98,8 +115,13 @@ def parse_echo_reply(packet: bytes) -> tuple[int, int, bytes] | None:
 class PingService:
     """Owns the shared raw ICMP socket and demuxes echo replies by (identifier, sequence)."""
 
-    def __init__(self, source_ip: str | None = None) -> None:
+    def __init__(
+        self, source_ip: str | None = None, *, send_pings: int = 1, min_pings: int = 1
+    ) -> None:
         self._source_ip = source_ip
+        # Global loss-tolerance defaults (#22), validated up front. A per-node Node.send_pings /
+        # Node.min_pings overrides these; 1/1 reproduces today's first-reply-wins behavior.
+        self._send_pings, self._min_pings = _validate_counts(send_pings, min_pings)
         self._sock: socket.socket | None = None
         self._reader_registered = False
         # id/seq base: randomized per process so an off-path attacker can't predict the
@@ -210,7 +232,19 @@ class PingService:
         try:
             ip = await base.resolve(node, ctx)
             sock = self._ensure_socket(ctx)
-            return await self._probe(ip, sock, ctx)
+            send_pings = node.send_pings if node.send_pings is not None else self._send_pings
+            min_pings = node.min_pings if node.min_pings is not None else self._min_pings
+            # A per-node override bypasses the constructor's validation, so clamp it to a sane
+            # range here (else min_pings=0 would read up on total loss, or min_pings>send_pings
+            # could never read up). The legacy grammar has no slot for these, so this only guards
+            # programmatic / future-config use — a per-node config (#3) should reject at load.
+            send_pings = max(1, send_pings)
+            min_pings = max(1, min(min_pings, send_pings))
+            if send_pings <= 1:
+                # Default (and the common case): the unchanged single-probe + retry path, so 1/1
+                # is byte-for-byte today's behavior (first reply -> OK, none -> UNPINGABLE).
+                return await self._probe(ip, sock, ctx)
+            return await self._probe_loss_tolerant(ip, sock, ctx, send_pings, min_pings)
         except base.NoDnsError:
             return Status.NO_DNS
         except socket.gaierror:
@@ -248,3 +282,61 @@ class PingService:
                 self._pending.pop((ident, seq), None)
 
         return Status.UNPINGABLE
+
+    async def _probe_loss_tolerant(
+        self, ip: str, sock: socket.socket, ctx: base.CheckContext,
+        send_pings: int, min_pings: int,
+    ) -> int:
+        """Send ``send_pings`` echoes spread across the deadline and map the reply count (#22).
+
+        ``received >= min_pings`` -> OK; ``received == 0`` -> UNPINGABLE (unchanged total-loss
+        behavior); ``0 < received < min_pings`` -> DEGRADED (reachable but lossy). Unlike
+        :meth:`_probe` (the first-reply-wins default), this sends a fixed number of distinct
+        echoes to *measure* loss, so it waits out the full deadline to count every reply rather
+        than returning early. Ping isn't bounded by the per-check semaphore, so the longer hold is
+        acceptable, and waiting yields an accurate loss percentage a binary probe can't. No new
+        sockets: every echo rides the shared raw socket with its own monotonic (ident, seq) +
+        nonce, demuxed by the same :meth:`_on_readable`.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + ctx.timeout_s
+        spacing = ctx.timeout_s / send_pings  # spread the sends across the budget, not a burst
+        keys: list[tuple[int, int]] = []
+        futures: list[asyncio.Future[None]] = []
+        try:
+            for i in range(send_pings):
+                ident, seq = self._next_key()
+                nonce = secrets.token_bytes(_NONCE_LEN)
+                future: asyncio.Future[None] = loop.create_future()
+                self._pending[(ident, seq)] = (future, nonce)
+                keys.append((ident, seq))
+                futures.append(future)
+                try:
+                    sock.sendto(build_echo_request(ident, seq, nonce), (ip, 0))
+                except OSError:
+                    # One un-sendable echo (a transient no-route) is just a lost packet; keep
+                    # going. A persistent send error simply yields 0 received -> UNPINGABLE.
+                    pass
+                if i < send_pings - 1:  # space the sends, but never run past the deadline
+                    await asyncio.sleep(min(spacing, max(0.0, deadline - loop.time())))
+            remaining = max(0.0, deadline - loop.time())
+            await asyncio.wait(futures, timeout=remaining)
+            received = sum(1 for f in futures if f.done() and not f.cancelled())
+        finally:
+            for key in keys:
+                self._pending.pop(key, None)
+
+        if received >= min_pings:
+            result = Status.OK
+        elif received == 0:
+            result = Status.UNPINGABLE
+        else:
+            result = Status.DEGRADED
+        loss_pct = (send_pings - received) / send_pings * 100.0
+        # The measured loss is surfaced via this log line for now. Threading it onto NodeState and
+        # into the status page / JSON (for a future %loss page token) is deliberately deferred —
+        # the check->scheduler seam returns only a status code, so carrying the number to the
+        # output layer is follow-up work, not part of this change (#22).
+        logger.debug("ping %s: %d/%d replies (%.0f%% loss) -> %s",
+                     ip, received, send_pings, loss_pct, errtostr(result))
+        return result

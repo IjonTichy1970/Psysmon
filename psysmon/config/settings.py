@@ -46,6 +46,11 @@ class Settings:
     pageinterval_min: int = 10  # re-page interval while down (minutes)
     slow_check_s: float = 30.0  # log any check that runs at least this long (0 disables)
 
+    # Loss-tolerant ping (#22). Defaults 1/1 = today's first-reply-wins behavior, unchanged.
+    send_pings: int = 1  # echoes per ping check (global default; >1 enables loss tolerance)
+    min_pings: int = 1  # replies required to count up; in between -> DEGRADED, 0 -> UNPINGABLE
+    page_on_degraded: bool = False  # by default a DEGRADED result is informational, not paged
+
     # DNS cache
     dnsexpire_s: int = 900
     dnslog_s: int = 600
@@ -123,6 +128,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--slow-check", dest="slow_check_s", type=float, metavar="SEC",
         help="log any check running at least this long (0 disables)",
+    )
+    p.add_argument(
+        "--send-pings", dest="send_pings", type=int, metavar="N",
+        help="echoes per ping check (loss-tolerant ping; default 1)",
+    )
+    p.add_argument(
+        "--min-pings", dest="min_pings", type=int, metavar="N",
+        help="replies required to count a host up (default 1; fewer non-zero -> degraded)",
+    )
+    p.add_argument(
+        "--page-on-degraded", dest="page_on_degraded", action="store_true",
+        help="escalate/page on a degraded (partial-loss) ping (default: informational only)",
     )
 
     # DNS cache

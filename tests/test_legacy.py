@@ -265,8 +265,22 @@ def test_detect_legacy(sample_config_text):
 
 
 def test_detect_modern():
-    assert detect("---\nhosts:\n  - a\n") == ConfigFormat.MODERN
-    assert detect("# c\nhosts:\n  - a\n") == ConfigFormat.MODERN
+    # The modern object{} grammar is detected by an object/root=/set= line — NOT by shared
+    # `config` lines (both formats use those identically).
+    assert detect('root = "gw";\n') == ConfigFormat.MODERN
+    assert detect('set on = "x";\nroot = "gw";\n') == ConfigFormat.MODERN
+    assert detect('object gw {\n  ip "192.0.2.1";\n};\n') == ConfigFormat.MODERN
+    # leading comments + shared config lines, then an object block -> still modern
+    assert detect('# c\nconfig queuetime 30;\nobject gw {\n};\n') == ConfigFormat.MODERN
+
+
+def test_detect_ambiguous_config_only_is_legacy():
+    # A file of only shared `config` lines can't be told apart (it parses identically either
+    # way), so it defaults to LEGACY — the safe choice that never mis-routes a real legacy file.
+    assert detect('config savestate "/x";\nconfig numfailures 2\n') == ConfigFormat.LEGACY
+    # A positional host line is legacy even when `config` lines precede it.
+    assert detect("config numfailures 5\nh.example.net ping h.example.net noc@x\n") == (
+        ConfigFormat.LEGACY)
 
 
 # --- production-config scale smoke (skipped if the local fixture is absent) ------------

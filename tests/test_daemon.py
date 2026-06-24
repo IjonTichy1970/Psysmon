@@ -271,7 +271,8 @@ async def test_reload_loop_keeps_old_config_on_parse_failure(tmp_path):
     flag = asyncio.Event()
     task = asyncio.create_task(daemon._reload_loop(sched, settings, flag))
     try:
-        cfg.write_text("hosts:\n  - a\n", encoding="utf-8")  # detected MODERN -> load_roots raises
+        # A modern object{} file with a lexical error (unterminated string) -> load_roots raises.
+        cfg.write_text('object x {\n  ip "unterminated\n};\n', encoding="utf-8")
         flag.set()
         await asyncio.sleep(0.05)
         hosts = {nd.hostname for nd, _ in sched.node_states()}

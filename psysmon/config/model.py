@@ -76,6 +76,7 @@ class Node:
     port: int = 0
     label: str = ""  # the original "message" field
     contact: str = ""  # notification address ("" = no page, syslog only)
+    group: str = ""  # operator grouping label (modern `group "..."` attr; display use is #20)
     username: str = ""  # pop3 auth
     password: str = ""  # pop3 auth
     url: str = ""  # http/https path

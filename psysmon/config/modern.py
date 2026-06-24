@@ -30,6 +30,7 @@ Lexical grammar (matches the 0.93 lexer's observable behavior):
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -184,11 +185,12 @@ _TYPE_KEYWORDS = {
 }
 _DROPPED_TYPES = frozenset({"imap", "nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
 _DEFERRED_TYPES = frozenset({"ping6", "pingv6", "icmp6"})  # IPv6 ping -> #24
-# Structural attributes M3 understands; anything else (the M4 per-object overrides, or a typo)
-# warns and is ignored.
+# Object attributes the parser understands; anything else (e.g. the deferred `contact_on`, or a
+# typo) warns and is ignored. Structural fields (M3) + per-object overrides (M4).
 _OBJECT_ATTRS = frozenset({
     "ip", "type", "port", "desc", "contact", "url", "urltext", "username", "password",
-    "dns-query", "dep",
+    "dns-query", "dep",                                          # structural (M3)
+    "queuetime", "send_pings", "min_pings", "numfailures", "group",  # overrides (M4)
 })
 
 
@@ -565,12 +567,77 @@ class _Parser:
         if "contact" in resolved:
             node.contact = resolved["contact"]
 
+        self._apply_overrides(line, name, node, resolved)
+
         for key, (kl, _toks) in attrs.items():
             if key not in _OBJECT_ATTRS:
                 self._warn(kl, f"object '{name}': attribute '{key}' isn't supported yet; ignoring")
 
         dep_name = resolved.get("dep") or None
         return node, dep_name
+
+    def _apply_overrides(self, line: int, name: str, node: Node, resolved: dict[str, str]) -> None:
+        """Apply the per-object override attributes (#3 M4) onto ``node``; bad values warn + ignore.
+
+        These map onto Node fields the engine already honors: ``queuetime``->``interval``
+        (closes #23), ``send_pings``/``min_pings`` (validated; PingService also clamps at run
+        time), ``numfailures``->``max_down``, and ``group`` (display use is #20).
+        """
+        if "queuetime" in resolved:
+            interval = self._number(line, name, "queuetime", resolved["queuetime"], float)
+            if interval is not None and interval <= 0:
+                self._warn(line, f"object '{name}': queuetime must be > 0; ignoring")
+            elif interval is not None:
+                node.interval = interval
+        if "numfailures" in resolved:
+            nf = self._number(line, name, "numfailures", resolved["numfailures"], int)
+            if nf is not None and nf < 1:
+                self._warn(line, f"object '{name}': numfailures must be >= 1; ignoring")
+            elif nf is not None:
+                node.max_down = nf
+        if "group" in resolved:
+            node.group = resolved["group"]
+        self._apply_ping_counts(line, name, node, resolved)
+
+    def _apply_ping_counts(
+        self, line: int, name: str, node: Node, resolved: dict[str, str]
+    ) -> None:
+        send_given, min_given = "send_pings" in resolved, "min_pings" in resolved
+        send = (self._number(line, name, "send_pings", resolved["send_pings"], int)
+                if send_given else None)
+        minp = (self._number(line, name, "min_pings", resolved["min_pings"], int)
+                if min_given else None)
+        if send is not None and send < 1:
+            self._warn(line, f"object '{name}': send_pings must be >= 1; ignoring")
+            send = None
+        if minp is not None and minp < 1:
+            self._warn(line, f"object '{name}': min_pings must be >= 1; ignoring")
+            minp = None
+        if send is not None and minp is not None and minp > send:
+            self._warn(line, f"object '{name}': min_pings ({minp}) > send_pings ({send}); ignoring")
+            send = minp = None
+        # Atomic pair: if a *given* leg was rejected, drop its partner too — never combine a
+        # per-object value with the global default for the other leg (a surprising/impossible mix).
+        if (send_given and send is None) or (min_given and minp is None):
+            send = minp = None
+        if send is not None:
+            node.send_pings = send
+        if minp is not None:
+            node.min_pings = minp
+
+    def _number(self, line: int, name: str, key: str, raw: str, conv):
+        """Parse ``raw`` as int/float; warn + return None on failure. Rejects '+'/'_' for ints and
+        a non-finite float (``inf``/``nan`` would poison the scheduler heap as an interval)."""
+        try:
+            if conv is int and not raw.strip().lstrip("-").isdigit():
+                raise ValueError
+            value = conv(raw)
+            if conv is float and not math.isfinite(value):
+                raise ValueError
+            return value
+        except ValueError:
+            self._warn(line, f"object '{name}': '{key}' expects a number, got '{raw}'; ignoring")
+            return None
 
     def _port(self, line: int, name: str, raw: str | None) -> int | None:
         if raw is None:

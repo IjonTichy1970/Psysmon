@@ -370,11 +370,12 @@ def test_dropped_and_deferred_types_skip():
 
 
 def test_unknown_object_attribute_warns_but_keeps_object():
-    # An M4 / unknown attribute is ignored with a warning; the object still builds.
+    # A genuinely-unknown attribute is ignored with a warning; the object still builds, and a
+    # recognized override (queuetime) is applied rather than warned.
     res = parse('object gw { ip "192.0.2.1"; type ping; queuetime 10; bogus "x"; };\n')
-    assert [n.hostname for n in res.roots] == ["192.0.2.1"]
-    assert any("queuetime" in w for w in res.warnings)
+    assert res.roots[0].interval == 10.0  # queuetime applied (M4)
     assert any("bogus" in w for w in res.warnings)
+    assert not any("queuetime" in w for w in res.warnings)
 
 
 def test_multi_dep_keeps_first_and_warns():
@@ -473,6 +474,70 @@ def test_object_port_range_validation():
 def test_missing_semicolon_between_attrs_warns():
     res = parse('object x { ip "192.0.2.1" type ping; };\n')  # missing ';' after ip's value
     assert any("missing ';'" in w for w in res.warnings)
+
+
+# --- M4: per-object override attributes (closes #23) ----------------------------------
+
+def test_per_object_override_attributes():
+    res = parse(
+        'object gw { ip "192.0.2.1"; type ping; queuetime 10; send_pings 5; min_pings 3; '
+        'numfailures 4; group "core"; };\n'
+    )
+    assert res.warnings == []
+    n = res.roots[0]
+    assert n.interval == 10.0 and n.send_pings == 5 and n.min_pings == 3
+    assert n.max_down == 4 and n.group == "core"
+
+
+def test_per_object_overrides_no_longer_warn_as_unknown():
+    # In M3 these warned "isn't supported yet"; M4 recognizes them.
+    res = parse('object x { ip "h"; type ping; queuetime 30; group "g"; };\n')
+    assert not any("isn't supported yet" in w for w in res.warnings)
+
+
+def test_per_object_queuetime_accepts_float():
+    assert parse('object x { ip "h"; type ping; queuetime 2.5; };\n').roots[0].interval == 2.5
+
+
+def test_per_object_min_greater_than_send_rejected():
+    res = parse('object x { ip "h"; type ping; send_pings 3; min_pings 5; };\n')
+    n = res.roots[0]
+    assert n.send_pings is None and n.min_pings is None  # both ignored, fall back to global
+    assert any("min_pings" in w and "send_pings" in w for w in res.warnings)
+
+
+def test_per_object_invalid_override_values_warn_and_ignore():
+    res = parse('object x { ip "h"; type ping; queuetime nope; numfailures 0; send_pings 0; };\n')
+    n = res.roots[0]
+    assert n.interval is None       # bad queuetime ignored -> global default
+    assert n.max_down == 2          # numfailures 0 ignored -> default
+    assert n.send_pings is None     # send_pings 0 ignored
+    assert len(res.warnings) >= 3
+
+
+def test_contact_on_still_deferred():
+    # contact_on is carved to a follow-up; it still warns as not-yet-supported in M4.
+    res = parse('object x { ip "h"; type ping; contact_on both; };\n')
+    assert res.roots[0].hostname == "h"
+    assert any("contact_on" in w and "isn't supported" in w for w in res.warnings)
+
+
+def test_per_object_queuetime_rejects_non_finite():
+    # A non-finite queuetime must NOT reach node.interval: inf -> never-due, nan -> heap corruption.
+    for bad in ("inf", "nan", "-inf", "Infinity"):
+        res = parse(f'object x {{ ip "h"; type ping; queuetime {bad}; }};\n')
+        assert res.roots[0].interval is None  # rejected -> falls back to the global default
+        assert any("queuetime" in w for w in res.warnings)
+
+
+def test_per_object_invalid_ping_leg_drops_both():
+    # A given-but-invalid leg drops its partner too — never mix a per-object value with the
+    # global default for the other leg (which could form an impossible min > send pair).
+    res = parse('object x { ip "h"; type ping; send_pings 0; min_pings 3; };\n')
+    n = res.roots[0]
+    assert n.send_pings is None and n.min_pings is None
+    res2 = parse('object y { ip "h"; type ping; send_pings nope; min_pings 2; };\n')
+    assert res2.roots[0].send_pings is None and res2.roots[0].min_pings is None
 
 
 # --- detect() routes the modern grammar -----------------------------------------------

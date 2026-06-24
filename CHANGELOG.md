@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Modern `object{}` config format** (the sysmon 0.93 grammar), opt-in alongside the legacy
+  positional `sysmon.conf` — the format is auto-detected per file, so existing configs keep
+  working unchanged. A modern config is a single `root`, named `object NAME { ... };` blocks with
+  named attributes (`ip`, `type`, `port`, `desc`, `contact`, `url`/`urltext`, `username`/
+  `password`, `dns-query`) and named `dep` edges for dependency suppression, plus `config` globals
+  and `set`/`$var` variable reuse. Each object also takes **per-object overrides** — notably a
+  **per-object check interval** (`queuetime`, so a critical router can be polled faster than the
+  long tail; [#23](https://github.com/IjonTichy1970/Psysmon/issues/23)), plus per-object
+  loss-tolerant ping (`send_pings`/`min_pings`), per-object `numfailures`, and a `group` label
+  ([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)).
+
 ## [0.1.4] — 2026-06-23 — state persistence + loss-tolerant ping
 
 ### Added

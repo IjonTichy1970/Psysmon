@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import logging
 import socket
 import struct
 
@@ -197,17 +198,8 @@ class _FakeSocket:
         self.closed = True
 
 
-def _install_fake_socket(svc, sock):
-    """Wire a fake socket into the service and pump it from the running loop."""
-    svc._sock = sock
-
-    def ensure(_ctx):
-        return sock
-
-    svc._ensure_socket = ensure  # type: ignore[method-assign]
-
-    # Emulate add_reader: whenever a packet is queued, deliver it to the demux callback
-    # on the next loop turn. check() schedules this via sendto populating the inbox.
+def _pump_on_send(svc, sock):
+    """Emulate add_reader: when a send queues a reply, deliver it to the demux next loop turn."""
     orig_sendto = sock.sendto
 
     def sendto_then_pump(packet, addr):
@@ -217,6 +209,23 @@ def _install_fake_socket(svc, sock):
         return n
 
     sock.sendto = sendto_then_pump  # type: ignore[method-assign]
+
+
+def _install_fake_socket(svc, sock):
+    """Wire a fake socket in as the unbound default pool socket and pump it from the loop."""
+    svc._socks[None] = sock
+    svc._registered.add(None)
+    svc._socket_for = lambda source=None: sock  # type: ignore[method-assign]
+    _pump_on_send(svc, sock)
+
+
+def _install_fake_pool(svc, by_source):
+    """Wire a {source: _FakeSocket} pool so check() picks a socket by ctx.source_ip (#70)."""
+    for source, sock in by_source.items():
+        svc._socks[source] = sock
+        svc._registered.add(source)
+        _pump_on_send(svc, sock)
+    svc._socket_for = lambda source=None: by_source[source]  # type: ignore[method-assign]
 
 
 async def test_check_ok_when_reply_arrives():
@@ -509,7 +518,8 @@ async def test_prepare_opens_socket_without_attaching_reader(monkeypatch):
     # attach the reply reader; the first check attaches it exactly once.
     svc = ping.PingService()
     opens: list[_CountingSocket] = []
-    monkeypatch.setattr(svc, "_open_raw", lambda: opens.append(_CountingSocket()) or opens[-1])
+    monkeypatch.setattr(svc, "_open_raw",
+                        lambda source=None: opens.append(_CountingSocket()) or opens[-1])
 
     loop = asyncio.get_running_loop()
     adds: list[int] = []
@@ -518,32 +528,103 @@ async def test_prepare_opens_socket_without_attaching_reader(monkeypatch):
     monkeypatch.setattr(loop, "remove_reader", lambda fd: removes.append(fd))
 
     svc.prepare()
-    assert svc._sock is not None and svc._reader_registered is False
-    assert len(opens) == 1 and adds == []  # socket open, reader not yet attached
+    assert svc._socks.get(None) is not None and None not in svc._registered
+    assert len(opens) == 1 and adds == []  # unbound socket open, reader not yet attached
 
-    ctx = base.CheckContext(resolver=FakeResolver())
-    first = svc._ensure_socket(ctx)
-    assert svc._reader_registered is True and len(adds) == 1  # attached exactly once
-    second = svc._ensure_socket(ctx)
+    first = svc._ensure_socket(None)
+    assert None in svc._registered and len(adds) == 1  # attached exactly once
+    second = svc._ensure_socket(None)
     assert second is first and len(adds) == 1  # idempotent: same socket, no re-attach
     assert len(opens) == 1  # prepare()'s socket was reused, not reopened
 
     svc.close()
-    assert svc._sock is None and svc._reader_registered is False
+    assert svc._socks == {} and svc._registered == set()
     assert removes == [first.fileno()] and first.closed is True
+
+
+async def test_prepare_opens_one_socket_per_configured_source(monkeypatch):
+    # prepare() pre-opens the unbound default PLUS one socket per declared bound source (#70).
+    svc = ping.PingService()
+    svc.set_sources(["203.0.113.5", "203.0.113.9"])
+    bound: list = []
+    monkeypatch.setattr(svc, "_open_raw",
+                        lambda source=None: bound.append(source) or _CountingSocket())
+
+    svc.prepare()
+    assert set(svc._socks) == {None, "203.0.113.5", "203.0.113.9"}
+    assert sorted(b for b in bound if b) == ["203.0.113.5", "203.0.113.9"]
+    assert None in bound  # the unbound default was opened too
 
 
 async def test_ensure_socket_opens_when_prepare_skipped(monkeypatch):
     # If prepare() is never called, the first check still opens AND attaches the reader.
     svc = ping.PingService()
-    monkeypatch.setattr(svc, "_open_raw", _CountingSocket)
+    monkeypatch.setattr(svc, "_open_raw", lambda source=None: _CountingSocket())
     loop = asyncio.get_running_loop()
     adds: list[int] = []
     monkeypatch.setattr(loop, "add_reader", lambda fd, *a: adds.append(fd))
     monkeypatch.setattr(loop, "remove_reader", lambda fd: None)
 
-    svc._ensure_socket(base.CheckContext(resolver=FakeResolver()))
-    assert svc._sock is not None and svc._reader_registered is True and len(adds) == 1
+    svc._ensure_socket(None)
+    assert svc._socks.get(None) is not None and None in svc._registered and len(adds) == 1
+
+
+# --- #70: source-keyed socket pool ------------------------------------------------------
+
+async def test_check_sends_on_the_socket_for_ctx_source():
+    # check() picks the pooled socket by ctx.source_ip: a bound source uses its socket; an
+    # unset source uses the unbound default. Both still resolve OK via the nonce demux.
+    svc = ping.PingService()
+    unbound, bound = _FakeSocket(), _FakeSocket()
+    _install_fake_pool(svc, {None: unbound, "203.0.113.5": bound})
+
+    r1 = await svc.check(node(), base.CheckContext(
+        resolver=FakeResolver(), timeout_s=2.0, source_ip="203.0.113.5"))
+    r2 = await svc.check(node(), base.CheckContext(resolver=FakeResolver(), timeout_s=2.0))
+
+    assert r1 == Status.OK and r2 == Status.OK
+    assert len(bound.sent) == 1 and len(unbound.sent) == 1  # each went out its own socket
+
+
+async def test_socket_for_falls_back_to_unbound_when_bind_fails(monkeypatch, caplog):
+    # A bound source that can't be opened now (e.g. a reload after privilege drop) falls back to
+    # the pre-opened unbound socket, warning once (#70).
+    svc = ping.PingService()
+    unbound = _CountingSocket()
+    svc._socks[None] = unbound
+    svc._registered.add(None)
+
+    def boom(source=None):
+        if source is not None:
+            raise PermissionError("operation not permitted")
+        return unbound
+
+    monkeypatch.setattr(svc, "_open_raw", boom)
+    with caplog.at_level(logging.WARNING, logger="psysmon.checks.ping"):
+        sock = svc._socket_for("203.0.113.5")
+    assert sock is unbound and "203.0.113.5" in caplog.text
+
+    caplog.clear()
+    assert svc._socket_for("203.0.113.5") is unbound  # still falls back
+    assert "203.0.113.5" not in caplog.text           # but warns only once
+
+
+async def test_close_iterates_the_whole_pool(monkeypatch):
+    svc = ping.PingService()
+    svc.set_sources(["203.0.113.5"])
+    monkeypatch.setattr(svc, "_open_raw", lambda source=None: _CountingSocket())
+    loop = asyncio.get_running_loop()
+    removes: list[int] = []
+    monkeypatch.setattr(loop, "add_reader", lambda fd, *a: None)
+    monkeypatch.setattr(loop, "remove_reader", lambda fd: removes.append(fd))
+
+    svc.prepare()                       # unbound + the bound source = 2 sockets
+    svc._ensure_socket(None)            # register both readers
+    svc._ensure_socket("203.0.113.5")
+    socks = list(svc._socks.values())
+    svc.close()
+    assert svc._socks == {} and svc._registered == set()
+    assert all(s.closed for s in socks) and len(removes) == 2  # every socket closed + unwired
 
 
 # --- privilege module --------------------------------------------------------------------
@@ -613,4 +694,4 @@ async def test_ping_no_dns_propagates():
     ctx = base.CheckContext(resolver=FakeResolver(default=None), timeout_s=2.0)
     svc = ping.PingService()
     assert await base.perform(svc.check, node(), ctx) == Status.NO_DNS
-    assert svc._sock is None  # never reached socket creation.
+    assert svc._socks == {}  # never reached socket creation.

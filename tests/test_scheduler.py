@@ -783,3 +783,17 @@ async def test_no_global_source_leaves_non_ping_unbound():
     sched, _ = make([Node(hostname="d", check_type=CheckType.TCP, port=80)], rec, clock)
     await tick_drain(sched)
     assert rec.seen["d"] is None  # no global source_ip set -> unbound
+
+
+def test_scheduler_collects_bound_ping_sources_for_the_pool():
+    # The scheduler hands the PingService the distinct BOUND ping sources to pre-open; `auto`,
+    # unset, and non-ping nodes contribute none (#70).
+    clock = ManualClock()
+    roots = [
+        Node(hostname="a", check_type=CheckType.PING, source="203.0.113.5"),
+        Node(hostname="b", check_type=CheckType.PING, source=SOURCE_AUTO),
+        Node(hostname="c", check_type=CheckType.PING),
+        Node(hostname="d", check_type=CheckType.TCP, port=80, source="198.51.100.9"),
+    ]
+    sched, _ = make(roots, ScriptedRunner(), clock, source_ip="192.0.2.1")
+    assert sched.ping_service._configured_sources == frozenset({"203.0.113.5"})

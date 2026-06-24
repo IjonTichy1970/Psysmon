@@ -21,8 +21,8 @@ Design:
   original's rules and is dropped from scheduling with a warning.
 * A check result is **discarded** if the node's gate fell while the check was in flight
   (re-checked at completion), so a parent going down mid-check can't produce a stale alarm.
-* **Ping** runs on the shared :class:`~psysmon.checks.ping.PingService` (one raw socket) and is
-  *not* bounded by the per-check semaphore; all other checks are.
+* **Ping** runs on the shared :class:`~psysmon.checks.ping.PingService` (a source-keyed pool of
+  raw sockets, #70) and is *not* bounded by the per-check semaphore; all other checks are.
 * Paging is wired through a :class:`~psysmon.notify.base.Notifier`: on a DOWN intent it pages
   and marks ``contacted``; on RECOVERY it pages the clear; otherwise a still-down contacted
   node is re-paged once ``pageinterval`` has elapsed (eligible nodes only — a fix vs. the C).
@@ -168,7 +168,7 @@ class Scheduler:
         self._clock = clock or SystemClock()
         self._resolver = resolver or DnsCache(settings.dnsexpire_s, settings.dnslog_s)
         self._ping = ping_service or PingService(
-            settings.source_ip, send_pings=settings.send_pings, min_pings=settings.min_pings
+            send_pings=settings.send_pings, min_pings=settings.min_pings
         )
         self._notifier = notifier or _NullNotifier()
         self._runner = runner or self._default_runner
@@ -189,10 +189,19 @@ class Scheduler:
         self.warnings: list[str] = []
 
         self._scheduled = self._flatten(roots)
+        # Tell the ping service which bound sources to pre-open (while still privileged) so each
+        # configured per-object/group ping source gets its own raw socket in the pool (#70).
+        self._ping.set_sources(self._collect_ping_sources())
         self._stagger_due(stagger)
         self._build_heap()
 
     # --- tree flattening + gate computation -------------------------------------------
+
+    def _collect_ping_sources(self) -> set[str]:
+        """Distinct bound sources among scheduled ping nodes — the bound sockets the ping pool
+        must pre-open (the unbound default is implicit). Unset/`auto` ping nodes contribute none."""
+        return {s.source for s in self._scheduled
+                if s.node.check_type is CheckType.PING and s.source}
 
     def _flatten(self, roots: list[Node]) -> list[_Scheduled]:
         scheduled: list[_Scheduled] = []
@@ -358,7 +367,9 @@ class Scheduler:
         try:
             if node.check_type is CheckType.PING:
                 started = self._clock.monotonic()
-                code = await self._runner(node, self._ctx)
+                # ctx.source_ip carries this node's resolved ping source; the PingService picks the
+                # matching pooled socket (None = unbound, ping's default regardless of source_ip).
+                code = await self._runner(node, self._ctx_for(sched))
             else:
                 async with self._sem:
                     # Start timing only after acquiring the slot: a check that merely queued
@@ -563,6 +574,9 @@ class Scheduler:
             old.alive = False
         self.warnings = []
         self._scheduled = self._flatten(roots)
+        # Refresh the configured ping-source set for the new tree. (Sockets aren't re-opened —
+        # prepare() already ran pre-privilege-drop; a brand-new source falls back to unbound.)
+        self._ping.set_sources(self._collect_ping_sources())
         seen: set[tuple[str, CheckType, int]] = set()
         for sched in self._scheduled:
             key = (sched.node.hostname, sched.node.check_type, sched.node.port)

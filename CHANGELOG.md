@@ -6,6 +6,26 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Per-object / per-group check `source`** — choose the outbound bind address per object
+  (`source "203.0.113.5";` or `source auto;`) or for a whole group via a new `group "NAME" { … }`
+  scope block. A per-object value wins over the group default, which wins over the global
+  `config source_ip`. `auto` keeps a target unbound (the kernel routes by destination) even when a
+  group default or `source_ip` would otherwise bind it — the fix for hosts reached over a VPN or a
+  dynamic interface. Applies to ping and the connection checks (tcp/udp/smtp/pop3/dns); http/https
+  remain unbound (httpx has no per-request source). See
+  [docs/modern-config.md](docs/modern-config.md)
+  ([#70](https://github.com/IjonTichy1970/Psysmon/issues/70)).
+
+### Changed
+- **Ping is now unbound by default**, regardless of `config source_ip`. Previously a global
+  `source_ip` bound the ICMP probes too; now ping routes by destination unless an explicit
+  per-object/per-group `source` is set, while `source_ip` still binds the connection checks. This
+  is a deliberate behavior change (#70): if you relied on `source_ip` binding ping for ACL egress,
+  set that address as the object's/group's `source`. Ping now uses a small pool of raw sockets
+  keyed by source; sockets are opened at startup while privileged, so a brand-new source
+  introduced by a later SIGHUP reload falls back to unbound (logged) until a restart.
+
 ## [0.3.0] — 2026-06-24 — Control channel + operator ACK/notes, contact_on, object grouping
 
 ### Added

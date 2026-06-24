@@ -1,24 +1,32 @@
 """ICMP echo ping (Milestone 7).
 
-Reproduces ``icmp.c`` but modern and concurrent: a single shared raw ICMP socket opened
-lazily (the first time a ping is actually run), registered with ``loop.add_reader``; outbound
-echo requests carry a per-process-randomized, monotonic identifier/sequence plus a per-probe
-random nonce in the payload, and replies are demultiplexed to per-(identifier, sequence)
-futures **only after the reply echoes that nonce back** (the shared socket receives every
-inbound echo reply, so matching on id/seq alone would let any host — or a spoofed packet that
-guessed the id/seq — forge a host-is-up result). Crucially the reply is *not* required to come
-from the pinged address: routers, asymmetric routing, and NAT legitimately source an echo reply
-from a different interface/address, and the nonce authenticates the reply without rejecting
-those (a strict source-IP match read such healthy gateways as ``UNPINGABLE`` — issue #29 fix).
-This assumes the responder echoes our payload back, as RFC 792 requires; the rare host that
-truncates the ICMP data below the nonce length would read ``UNPINGABLE`` — virtually all stacks
-(Linux/BSD/Windows, Cisco/Juniper) comply. The socket is optionally ``bind()``-ed to the
-configured source IP (ACL-load-bearing). One unanswered echo after the retry budget ->
-``Status.UNPINGABLE``.
+Reproduces ``icmp.c`` but modern and concurrent. Outbound echo requests carry a
+per-process-randomized, monotonic identifier/sequence plus a per-probe random nonce in the
+payload, and replies are demultiplexed to per-(identifier, sequence) futures **only after the
+reply echoes that nonce back** (a raw socket receives every inbound echo reply, so matching on
+id/seq alone would let any host — or a spoofed packet that guessed the id/seq — forge a
+host-is-up result). Crucially the reply is *not* required to come from the pinged address:
+routers, asymmetric routing, and NAT legitimately source an echo reply from a different
+interface/address, and the nonce authenticates the reply without rejecting those (a strict
+source-IP match read such healthy gateways as ``UNPINGABLE`` — issue #29 fix). This assumes the
+responder echoes our payload back, as RFC 792 requires; the rare host that truncates the ICMP
+data below the nonce length would read ``UNPINGABLE`` — virtually all stacks (Linux/BSD/Windows,
+Cisco/Juniper) comply. One unanswered echo after the retry budget -> ``Status.UNPINGABLE``.
 
-The raw socket is *not* opened at import time, so this module imports cleanly without
-privilege on both Windows and Linux. It is opened on first use (which requires root / raw-socket
-capability) and kept open across a later privilege drop (see :mod:`psysmon.privilege`).
+**Source binding (#70).** Ping uses a small *pool* of raw sockets keyed by outbound bind source:
+an always-present **unbound** socket (the default — the kernel routes each probe by destination,
+which is the right behavior for VPN/dynamic interfaces, and ignores the global ``source_ip``),
+plus one socket ``bind()``-ed per distinct configured per-object/per-group ``source`` (an
+ACL-load-bearing egress IP). Each probe sends on the socket for its node's resolved source
+(carried on ``ctx.source_ip``; ``None`` = unbound). A single (identifier, sequence) keyspace and
+one nonce-checked demux serve every socket — a reply may legitimately arrive on a different
+socket than it left from (asymmetric routing), so demux stays source-agnostic.
+
+The raw sockets are *not* opened at import time, so this module imports cleanly without privilege
+on both Windows and Linux. :meth:`PingService.prepare` opens the whole pool up front (which
+requires root / raw-socket capability) and they are kept open across a later privilege drop (see
+:mod:`psysmon.privilege`) — a *new* source introduced by a later reload can no longer create a
+bound raw socket, so such probes fall back to the unbound socket with a one-time warning.
 
 The pure framing helpers (:func:`icmp_checksum`, :func:`build_echo_request`,
 :func:`parse_echo_reply`) need no privilege and are unit-tested directly.
@@ -32,6 +40,7 @@ import logging
 import secrets
 import socket
 import struct
+from collections.abc import Iterable
 
 from psysmon.checks import base
 from psysmon.config.model import Node
@@ -113,70 +122,110 @@ def parse_echo_reply(packet: bytes) -> tuple[int, int, bytes] | None:
 
 
 class PingService:
-    """Owns the shared raw ICMP socket and demuxes echo replies by (identifier, sequence)."""
+    """Owns a source-keyed pool of raw ICMP sockets and demuxes echo replies by (ident, seq)."""
 
     def __init__(
-        self, source_ip: str | None = None, *, send_pings: int = 1, min_pings: int = 1
+        self, sources: Iterable[str] = (), *, send_pings: int = 1, min_pings: int = 1
     ) -> None:
-        self._source_ip = source_ip
+        # Distinct bound sources to pre-open in prepare() while privileged (#70). The unbound
+        # default socket is always present; the scheduler supplies these once it has resolved
+        # every ping node's source (see set_sources).
+        self._configured_sources: frozenset[str] = frozenset(s for s in sources if s)
         # Global loss-tolerance defaults (#22), validated up front. A per-node Node.send_pings /
         # Node.min_pings overrides these; 1/1 reproduces today's first-reply-wins behavior.
         self._send_pings, self._min_pings = _validate_counts(send_pings, min_pings)
-        self._sock: socket.socket | None = None
-        self._reader_registered = False
+        # The socket pool: bind source (None = unbound) -> raw socket. Readers are registered
+        # per socket on first use within the loop; `_registered` tracks which sources are wired.
+        self._socks: dict[str | None, socket.socket] = {}
+        self._registered: set[str | None] = set()
+        self._warned_unbindable: set[str] = set()  # sources we've logged a bind failure for
         # id/seq base: randomized per process so an off-path attacker can't predict the
         # in-flight (ident, seq) of a probe and forge a reply (#29). Still monotonic from there.
+        # ONE keyspace across the whole pool, so a reply on any socket resolves the right waiter.
         self._counter = secrets.randbits(32)
         # (ident, seq) -> (waiter, expected nonce); the nonce gates which replies may resolve it.
         self._pending: dict[tuple[int, int], tuple[asyncio.Future[None], bytes]] = {}
 
+    def set_sources(self, sources: Iterable[str]) -> None:
+        """Declare the distinct bound sources to pre-open in :meth:`prepare` (#70). The scheduler
+        calls this once it has resolved every ping node's source; the unbound default is implicit.
+        Has no effect on already-open sockets — a source added after prepare()/privilege drop
+        can't bind a new raw socket and falls back to unbound at check time."""
+        self._configured_sources = frozenset(s for s in sources if s)
+
     # --- socket lifecycle -------------------------------------------------------------
 
-    def _open_raw(self) -> socket.socket:
-        """Create the raw ICMP socket and bind the source IP (requires root). No event loop."""
+    def _open_raw(self, source: str | None) -> socket.socket:
+        """Create a raw ICMP socket, bound to ``source`` when given (requires root). No loop."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
         sock.setblocking(False)
-        if self._source_ip:
-            sock.bind((self._source_ip, 0))
+        if source:
+            sock.bind((source, 0))
         return sock
 
     def prepare(self) -> None:
-        """Open the raw socket up front (call as root, before dropping privileges).
-
-        The reply reader is attached later by :meth:`_ensure_socket` once a loop is running.
-        """
-        if self._sock is None:
-            self._sock = self._open_raw()
-
-    def _ensure_socket(self, ctx: base.CheckContext) -> socket.socket:
-        """Open (if needed) and register the raw ICMP socket on first use within the loop."""
-        if self._sock is None:
-            self._sock = self._open_raw()
-        if not self._reader_registered:
+        """Open the whole pool up front (call as root, before dropping privileges): the unbound
+        default socket plus one socket bound to each configured source. Reply readers are attached
+        later by :meth:`_ensure_socket` once a loop is running. A bound source that fails to open
+        here is logged and skipped (probes for it fall back to unbound at check time)."""
+        for source in (None, *self._configured_sources):
+            if source in self._socks:
+                continue
             try:
-                asyncio.get_running_loop().add_reader(
-                    self._sock.fileno(), self._on_readable, self._sock
-                )
+                self._socks[source] = self._open_raw(source)
+            except OSError as exc:
+                if source is None:
+                    raise  # can't even open the unbound socket — a real, surfaced failure
+                self._warn_unbindable(source, exc)
+
+    def _ensure_socket(self, source: str | None) -> socket.socket:
+        """Return the pooled socket for ``source`` (None = unbound), opening it (if not already)
+        and registering its reply reader on first use within the loop. Each socket gets its own
+        ``add_reader`` into the shared demux."""
+        sock = self._socks.get(source)
+        if sock is None:
+            sock = self._open_raw(source)
+            self._socks[source] = sock
+        if source not in self._registered:
+            try:
+                asyncio.get_running_loop().add_reader(sock.fileno(), self._on_readable, sock)
             except NotImplementedError as exc:
                 # The Windows Proactor loop has no add_reader; raw ICMP demux is unsupported.
-                self._sock.close()
-                self._sock = None
+                sock.close()
+                del self._socks[source]
                 raise OSError("event loop does not support add_reader for raw sockets") from exc
-            self._reader_registered = True
-        return self._sock
+            self._registered.add(source)
+        return sock
+
+    def _socket_for(self, source: str | None) -> socket.socket:
+        """The pooled socket to send a probe from. Falls back to the (pre-opened) unbound socket,
+        with a one-time warning, if a bound source can't be opened now — e.g. a source introduced
+        by a reload after the daemon dropped raw-socket privilege (#70)."""
+        if source is not None and source not in self._socks:
+            try:
+                self._socks[source] = self._open_raw(source)
+            except OSError as exc:
+                self._warn_unbindable(source, exc)
+                source = None  # route these probes out the unbound default instead
+        return self._ensure_socket(source)
+
+    def _warn_unbindable(self, source: str, exc: OSError) -> None:
+        if source not in self._warned_unbindable:
+            self._warned_unbindable.add(source)
+            logger.warning("ping: cannot bind source %s (%s); routing affected checks unbound "
+                           "until restart", source, exc)
 
     def close(self) -> None:
-        """Unregister and close the raw socket (idempotent)."""
-        if self._sock is None:
-            return
-        if self._reader_registered:
-            try:
-                asyncio.get_running_loop().remove_reader(self._sock.fileno())
-            except RuntimeError:  # no running loop (shutdown) — socket close still suffices.
-                pass
-            self._reader_registered = False
-        self._sock.close()
-        self._sock = None
+        """Unregister and close every pooled socket (idempotent)."""
+        for source, sock in self._socks.items():
+            if source in self._registered:
+                try:
+                    asyncio.get_running_loop().remove_reader(sock.fileno())
+                except RuntimeError:  # no running loop (shutdown) — socket close still suffices.
+                    pass
+            sock.close()
+        self._socks.clear()
+        self._registered.clear()
 
     def _next_key(self) -> tuple[int, int]:
         """Next monotonic (identifier, sequence) pair, wrapping at 16 bits."""
@@ -231,7 +280,9 @@ class PingService:
         """
         try:
             ip = await base.resolve(node, ctx)
-            sock = self._ensure_socket(ctx)
+            # ctx.source_ip carries this node's resolved ping bind source (the scheduler resolved
+            # per-object/group `source`; #70). None = the unbound default socket.
+            sock = self._socket_for(ctx.source_ip)
             send_pings = node.send_pings if node.send_pings is not None else self._send_pings
             min_pings = node.min_pings if node.min_pings is not None else self._min_pings
             # A per-node override bypasses the constructor's validation, so clamp it to a sane

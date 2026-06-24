@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-24 — Per-object/group check source; ping unbound by default
+
 ### Added
 - **Per-object / per-group check `source`** — choose the outbound bind address per object
   (`source "203.0.113.5";` or `source auto;`) or for a whole group via a new `group "NAME" { … }`
@@ -266,7 +268,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.4...v0.2.0

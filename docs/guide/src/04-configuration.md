@@ -392,8 +392,10 @@ can still override (CLI > config file > default). An unknown directive warns and
 > the only one whose *legacy* behavior also differs — it is position-dependent in the legacy format
 > (see above), but a plain global default here.
 
-**Control / query channel.** The opt-in control channel ([control channel docs](07-operating.md))
-is configured with these directives; it is **off by default** and binds loopback `127.0.0.1:2026`
+**Control / query channel.** The opt-in control channel (operate it from
+[Operating → the control channel](07-operating.md#control-channel); full security reference in
+[docs/control-channel.md](control-channel.md)) is configured with these directives; it is **off by
+default** and binds loopback `127.0.0.1:2026`
 when enabled, refusing to start on a non-loopback address without TLS:
 
 ```

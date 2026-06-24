@@ -832,9 +832,10 @@ config sleeptime is obsolete and ignored with a warning (use queuetime / --inter
     the only one whose *legacy* behavior also differs -- it is position-dependent in the legacy format
     (see above), but a plain global default here.
 
-Control / query channel. The opt-in control channel (control channel docs) is configured
-with these directives; it is off by default and binds loopback 127.0.0.1:2026 when
-enabled, refusing to start on a non-loopback address without TLS:
+Control / query channel. The opt-in control channel (operate it from Operating -> the
+control channel; full security reference in docs/control-channel.md) is configured with
+these directives; it is off by default and binds loopback 127.0.0.1:2026 when enabled,
+refusing to start on a non-loopback address without TLS:
 
     config control;                                       # enable (off by default)
     config control_bind "127.0.0.1";                      # default; non-loopback requires TLS

@@ -256,7 +256,7 @@ config savestate "/var/lib/psysmon/state.json"
 This is what makes the upgrade procedure below safe: with savestate on, an upgrade restart
 doesn't flood you with re-pages for outages already in progress.
 
-## Acknowledging and annotating alerts at runtime
+## Acknowledging and annotating alerts at runtime {#control-channel}
 
 You can acknowledge an outage or attach an operator note **without editing the config**,
 via the opt-in **control channel** and the bundled `psysmonctl` client. This is the runtime

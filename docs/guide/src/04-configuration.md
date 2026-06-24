@@ -3,7 +3,7 @@
 PSYSMON reads a single configuration file (default `/etc/psysmon.conf`, overridable with
 `-f/--config`). One daemon understands **two configuration formats**:
 
-- **Legacy positional** — the original 1998 `sysmon.conf` grammar. This is the **default**: an
+- **Legacy positional** — the original `sysmon.conf` grammar. This is the **default**: an
   existing `sysmon.conf` keeps working unchanged.
 - **Modern `object{}`** — an opt-in, named-block grammar adopted in issue #3, more readable and
   order-independent.

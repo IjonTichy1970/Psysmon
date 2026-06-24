@@ -1,7 +1,7 @@
 """PSYSMON — dependency-aware network monitoring daemon.
 
-A Python 3.11+ rewrite of the original 1998 C ``sysmon`` (v0.78.3.2 by Jared Mauch),
-preserving its observable monitoring/alerting semantics while modernizing the engine.
+A Python 3.11+ rewrite of Jared Mauch's C ``sysmon`` (developed 1996-2014; based on its final
+0.93 release), preserving its observable monitoring/alerting semantics while modernizing the engine.
 """
 
 # __version__ derives from the installed package metadata (pyproject.toml) — single source of

@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- Corrected the `sysmon` heritage attribution across the README, package metadata, and the user
+  guide. The original `sysmon` is by **Jared Mauch**, developed from **1996** to its final release
+  **0.93** (2014), which this rewrite is based on. Earlier text misattributed the author and dated
+  it "1998 / v0.78.3.2".
+
 ## [0.5.0] — 2026-06-24 — End-user guide on GitHub Pages
 
 ### Added

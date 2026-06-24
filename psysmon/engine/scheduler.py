@@ -166,6 +166,7 @@ class Scheduler:
         self._pageinterval_s = settings.pageinterval_min * 60
         self._slow_check_s = settings.slow_check_s
         self._page_on_degraded = settings.page_on_degraded
+        self._contact_on_default = settings.contact_on  # global default; per-object override wins
         self._sem = asyncio.Semaphore(settings.max_concurrency)
         self._stop = asyncio.Event()
         self._dirty = asyncio.Event()
@@ -357,14 +358,29 @@ class Scheduler:
 
     async def _handle_paging(self, sched: _Scheduled, transition) -> None:
         node, state = sched.node, sched.state
+        # contact_on gates which transitions actually page. "both" (the default) preserves the
+        # historical behavior. A per-object value overrides the global default.
+        contact_on = node.contact_on or self._contact_on_default
         if transition.intent is PageIntent.DOWN:
-            if await self._notifier.send(node, state, PageIntent.DOWN):
+            if contact_on in ("down", "both"):
+                if await self._notifier.send(node, state, PageIntent.DOWN):
+                    state.contacted = True
+                    state.lastcontacted = self._clock.monotonic()
+            elif contact_on == "up":
+                # Don't page on the way down, but mark contacted so the recovery still pages
+                # (apply_result only emits RECOVERY for a node that was contacted).
                 state.contacted = True
                 state.lastcontacted = self._clock.monotonic()
+            # "none": page on neither transition — leave contacted clear (no re-page, no recovery).
         elif transition.intent is PageIntent.RECOVERY:
-            await self._notifier.send(node, state, PageIntent.RECOVERY)
+            if contact_on in ("up", "both"):
+                await self._notifier.send(node, state, PageIntent.RECOVERY)
         elif state.contacted and maybe_repage(state, self._clock.monotonic(), self._pageinterval_s):
-            if await self._notifier.send(node, state, PageIntent.DOWN):
+            if contact_on in ("down", "both"):
+                if await self._notifier.send(node, state, PageIntent.DOWN):
+                    state.lastcontacted = self._clock.monotonic()
+            else:  # "up": no re-page; advance the clock so we don't recheck every tick.
+                # ("none" never reaches here — it stays uncontacted, so maybe_repage is False.)
                 state.lastcontacted = self._clock.monotonic()
 
     # --- introspection (for output / tests) -------------------------------------------

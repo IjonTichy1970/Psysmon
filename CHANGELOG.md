@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`contact_on`** — choose which transitions page: per object (`contact_on down|up|both|none;`
+  in the modern config) or globally (`config contact_on …` / `--contact-on`). `down` pages on
+  outages only (suppressing recovery pages), `up` pages only on recovery, `none` never pages, and
+  `both` pages on both. The default is **`both`** — psysmon's existing behavior — so nothing
+  changes unless you opt in.
+
 ## [0.2.1] — 2026-06-24 — psysmon-convert command + config-format docs + BOM fix
 
 ### Added

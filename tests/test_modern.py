@@ -515,11 +515,23 @@ def test_per_object_invalid_override_values_warn_and_ignore():
     assert len(res.warnings) >= 3
 
 
-def test_contact_on_still_deferred():
-    # contact_on is carved to a follow-up; it still warns as not-yet-supported in M4.
-    res = parse('object x { ip "h"; type ping; contact_on both; };\n')
-    assert res.roots[0].hostname == "h"
-    assert any("contact_on" in w and "isn't supported" in w for w in res.warnings)
+def test_contact_on_per_object():
+    res = parse('object x { ip "h"; type ping; contact_on down; };\n')
+    assert res.roots[0].contact_on == "down" and res.warnings == []
+
+
+def test_contact_on_invalid_value_warns_and_ignores():
+    res = parse('object x { ip "h"; type ping; contact_on sometimes; };\n')
+    assert res.roots[0].contact_on == ""  # left at default; object still loads
+    assert any("contact_on" in w for w in res.warnings)
+
+
+def test_contact_on_global_directive():
+    res = parse('config contact_on up;\nobject x { ip "h"; type ping; };\n')
+    assert res.overrides.get("contact_on") == "up"
+    res_bad = parse('config contact_on nope;\nobject x { ip "h"; type ping; };\n')
+    assert res_bad.overrides.get("contact_on") == "both"  # unknown -> falls back to both + warns
+    assert any("contact_on" in w for w in res_bad.warnings)
 
 
 def test_per_object_queuetime_rejects_non_finite():

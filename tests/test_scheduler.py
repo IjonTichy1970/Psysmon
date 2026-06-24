@@ -209,6 +209,83 @@ async def test_recovery_pages_once():
     assert st.contacted is False and st.lastcheck == Status.OK
 
 
+# --- contact_on (which transitions page) ----------------------------------------------
+
+async def test_contact_on_down_suppresses_recovery_page():
+    clock = ManualClock()
+    n = node("r", max_down=1)
+    n.contact_on = "down"
+    runner = ScriptedRunner({"r": Status.UNPINGABLE})
+    sched, notifier = make([n], runner, clock)
+    await tick_drain(sched)  # down -> DOWN page
+    assert notifier.count(PageIntent.DOWN) == 1
+    runner.codes["r"] = Status.OK
+    clock.advance(10)
+    await tick_drain(sched)  # recovers -> no recovery page (contact_on=down)
+    assert notifier.count(PageIntent.RECOVERY) == 0
+    assert state_of(sched, "r").contacted is False  # still cleared on recovery
+
+
+async def test_contact_on_up_pages_only_on_recovery():
+    clock = ManualClock()
+    n = node("r", max_down=1)
+    n.contact_on = "up"
+    runner = ScriptedRunner({"r": Status.UNPINGABLE})
+    sched, notifier = make([n], runner, clock)
+    await tick_drain(sched)  # down -> NO down page, but contacted so recovery can fire
+    assert notifier.count(PageIntent.DOWN) == 0
+    assert state_of(sched, "r").contacted is True
+    runner.codes["r"] = Status.OK
+    clock.advance(10)
+    await tick_drain(sched)  # recovers -> RECOVERY page
+    assert notifier.count(PageIntent.RECOVERY) == 1
+    assert state_of(sched, "r").contacted is False
+
+
+async def test_contact_on_none_never_pages():
+    clock = ManualClock()
+    n = node("r", max_down=1)
+    n.contact_on = "none"
+    runner = ScriptedRunner({"r": Status.UNPINGABLE})
+    sched, notifier = make([n], runner, clock)
+    await tick_drain(sched)  # down -> nothing, not contacted
+    assert notifier.sent == [] and state_of(sched, "r").contacted is False
+    runner.codes["r"] = Status.OK
+    clock.advance(10)
+    await tick_drain(sched)  # recovers -> still nothing
+    assert notifier.count(PageIntent.RECOVERY) == 0
+
+
+async def test_contact_on_down_still_repages():
+    clock = ManualClock()
+    n = node("r", max_down=1)
+    n.contact_on = "down"
+    runner = ScriptedRunner({"r": Status.UNPINGABLE})
+    sched, notifier = make([n], runner, clock)  # pageinterval 60s
+    await tick_drain(sched)
+    assert notifier.count(PageIntent.DOWN) == 1
+    clock.advance(61)
+    await tick_drain(sched)  # past the re-page interval, still down -> re-page (down is allowed)
+    assert notifier.count(PageIntent.DOWN) == 2
+
+
+async def test_contact_on_global_default_with_per_object_override():
+    clock = ManualClock()
+    glob = node("g", max_down=1)  # no per-object contact_on -> uses the global default
+    over = node("o", max_down=1)
+    over.contact_on = "both"  # overrides the global
+    runner = ScriptedRunner({"g": Status.UNPINGABLE, "o": Status.UNPINGABLE})
+    sched, notifier = make([glob, over], runner, clock, contact_on="down")  # global default down
+    await tick_drain(sched)  # both page on down
+    assert ("g", PageIntent.DOWN) in notifier.sent and ("o", PageIntent.DOWN) in notifier.sent
+    runner.codes["g"] = Status.OK
+    runner.codes["o"] = Status.OK
+    clock.advance(10)
+    await tick_drain(sched)  # recover: g (global down) -> no recovery; o (both) -> recovery
+    assert ("g", PageIntent.RECOVERY) not in notifier.sent
+    assert ("o", PageIntent.RECOVERY) in notifier.sent
+
+
 # --- dependency suppression -----------------------------------------------------------
 
 async def test_parent_down_freezes_children():

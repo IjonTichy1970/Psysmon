@@ -22,6 +22,7 @@ import argparse
 from dataclasses import dataclass, fields
 
 from psysmon import __version__
+from psysmon.config.model import CONTACT_ON_CHOICES
 
 
 @dataclass(slots=True)
@@ -50,6 +51,10 @@ class Settings:
     send_pings: int = 1  # echoes per ping check (global default; >1 enables loss tolerance)
     min_pings: int = 1  # replies required to count up; in between -> DEGRADED, 0 -> UNPINGABLE
     page_on_degraded: bool = False  # by default a DEGRADED result is informational, not paged
+
+    # Which transitions page (down | up | both | none); the global default, overridable per-object
+    # in the modern config. "both" preserves psysmon's historical page-on-down-and-recovery.
+    contact_on: str = "both"
 
     # DNS cache
     dnsexpire_s: int = 900
@@ -140,6 +145,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--page-on-degraded", dest="page_on_degraded", action="store_true",
         help="escalate/page on a degraded (partial-loss) ping (default: informational only)",
+    )
+    p.add_argument(
+        "--contact-on", dest="contact_on", choices=list(CONTACT_ON_CHOICES),
+        help="which transitions page: down | up | both | none (default both; per-object override)",
     )
 
     # DNS cache

@@ -193,6 +193,8 @@ class _Serializer:
             self._attr("contact", node.contact)
         if node.group:
             self._attr("group", node.group)
+        if node.contact_on:
+            self._attr("contact_on", node.contact_on)
         if node.max_down != self._seed:
             if node.max_down < 1:
                 self._warn(f"object '{name}': numfailures {node.max_down} < 1 is not representable "

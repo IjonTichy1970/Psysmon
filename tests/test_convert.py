@@ -26,7 +26,7 @@ def _canon(node) -> tuple:
     return (
         node.hostname, str(node.check_type), node.port, node.label, node.contact,
         node.username, node.password, node.url, node.url_text, node.max_down,
-        node.group, node.interval, node.send_pings, node.min_pings,
+        node.group, node.contact_on, node.interval, node.send_pings, node.min_pings,
         tuple(sorted(_canon(c) for c in node.children)),
     )
 

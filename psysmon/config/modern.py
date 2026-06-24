@@ -30,6 +30,7 @@ Lexical grammar (matches the 0.93 lexer's observable behavior):
 
 from __future__ import annotations
 
+import ipaddress
 import math
 import re
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ from enum import Enum, auto
 # and the legacy facility allow-list (the single source of valid syslog facilities). These are
 # format-neutral despite currently living in the legacy module — hoist to a shared module later.
 from psysmon.config.legacy import _FACILITIES, ParseError, ParseResult
-from psysmon.config.model import CONTACT_ON_CHOICES, DEFAULT_PORT, CheckType, Node
+from psysmon.config.model import CONTACT_ON_CHOICES, DEFAULT_PORT, SOURCE_AUTO, CheckType, Node
 
 # Characters that end a bareword (and are otherwise their own tokens or comment/string starts).
 _SPECIAL = set('"{}=;#')
@@ -192,12 +193,16 @@ _TYPE_KEYWORDS = {
 _DROPPED_TYPES = frozenset({"imap", "nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
 _DEFERRED_TYPES = frozenset({"ping6", "pingv6", "icmp6"})  # IPv6 ping -> #24
 # Object attributes the parser understands; anything else (a typo, or a not-yet-supported key)
-# warns and is ignored. Structural fields (M3) + per-object overrides (M4) + contact_on.
+# warns and is ignored. Structural fields (M3) + per-object overrides (M4) + contact_on + source.
 _OBJECT_ATTRS = frozenset({
     "ip", "type", "port", "desc", "contact", "url", "urltext", "username", "password",
     "dns-query", "dep",                                          # structural (M3)
     "queuetime", "send_pings", "min_pings", "numfailures", "group", "contact_on",  # overrides
+    "source",                                                    # outbound bind source (#70)
 })
+# Settings a `group "NAME" { ... }` block may carry (#70). Today just `source`; the block is a
+# scope so future per-group defaults slot in here. Unknown keys in a group block warn + ignore.
+_GROUP_ATTRS = frozenset({"source"})
 
 
 class _Parser:
@@ -220,12 +225,16 @@ class _Parser:
         # objects in declaration order + a name index; deps resolved into a forest at the end.
         self._objects: list[tuple[str, Node, str | None, int]] = []
         self._object_index: dict[str, Node] = {}
+        # per-group default settings from `group "NAME" { ... }` blocks (#70), resolved onto each
+        # member object's fields after all statements parse (so group/object order is free).
+        self._group_defaults: dict[str, dict[str, str]] = {}
         self.root_name: str | None = None
         self.root_line = 0
 
     def parse_top(self) -> ParseResult:
         while self._i < len(self._toks):
             self._statement()
+        self._resolve_group_sources()
         roots = self._build_forest()
         return ParseResult(roots=roots, overrides=self.overrides, warnings=self.warnings)
 
@@ -274,6 +283,9 @@ class _Parser:
         elif word == "object":
             self._i += 1
             self._object(tok.line)
+        elif word == "group":
+            self._i += 1
+            self._group(tok.line)
         elif word == "include":
             raise ParseError(
                 f"line {tok.line}: `include` isn't supported yet (a follow-up milestone, #3)"
@@ -434,22 +446,54 @@ class _Parser:
             self._warn(line, f"object '{name}' is missing '{{'; skipping")
             self._collect_to_semi()
             return
+        attrs, closed = self._collect_block_attrs(name, "object")
+        if not closed:
+            self._warn(line, f"object '{name}' is missing its closing '}}' (reached end of file)")
+        self._add_object(line, name, attrs)
+
+    def _group(self, line: int) -> None:
+        """Parse a top-level ``group "NAME" { attr value; ... };`` scope (#70).
+
+        Defines per-group default settings (currently just ``source``) inherited by objects that
+        join the group via the ``group "NAME"`` attribute. The per-object value always wins; group
+        defaults are applied after all statements parse, so group/object declaration order is free.
+        """
+        name = self._take_name()
+        if name is None:
+            self._warn(line, "group needs a name; skipping")
+            self._skip_block_or_semi()
+            return
+        name = name.strip()
+        if not self._take(TokenKind.LBRACE):
+            self._warn(line, f"group '{name}' is missing '{{'; skipping")
+            self._collect_to_semi()
+            return
+        attrs, closed = self._collect_block_attrs(name or "?", "group")
+        if not closed:
+            self._warn(line, f"group '{name}' is missing its closing '}}' (reached end of file)")
+        self._add_group(line, name, attrs)
+
+    def _collect_block_attrs(
+        self, name: str, kind: str
+    ) -> tuple[dict[str, tuple[int, list[Token]]], bool]:
+        """Collect ``key value;`` attrs inside a ``{ ... }`` body. Returns ``(attrs, closed)`` —
+        ``closed`` is True if a matching ``}`` was consumed (and an optional trailing ``;``), False
+        on EOF. Shared by ``object`` and ``group`` blocks (same body grammar)."""
         attrs: dict[str, tuple[int, list[Token]]] = {}
         while self._i < len(self._toks):
             tok = self._toks[self._i]
             if tok.kind is TokenKind.RBRACE:
                 self._i += 1
                 self._take(TokenKind.SEMI)  # optional trailing ';'
-                self._add_object(line, name, attrs)
-                return
+                return attrs, True
             if tok.kind is not TokenKind.WORD:
-                self._warn(tok.line, f"unexpected token in object '{name}'; skipping")
+                self._warn(tok.line, f"unexpected token in {kind} '{name}'; skipping")
                 self._collect_attr()
                 continue
             self._i += 1
             values = self._collect_attr()
             if values and values[0].kind is TokenKind.EQUALS:
-                values = values[1:]  # tolerate `key = value` (object attrs are `key value`)
+                values = values[1:]  # tolerate `key = value` (block attrs are `key value`)
             if len(values) > 1:
                 self._warn(tok.line, f"'{tok.value}' takes one value (missing ';'?)")
             if tok.value in attrs:
@@ -457,8 +501,7 @@ class _Parser:
                 self._warn(tok.line, f"duplicate '{tok.value}' in '{name}'; keeping the first")
             else:
                 attrs[tok.value] = (tok.line, values)
-        self._warn(line, f"object '{name}' is missing its closing '}}' (reached end of file)")
-        self._add_object(line, name, attrs)
+        return attrs, False
 
     def _take_word(self) -> str | None:
         if self._peek_kind() is TokenKind.WORD:
@@ -466,6 +509,21 @@ class _Parser:
             self._i += 1
             return value
         return None
+
+    def _take_name(self) -> str | None:
+        """Take the next token's value if it's a name (a quoted STRING or a bareword WORD)."""
+        if self._peek_kind() in (TokenKind.WORD, TokenKind.STRING):
+            value = self._toks[self._i].value
+            self._i += 1
+            return value
+        return None
+
+    def _skip_block_or_semi(self) -> None:
+        """Recover from a malformed block header: skip a ``{ ... }`` body or run to the ``;``."""
+        if self._peek_kind() is TokenKind.LBRACE:
+            self._skip_block()
+        else:
+            self._collect_to_semi()
 
     def _take(self, kind: TokenKind) -> bool:
         if self._peek_kind() is kind:
@@ -526,6 +584,40 @@ class _Parser:
             return
         self._object_index[name] = node
         self._objects.append((name, node, dep_name, line))
+
+    def _add_group(self, line: int, name: str, attrs: dict[str, tuple[int, list[Token]]]) -> None:
+        """Record a ``group "NAME" { ... }`` block's default settings (#70)."""
+        if not name:
+            self._warn(line, "group has an empty name; skipping")
+            return
+        resolved = {key: self._subst(kl, toks[0].value) if toks else "" for key, (kl, toks) in
+                    attrs.items()}
+        settings: dict[str, str] = {}
+        if "source" in resolved:
+            src = self._parse_source(line, f"group '{name}'", resolved["source"])
+            if src is not None:
+                settings["source"] = src
+        for key, (kl, _toks) in attrs.items():
+            if key not in _GROUP_ATTRS:
+                self._warn(kl, f"group '{name}': attribute '{key}' isn't supported yet; ignoring")
+        if name in self._group_defaults:
+            self._warn(line, f"duplicate group '{name}'; keeping the first")
+            return
+        self._group_defaults[name] = settings
+
+    def _parse_source(self, line: int, who: str, raw: str) -> str | None:
+        """Validate a ``source`` value: the literal ``auto`` (-> SOURCE_AUTO, stay unbound) or an IP
+        literal (the bind address). Anything else warns and is ignored (returns ``None``)."""
+        val = raw.strip()
+        if val.lower() == SOURCE_AUTO:
+            return SOURCE_AUTO
+        try:
+            ipaddress.ip_address(val)
+        except ValueError:
+            self._warn(line, f"{who}: source must be an IP address or 'auto', got '{raw}'; "
+                       "ignoring")
+            return None
+        return val
 
     def _build_node(
         self, line: int, name: str, attrs: dict[str, tuple[int, list[Token]]]
@@ -600,8 +692,9 @@ class _Parser:
 
         These map onto Node fields the engine already honors: ``queuetime``->``interval``
         (closes #23), ``send_pings``/``min_pings`` (validated; PingService also clamps at run
-        time), ``numfailures``->``max_down``, ``group`` (display use is #20), and ``contact_on``
-        (which transitions page; "" = use the global default).
+        time), ``numfailures``->``max_down``, ``group`` (display use is #20), ``contact_on``
+        (which transitions page; "" = use the global default), and ``source`` (the per-object
+        outbound bind address — an IP, or ``auto`` to stay unbound; #70).
         """
         if "queuetime" in resolved:
             interval = self._number(line, name, "queuetime", resolved["queuetime"], float)
@@ -624,6 +717,10 @@ class _Parser:
             else:
                 self._warn(line, f"object '{name}': contact_on must be one of "
                            f"{'/'.join(CONTACT_ON_CHOICES)}; ignoring")
+        if "source" in resolved:
+            src = self._parse_source(line, f"object '{name}'", resolved["source"])
+            if src is not None:
+                node.source = src  # wins over any group default (resolved later)
         self._apply_ping_counts(line, name, node, resolved)
 
     def _apply_ping_counts(
@@ -687,6 +784,17 @@ class _Parser:
         if type_kw in _DROPPED_TYPES:
             return f"object '{name}': check type '{type_kw}' is not supported; skipping"
         return f"object '{name}': invalid type '{type_kw}'; skipping"
+
+    def _resolve_group_sources(self) -> None:
+        """Inherit each object's ``source`` from its ``group`` block's default when the object set
+        none (#70). Per-object ``source`` (already on the node) wins; a group with no ``source``
+        default, or membership in a group with no block (a plain display label, #20), leaves the
+        object's source unset (it then falls back to the engine's per-type default)."""
+        for _name, node, _dep, _line in self._objects:
+            if node.source is None and node.group:
+                grp = self._group_defaults.get(node.group)
+                if grp and "source" in grp:
+                    node.source = grp["source"]
 
     def _build_forest(self) -> list[Node]:
         """Resolve single ``dep`` edges into the ``Node.children`` forest (multi-dep is #62)."""

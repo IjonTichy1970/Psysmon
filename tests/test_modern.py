@@ -6,7 +6,7 @@ import pytest
 
 from psysmon.config.detect import ConfigFormat, detect
 from psysmon.config.legacy import ParseError
-from psysmon.config.model import CheckType
+from psysmon.config.model import SOURCE_AUTO, CheckType
 from psysmon.config.modern import Token, TokenKind, parse, tokenize
 from psysmon.config.settings import merge
 
@@ -574,6 +574,125 @@ def test_per_object_invalid_ping_leg_drops_both():
     assert n.send_pings is None and n.min_pings is None
     res2 = parse('object y { ip "h"; type ping; send_pings nope; min_pings 2; };\n')
     assert res2.roots[0].send_pings is None and res2.roots[0].min_pings is None
+
+
+# --- #70: per-object `source` + `group { ... }` scope ---------------------------------
+
+def test_per_object_source_ip():
+    res = parse('object x { ip "h"; type ping; source "192.0.2.9"; };\n')
+    assert res.roots[0].source == "192.0.2.9" and res.warnings == []
+
+
+def test_per_object_source_auto():
+    res = parse('object x { ip "h"; type ping; source auto; };\n')
+    assert res.roots[0].source == SOURCE_AUTO and res.warnings == []
+
+
+def test_per_object_source_auto_is_case_insensitive():
+    assert parse('object x { ip "h"; type ping; source AUTO; };\n').roots[0].source == SOURCE_AUTO
+
+
+def test_per_object_source_invalid_warns_and_ignores():
+    res = parse('object x { ip "h"; type ping; source "not-an-ip"; };\n')
+    assert res.roots[0].source is None  # bad value ignored -> inherit default
+    assert any("source" in w for w in res.warnings)
+
+
+def test_source_attr_no_longer_warns_as_unknown():
+    res = parse('object x { ip "h"; type ping; source auto; };\n')
+    assert not any("isn't supported yet" in w for w in res.warnings)
+
+
+def test_source_via_variable_substitution():
+    res = parse('set S = "203.0.113.5";\nobject x { ip "h"; type ping; source $S; };\n')
+    assert res.roots[0].source == "203.0.113.5" and res.warnings == []
+
+
+def test_group_block_source_inherited():
+    res = parse(
+        'group "dmz" { source "192.0.2.9"; }\n'
+        'object x { ip "h"; type tcp; port 80; group "dmz"; };\n'
+    )
+    assert res.roots[0].source == "192.0.2.9" and res.warnings == []
+
+
+def test_group_block_source_auto_inherited():
+    res = parse(
+        'group "vpn" { source auto; }\n'
+        'object x { ip "h"; type ping; group "vpn"; };\n'
+    )
+    assert res.roots[0].source == SOURCE_AUTO
+
+
+def test_per_object_source_wins_over_group_default():
+    res = parse(
+        'group "dmz" { source "192.0.2.9"; }\n'
+        'object x { ip "h"; type smtp; port 25; group "dmz"; source "203.0.113.5"; };\n'
+    )
+    assert res.roots[0].source == "203.0.113.5"  # per-object wins
+
+
+def test_group_source_resolution_is_order_independent():
+    # An object declared BEFORE its group block still inherits (resolution is a deferred pass).
+    res = parse(
+        'object x { ip "h"; type ping; group "late"; };\n'
+        'group "late" { source "198.51.100.7"; }\n'
+    )
+    assert res.roots[0].source == "198.51.100.7"
+
+
+def test_object_in_group_without_block_has_no_source():
+    # `group "x"` with no matching group{} block stays a plain display label (#20); source unset.
+    res = parse('object x { ip "h"; type ping; group "display-only"; };\n')
+    assert res.roots[0].source is None and res.roots[0].group == "display-only"
+
+
+def test_group_block_unknown_attr_warns():
+    res = parse('group "g" { source auto; frobnicate 7; }\n')
+    assert any("frobnicate" in w and "isn't supported yet" in w for w in res.warnings)
+
+
+def test_group_block_invalid_source_warns_and_drops():
+    res = parse(
+        'group "g" { source "bogus"; }\n'
+        'object x { ip "h"; type ping; group "g"; };\n'
+    )
+    assert res.roots[0].source is None  # the bad group source was dropped
+    assert any("source" in w for w in res.warnings)
+
+
+def test_group_block_empty_is_harmless():
+    res = parse(
+        'group "g" { }\n'
+        'object x { ip "h"; type ping; group "g"; };\n'
+    )
+    assert res.roots[0].source is None and not any("group" in w for w in res.warnings)
+
+
+def test_duplicate_group_block_keeps_first():
+    res = parse(
+        'group "g" { source "192.0.2.1"; }\n'
+        'group "g" { source "192.0.2.2"; }\n'
+        'object x { ip "h"; type ping; group "g"; };\n'
+    )
+    assert res.roots[0].source == "192.0.2.1"  # first wins
+    assert any("duplicate group" in w for w in res.warnings)
+
+
+def test_group_block_missing_brace_recovers():
+    # A malformed group header must warn and not derail the following object.
+    res = parse(
+        'group "g" source "192.0.2.1";\n'
+        'object x { ip "h"; type ping; };\n'
+    )
+    assert any("group 'g' is missing" in w for w in res.warnings)
+    assert res.roots and res.roots[0].hostname == "h"  # the object still parsed
+
+
+def test_group_attribute_still_sets_display_label():
+    # The per-object `group "x"` membership attribute keeps working unchanged (#20).
+    res = parse('object x { ip "h"; type ping; group " core "; };\n')
+    assert res.roots[0].group == "core"  # trimmed, as before
 
 
 # --- detect() routes the modern grammar -----------------------------------------------

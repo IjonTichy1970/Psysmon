@@ -12,6 +12,11 @@ All notable changes to this project are documented here. The format is based on
   outages only (suppressing recovery pages), `up` pages only on recovery, `none` never pages, and
   `both` pages on both. The default is **`both`** — psysmon's existing behavior — so nothing
   changes unless you opt in.
+- **Object grouping on the status output** — an object's `group` (set via the modern config's
+  `group "..."` attribute) now drives the status views: the HTML "Bad Hosts" page lists objects
+  under per-group headings (with an "Ungrouped" bucket), and the JSON carries a `group` field per
+  host for dashboards to filter on. With no groups set, the page is unchanged
+  ([#20](https://github.com/IjonTichy1970/Psysmon/issues/20)).
 
 ## [0.2.1] — 2026-06-24 — psysmon-convert command + config-format docs + BOM fix
 

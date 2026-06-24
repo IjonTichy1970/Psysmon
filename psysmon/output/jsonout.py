@@ -24,6 +24,7 @@ def _host(node: Node, state: NodeState) -> dict:
         "port": node.port,
         "label": node.label,
         "contact": node.contact,
+        "group": node.group or None,  # operator grouping label (#20); null when unset
         "up": is_up(state.lastcheck),
         "degraded": state.lastcheck == Status.DEGRADED,  # reachable but lossy (#22)
         "status": int(state.lastcheck),

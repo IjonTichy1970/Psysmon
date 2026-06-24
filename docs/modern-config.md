@@ -147,7 +147,7 @@ These override the global defaults for a single object. An invalid value is warn
 | `queuetime` | seconds (> 0) | Per-object check interval — poll a critical host faster than the long tail |
 | `numfailures` | integer (≥ 1) | Per-object page threshold |
 | `send_pings` / `min_pings` | integers (≥ 1, `min ≤ send`) | Per-object loss-tolerant ping; an invalid pair falls back to the globals |
-| `group` | `"name"` | Operator grouping label (display use is a future feature) |
+| `group` | `"name"` | Operator grouping label — groups objects under headings on the status page and adds a `group` field to the JSON |
 | `contact_on` | `down` \| `up` \| `both` \| `none` | Which transitions page this object (overrides the global `config contact_on`; see below) |
 
 Any other attribute (a typo) is warned and ignored.

@@ -610,7 +610,7 @@ class _Parser:
             elif nf is not None:
                 node.max_down = nf
         if "group" in resolved:
-            node.group = resolved["group"]
+            node.group = resolved["group"].strip()  # blank/whitespace-only -> no group
         if "contact_on" in resolved:
             val = resolved["contact_on"]
             if val in CONTACT_ON_CHOICES:

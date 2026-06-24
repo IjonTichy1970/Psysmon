@@ -55,6 +55,9 @@ body { margin:0; background:var(--bg); color:var(--text);
 .bar .count.down { color:var(--down); }
 .bar .count.ok { color:var(--green); }
 .wrap { padding:0 26px 26px; }
+h2.group { margin:24px 0 8px; font-size:14px; text-transform:uppercase; letter-spacing:.6px;
+  color:var(--muted); }
+.wrap > table { margin-bottom:6px; }
 table { width:100%; border-collapse:collapse; background:var(--panel);
   border:1px solid var(--border); border-radius:10px; overflow:hidden; }
 th { text-align:left; font-size:12px; text-transform:uppercase; letter-spacing:.6px;
@@ -90,6 +93,25 @@ def _visible(node_states: NodeStates, show_up_also: bool) -> NodeStates:
     return out
 
 
+def _grouped(rows: NodeStates) -> list[tuple[str, NodeStates]]:
+    """Partition visible rows by ``Node.group`` (#20). With no groups in use, returns a single
+    unlabelled section so the page renders flat exactly as before; otherwise named groups come
+    first (alphabetical), then an "Ungrouped" bucket for objects with no group."""
+    buckets: dict[str, NodeStates] = {}
+    for node, state in rows:
+        buckets.setdefault(node.group, []).append((node, state))
+    if set(buckets) <= {""}:
+        return [("", rows)]
+    no_group = buckets.pop("", [])
+    if no_group and "Ungrouped" in buckets:
+        buckets["Ungrouped"].extend(no_group)  # operator already named a group "Ungrouped" -> merge
+        no_group = []
+    sections = [(g, buckets[g]) for g in sorted(buckets)]
+    if no_group:
+        sections.append(("Ungrouped", no_group))  # synthetic bucket for objects with no group, last
+    return sections
+
+
 def _esc(value: object) -> str:
     return html.escape(str(value))
 
@@ -122,9 +144,13 @@ def render_html(
     down = sum(1 for _, s in rows if not is_up(s.lastcheck))
 
     if rows:
-        body = "\n".join(_html_row(node, state, now_wall) for node, state in rows)
         headers = "".join(f"<th>{h}</th>" for h in _COLUMNS)
-        content = f'<div class="wrap"><table><tr>{headers}</tr>\n{body}\n</table></div>'
+        sections = []
+        for label, grp in _grouped(rows):
+            body = "\n".join(_html_row(node, state, now_wall) for node, state in grp)
+            heading = f'<h2 class="group">{_esc(label)}</h2>\n' if label else ""
+            sections.append(f"{heading}<table><tr>{headers}</tr>\n{body}\n</table>")
+        content = f'<div class="wrap">{"".join(sections)}</div>'
     else:
         content = (
             '<div class="wrap"><div class="ok-panel"><div class="big">✓</div>'
@@ -187,14 +213,17 @@ def render_text(
         f"{'Hostname':<28}{'Type':<8}{'Port':<6}{'Cnt':<5}{'Noti':<5}"
         f"{'Status':<16}{'Time Failed':<16}Last Outage",
     ]
-    for node, state in rows:
-        lines.append(
-            f"{node.hostname:<28}{type_to_name(node.check_type):<8}{_port(node):<6}"
-            f"{state.downct:<5}{'Yes' if state.contacted else 'No':<5}"
-            f"{errtostr(state.lastcheck):<16}"
-            f"{timefmt.clock_time(state.deathtime, never_if_zero=True):<16}"
-            f"{_last_outage(state, now_wall)}"
-        )
+    for label, grp in _grouped(rows):
+        if label:
+            lines.append(f"== {label} ==")
+        for node, state in grp:
+            lines.append(
+                f"{node.hostname:<28}{type_to_name(node.check_type):<8}{_port(node):<6}"
+                f"{state.downct:<5}{'Yes' if state.contacted else 'No':<5}"
+                f"{errtostr(state.lastcheck):<16}"
+                f"{timefmt.clock_time(state.deathtime, never_if_zero=True):<16}"
+                f"{_last_outage(state, now_wall)}"
+            )
     if not rows:
         lines.append("All systems operational.")
     return "\n".join(lines) + "\n"

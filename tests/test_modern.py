@@ -515,6 +515,12 @@ def test_per_object_invalid_override_values_warn_and_ignore():
     assert len(res.warnings) >= 3
 
 
+def test_group_whitespace_only_is_treated_as_no_group():
+    # A blank/whitespace-only group must not become a distinct, empty-looking section.
+    assert parse('object x { ip "h"; type ping; group "   "; };\n').roots[0].group == ""
+    assert parse('object x { ip "h"; type ping; group " core "; };\n').roots[0].group == "core"
+
+
 def test_contact_on_per_object():
     res = parse('object x { ip "h"; type ping; contact_on down; };\n')
     assert res.roots[0].contact_on == "down" and res.warnings == []

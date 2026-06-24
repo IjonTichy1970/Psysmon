@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-06-23 — state persistence + loss-tolerant ping
+
 ### Added
 - Loss-tolerant ping. `--send-pings N` / `--min-pings M` make a ping check send `N` echoes and
   require `M` replies to count the host up; with some-but-fewer-than-`M` replies it reports a new
@@ -171,7 +173,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.0...v0.1.1

@@ -351,3 +351,35 @@ def test_load_token_refuses_symlink(tmp_path):
     os.symlink(real, link)
     with pytest.raises(TokenError):
         load_token(str(link))  # O_NOFOLLOW refuses the symlink
+
+
+# --- psysmon-token generator (#69) -----------------------------------------------------
+
+def test_token_generate_writes_0600_and_loads_back(tmp_path):
+    from psysmon.control import token as tokmod
+
+    path = str(tmp_path / "tok")
+    value = tokmod.generate(path)
+    assert load_token(path) == value  # round-trips through the loader's safety checks
+    if os.name == "posix":
+        assert (os.stat(path).st_mode & 0o777) == 0o600
+
+
+def test_token_refuses_clobber_without_force(tmp_path):
+    from psysmon.control import token as tokmod
+
+    path = str(tmp_path / "tok")
+    first = tokmod.generate(path)
+    with pytest.raises(FileExistsError):
+        tokmod.generate(path)  # exists -> refuse
+    assert tokmod.main([path]) == 1  # the CLI reports it cleanly (exit 1)
+    assert load_token(path) == first  # original untouched
+    second = tokmod.generate(path, force=True)
+    assert second != first and load_token(path) == second  # --force rotates
+
+
+def test_token_main_prints_token_without_path(capsys):
+    from psysmon.control import token as tokmod
+
+    assert tokmod.main([]) == 0
+    assert len(capsys.readouterr().out.strip()) >= 20  # a real token printed to stdout

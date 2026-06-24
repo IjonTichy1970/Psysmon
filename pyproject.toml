@@ -41,6 +41,7 @@ Issues = "https://github.com/IjonTichy1970/Psysmon/issues"
 psysmon = "psysmon.__main__:main"
 psysmon-convert = "psysmon.config.convert:main"
 psysmonctl = "psysmon.control.client:main"
+psysmon-token = "psysmon.control.token:main"
 
 [tool.setuptools.packages.find]
 include = ["psysmon*"]

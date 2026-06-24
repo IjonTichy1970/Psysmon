@@ -11,7 +11,7 @@ import asyncio
 import logging
 from collections import Counter
 
-from psysmon.config.model import CheckType, Node
+from psysmon.config.model import SOURCE_AUTO, CheckType, Node
 from psysmon.config.settings import Settings
 from psysmon.engine.clock import ManualClock, SystemClock
 from psysmon.engine.scheduler import Scheduler
@@ -729,3 +729,57 @@ async def test_ping_bypasses_concurrency_cap():
 
     runner.release.set()
     await sched.drain()
+
+
+# --- #70: per-object / per-group source threaded into non-ping checks ------------------
+
+class _CtxRecorder:
+    """Records the ctx.source_ip each check received, keyed by hostname."""
+
+    def __init__(self):
+        self.seen: dict[str, str | None] = {}
+
+    async def __call__(self, node, ctx):
+        self.seen[node.hostname] = ctx.source_ip
+        return Status.OK
+
+
+def test_effective_source_resolution():
+    # Unit-test the resolver across the matrix (ping defaults unbound; others -> global source_ip;
+    # auto -> unbound; an explicit IP binds either family).
+    clock = ManualClock()
+    sched, _ = make([node("p", CheckType.PING)], ScriptedRunner(), clock, source_ip="192.0.2.1")
+    es = sched._effective_source
+
+    def n(ctype, source=None):
+        return Node(hostname="h", check_type=ctype, source=source)
+
+    assert es(n(CheckType.PING)) is None                          # ping unset -> unbound
+    assert es(n(CheckType.PING, SOURCE_AUTO)) is None             # ping auto -> unbound
+    assert es(n(CheckType.PING, "203.0.113.5")) == "203.0.113.5"  # ping explicit IP -> bind
+    assert es(n(CheckType.TCP)) == "192.0.2.1"                    # others -> global source_ip
+    assert es(n(CheckType.TCP, SOURCE_AUTO)) is None              # auto opts out of the global
+    assert es(n(CheckType.TCP, "203.0.113.9")) == "203.0.113.9"   # explicit IP wins
+
+
+async def test_per_node_source_threaded_into_non_ping_ctx():
+    clock = ManualClock()
+    rec = _CtxRecorder()
+    roots = [
+        Node(hostname="bound", check_type=CheckType.TCP, port=80, source="203.0.113.5"),
+        Node(hostname="free", check_type=CheckType.TCP, port=80, source=SOURCE_AUTO),
+        Node(hostname="default", check_type=CheckType.TCP, port=80),
+    ]
+    sched, _ = make(roots, rec, clock, source_ip="192.0.2.1")
+    await tick_drain(sched)
+    assert rec.seen["bound"] == "203.0.113.5"  # per-object IP binds
+    assert rec.seen["free"] is None            # auto -> unbound despite the global source_ip
+    assert rec.seen["default"] == "192.0.2.1"  # inherits the global source_ip
+
+
+async def test_no_global_source_leaves_non_ping_unbound():
+    clock = ManualClock()
+    rec = _CtxRecorder()
+    sched, _ = make([Node(hostname="d", check_type=CheckType.TCP, port=80)], rec, clock)
+    await tick_drain(sched)
+    assert rec.seen["d"] is None  # no global source_ip set -> unbound

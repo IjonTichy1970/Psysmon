@@ -34,11 +34,11 @@ import asyncio
 import heapq
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from psysmon.checks import base, dns, http, pop3, smtp, tcp, udp
 from psysmon.checks.ping import PingService
-from psysmon.config.model import CheckType, Node, NodeState, type_to_name
+from psysmon.config.model import SOURCE_AUTO, CheckType, Node, NodeState, type_to_name
 from psysmon.config.settings import Settings
 from psysmon.engine.clock import Clock, SystemClock
 from psysmon.engine.dnscache import DnsCache
@@ -141,6 +141,7 @@ class _Scheduled:
     state: NodeState
     gate: list[_Scheduled]  # ancestor ping nodes; all must be checked-and-up to run
     interval: float
+    source: str | None = None  # resolved outbound bind source (#70); None = unbound
     next_due: float = 0.0
     in_flight: bool = False
     checked: bool = False  # has completed at least one (non-discarded) check
@@ -209,6 +210,7 @@ class Scheduler:
                 state=state,
                 gate=list(gate),
                 interval=max(node.interval or self._default_interval, _MIN_INTERVAL_S),
+                source=self._effective_source(node),
             )
             scheduled.append(sched)
             is_ping = node.check_type is CheckType.PING
@@ -321,6 +323,31 @@ class Scheduler:
 
     # --- check execution + paging -----------------------------------------------------
 
+    def _effective_source(self, node: Node) -> str | None:
+        """Resolve a node's outbound bind source (#70): the per-object/group token on
+        ``node.source``, else the per-type default. Returns the local IP to bind, or ``None`` to
+        leave the check unbound (the kernel routes by destination).
+
+        ``auto`` -> unbound; an explicit IP -> bind (ping and connection checks alike); unset ->
+        ping defaults unbound (ignoring the global ``source_ip``), every other check defaults to
+        the global ``source_ip``.
+        """
+        tok = node.source
+        if tok == SOURCE_AUTO:
+            return None
+        if tok:
+            return tok
+        if node.check_type is CheckType.PING:
+            return None
+        return self._settings.source_ip
+
+    def _ctx_for(self, sched: _Scheduled) -> base.CheckContext:
+        """The CheckContext for a non-ping check — the shared default unless this node resolved to
+        a different outbound source (#70). Reused unchanged in the common (global-source) case."""
+        if sched.source == self._ctx.source_ip:
+            return self._ctx
+        return replace(self._ctx, source_ip=sched.source)
+
     async def _default_runner(self, node: Node, ctx: base.CheckContext) -> int:
         if node.check_type is CheckType.PING:
             return await self._ping.check(node, ctx)
@@ -337,7 +364,7 @@ class Scheduler:
                     # Start timing only after acquiring the slot: a check that merely queued
                     # behind the concurrency cap shouldn't read as "ran for N seconds".
                     started = self._clock.monotonic()
-                    code = await self._runner(node, self._ctx)
+                    code = await self._runner(node, self._ctx_for(sched))
             elapsed = self._clock.monotonic() - started
             if self._slow_check_s > 0 and elapsed >= self._slow_check_s:
                 logger.info("Check of %s of %s ran for %.1f seconds",

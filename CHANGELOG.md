@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-23 — modern object{} config format + converter
+
 ### Added
 - **Modern `object{}` config format** (the sysmon 0.93 grammar), opt-in alongside the legacy
   positional `sysmon.conf` — the format is auto-detected per file, so existing configs keep
@@ -192,7 +194,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/IjonTichy1970/Psysmon/compare/v0.1.1...v0.1.2

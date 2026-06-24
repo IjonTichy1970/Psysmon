@@ -48,14 +48,29 @@ class Transition:
     state_changed: bool
 
 
-def apply_result(state: NodeState, result: int, now_wall: float) -> Transition:
+def apply_result(
+    state: NodeState, result: int, now_wall: float, *, page_on_degraded: bool = False
+) -> Transition:
     """Apply a check ``result`` to ``state`` in place and return the page intent.
 
     ``now_wall`` is wall-clock time (for the displayed outage/recovery timestamps). See the
     module docstring for the transition table and the ``contacted`` contract.
+
+    ``page_on_degraded`` (#22): a loss-tolerant ping can return ``DEGRADED`` (reachable but
+    lossy). By default that is an informational soft condition — surfaced for display but never
+    escalated, paged, or allowed to reset an existing outage's counters. With
+    ``page_on_degraded`` set, ``DEGRADED`` instead flows through the normal down-escalation below
+    and pages like any other error.
     """
     before = (state.lastcheck, state.downct, state.contacted, state.deathtime)
     intent = PageIntent.NONE
+
+    if result == Status.DEGRADED and not page_on_degraded:
+        # Informational: reflect the degraded code for display, but leave downct/contacted/
+        # deathtime untouched so a soft blip neither starts an outage nor clears/disturbs one.
+        state.lastcheck = Status.DEGRADED
+        after = (state.lastcheck, state.downct, state.contacted, state.deathtime)
+        return Transition(intent=PageIntent.NONE, state_changed=before != after)
 
     if result == Status.NO_DNS:
         # DNS failure: record the outage but never page (the monitor's own resolver hiccup

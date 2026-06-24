@@ -82,6 +82,11 @@ class Node:
     url_text: str = ""  # substring that must appear in the http/https body
     max_down: int = 2  # numfailures in effect when parsed (position-dependent)
     interval: float | None = None  # per-host check interval; None = use global default
+    # Loss-tolerant ping (#22): send this many echoes, require this many replies to count up.
+    # None = use the global default (1/1, i.e. today's first-reply-wins behavior). The legacy
+    # positional grammar has no slot for these, so they arrive only via CLI/global config today.
+    send_pings: int | None = None
+    min_pings: int | None = None
     children: list[Node] = field(default_factory=list)
 
 

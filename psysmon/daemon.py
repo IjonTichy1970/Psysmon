@@ -18,6 +18,7 @@ import logging.handlers
 import os
 import signal
 import sys
+import time
 from pathlib import Path
 
 from psysmon.checks.ping import PingService
@@ -26,6 +27,7 @@ from psysmon.config.legacy import parse as parse_legacy
 from psysmon.config.model import CheckType, Node
 from psysmon.config.settings import Settings, cli_overrides, merge
 from psysmon.engine.scheduler import Scheduler
+from psysmon.engine.statestore import StateStore
 from psysmon.notify.email_smtp import SmtpNotifier
 from psysmon.output.statuspage import render_and_publish
 from psysmon.status import is_up
@@ -58,11 +60,44 @@ def build(argv: list[str] | None = None) -> tuple[Scheduler, Settings]:
         logger.warning("config: %s", warning)
     settings = merge(overrides, cli)  # CLI > config file > defaults
     notifier = SmtpNotifier(settings) if settings.notify_enabled else None
-    ping = PingService(settings.source_ip)
+    # PingService validates the loss-tolerance pair, so a bad --send-pings/--min-pings is a clean
+    # startup error (main() catches ValueError) rather than a per-check failure (#22).
+    ping = PingService(
+        settings.source_ip, send_pings=settings.send_pings, min_pings=settings.min_pings
+    )
     scheduler = Scheduler(roots, settings, ping_service=ping, notifier=notifier)
     for warning in scheduler.warnings:
         logger.warning("schedule: %s", warning)
+    _restore_state(scheduler, settings)
     return scheduler, settings
+
+
+def _restore_state(scheduler: Scheduler, settings: Settings) -> None:
+    """Merge persisted runtime state into the freshly-built node set, before the first sweep.
+
+    No-op when persistence is disabled or the state file is missing/stale/unreadable (the store
+    logs and returns nothing in those cases), so the daemon starts clean rather than crashing on
+    a bad file. Restoring before scheduling is what suppresses duplicate DOWN pages after a
+    restart (see :meth:`Scheduler.import_state`).
+    """
+    if not settings.state_path:
+        return
+    store = StateStore(settings.state_path, max_age_s=settings.state_max_age_s)
+    try:
+        records = store.load(now_wall=time.time())
+        if not records:
+            return
+        matched = scheduler.import_state(records)
+    except Exception:
+        # State restore must never block startup: a bad file is a degraded-monitoring nuisance,
+        # not a reason to refuse to run. The store/import already degrade internally; this is a
+        # last-resort backstop so any unforeseen error still starts the daemon fresh.
+        logger.exception("could not restore state from %s; starting fresh", settings.state_path)
+        return
+    logger.info(
+        "restored monitoring state for %d of %d nodes from %s",
+        matched, len(scheduler.node_states()), settings.state_path,
+    )
 
 
 async def _render_loop(scheduler: Scheduler, settings: Settings) -> None:
@@ -137,6 +172,11 @@ async def _periodic(interval: float, fn, *args) -> None:
             logger.exception("periodic logging task failed")
 
 
+def _save_state(scheduler: Scheduler, store: StateStore) -> None:
+    """Flush the scheduler's carried node state to the state file (periodic + on shutdown, #21)."""
+    store.save(scheduler.export_state(), now_wall=time.time())
+
+
 def _install_signals(loop: asyncio.AbstractEventLoop, scheduler: Scheduler,
                      reload_flag: asyncio.Event) -> None:
     def add(sig: int, callback) -> None:
@@ -160,6 +200,11 @@ async def serve(scheduler: Scheduler, settings: Settings) -> None:
     reload_flag = asyncio.Event()
     _install_signals(loop, scheduler, reload_flag)
 
+    store = (
+        StateStore(settings.state_path, max_age_s=settings.state_max_age_s)
+        if settings.state_path else None
+    )
+
     run_task = asyncio.create_task(scheduler.run())
     helpers = [
         asyncio.create_task(_render_loop(scheduler, settings)),
@@ -167,12 +212,20 @@ async def serve(scheduler: Scheduler, settings: Settings) -> None:
         asyncio.create_task(_periodic(settings.dnslog_s, _log_dns_stats, scheduler)),
         asyncio.create_task(_periodic(settings.heartbeat_s, _log_heartbeat, scheduler)),
     ]
+    if store is not None:
+        helpers.append(asyncio.create_task(_periodic(settings.statesave_s, _save_state,
+                                                     scheduler, store)))
     try:
         await run_task  # returns once scheduler.stop() is called (it drains in-flight checks)
     finally:
         for task in helpers:
             task.cancel()
         await asyncio.gather(*helpers, return_exceptions=True)
+        if store is not None:
+            try:
+                _save_state(scheduler, store)  # final flush so a graceful stop loses nothing
+            except OSError:
+                logger.exception("final state save failed")
         if settings.status_path:
             try:
                 render_and_publish(scheduler.node_states(), settings)  # final snapshot

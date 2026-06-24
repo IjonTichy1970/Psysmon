@@ -146,3 +146,17 @@ def test_log_level_invalid_choice_errors():
 def test_new_logging_knobs_parse():
     assert cli_overrides(["--heartbeat", "60"]) == {"heartbeat_s": 60}
     assert cli_overrides(["--slow-check", "5"]) == {"slow_check_s": 5.0}
+
+
+def test_state_persistence_flags_parse():
+    assert cli_overrides(["--state-file", "/tmp/s.json"]) == {"state_path": "/tmp/s.json"}
+    assert cli_overrides(["--state-save-interval", "30"]) == {"statesave_s": 30}
+    assert cli_overrides(["--state-max-age", "0"]) == {"state_max_age_s": 0}
+
+
+def test_loss_tolerant_ping_flags_parse():
+    assert cli_overrides(["--send-pings", "5"]) == {"send_pings": 5}
+    assert cli_overrides(["--min-pings", "3"]) == {"min_pings": 3}
+    assert cli_overrides(["--page-on-degraded"]) == {"page_on_degraded": True}
+    # absent -> not overridden (default False stands)
+    assert "page_on_degraded" not in cli_overrides([])

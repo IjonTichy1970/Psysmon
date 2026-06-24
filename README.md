@@ -57,6 +57,7 @@ Nesting (`{ }` in the config) encodes "reachable only if the parent is up."
 config statusfile html /var/www/psysmon/status.html
 config pageinterval 18        ; minutes between re-pages while down
 config numfailures 5          ; consecutive failures before alerting
+config savestate "/var/lib/psysmon/state.json"   ; remember up/down across restarts (optional)
 
 router.example.net ping router.example.net noc@example.net {
     web.example.net ping web.example.net noc@example.net {

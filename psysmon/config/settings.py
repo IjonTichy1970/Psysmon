@@ -46,9 +46,19 @@ class Settings:
     pageinterval_min: int = 10  # re-page interval while down (minutes)
     slow_check_s: float = 30.0  # log any check that runs at least this long (0 disables)
 
+    # Loss-tolerant ping (#22). Defaults 1/1 = today's first-reply-wins behavior, unchanged.
+    send_pings: int = 1  # echoes per ping check (global default; >1 enables loss tolerance)
+    min_pings: int = 1  # replies required to count up; in between -> DEGRADED, 0 -> UNPINGABLE
+    page_on_degraded: bool = False  # by default a DEGRADED result is informational, not paged
+
     # DNS cache
     dnsexpire_s: int = 900
     dnslog_s: int = 600
+
+    # State persistence (savestate, #21) — survive restarts/upgrades without re-paging
+    state_path: str | None = None  # None disables on-disk persistence (set by `config savestate`)
+    statesave_s: int = 60  # periodic flush interval (bounds loss on an ungraceful exit; 0 = off)
+    state_max_age_s: int = 86400  # ignore a state file older than this on load (0 disables)
 
     # Alerting (SMTP)
     smtp_host: str = "localhost"
@@ -119,10 +129,36 @@ def build_parser() -> argparse.ArgumentParser:
         "--slow-check", dest="slow_check_s", type=float, metavar="SEC",
         help="log any check running at least this long (0 disables)",
     )
+    p.add_argument(
+        "--send-pings", dest="send_pings", type=int, metavar="N",
+        help="echoes per ping check (loss-tolerant ping; default 1)",
+    )
+    p.add_argument(
+        "--min-pings", dest="min_pings", type=int, metavar="N",
+        help="replies required to count a host up (default 1; fewer non-zero -> degraded)",
+    )
+    p.add_argument(
+        "--page-on-degraded", dest="page_on_degraded", action="store_true",
+        help="escalate/page on a degraded (partial-loss) ping (default: informational only)",
+    )
 
     # DNS cache
     p.add_argument("--dnsexpire", dest="dnsexpire_s", type=int, metavar="SEC", help="DNS cache TTL")
     p.add_argument("--dnslog", dest="dnslog_s", type=int, metavar="SEC", help="DNS stats interval")
+
+    # State persistence
+    p.add_argument(
+        "--state-file", dest="state_path", metavar="PATH",
+        help="persist monitoring state here to survive restarts (off when unset)",
+    )
+    p.add_argument(
+        "--state-save-interval", dest="statesave_s", type=int, metavar="SEC",
+        help="how often to flush the state file (0 saves only on shutdown)",
+    )
+    p.add_argument(
+        "--state-max-age", dest="state_max_age_s", type=int, metavar="SEC",
+        help="ignore a state file older than this on load (0 disables the check)",
+    )
 
     # Alerting
     p.add_argument("--smtp-host", dest="smtp_host", metavar="HOST", help="SMTP server host")

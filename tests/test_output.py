@@ -33,7 +33,7 @@ def ns(host, ctype=CheckType.PING, lastcheck=Status.OK, *, port=0, downct=0, con
 
 
 def html_for(states, **kw):
-    opts = dict(org_hostname="qiclab", refresh_s=30, show_up_also=False,
+    opts = dict(org_hostname="mon.example.net", refresh_s=30, show_up_also=False,
                 logo_url="psysmon-logo.png", now_wall=NOW)
     opts.update(kw)
     return render_html(states, **opts)
@@ -54,7 +54,7 @@ def test_html_shows_down_hides_up_and_suppressed():
     assert "hidden.net" not in h   # suppressed always hidden
     assert 'src="psysmon-logo.png"' in h
     assert 'http-equiv="refresh" content="30"' in h
-    assert "qiclab" in h
+    assert "mon.example.net" in h
     assert "Unpingable" in h
     assert "host down" in h
 
@@ -67,6 +67,15 @@ def test_html_show_up_also():
 def test_html_all_operational_when_none_down():
     h = html_for([ns("up.net", CheckType.TCP, Status.OK)])
     assert "All systems operational" in h
+
+
+def test_html_degraded_row_uses_its_own_badge():
+    # A degraded (loss-tolerant ping, #22) node is not up, so it shows on the down-only page —
+    # but with its own badge class, not the red "down" one.
+    h = html_for([ns("lossy.net", CheckType.PING, Status.DEGRADED, last_up=NOW - 50)])
+    assert "lossy.net" in h
+    assert "badge degraded" in h
+    assert ">Degraded<" in h
 
 
 def test_html_escapes_hostname():
@@ -359,6 +368,18 @@ def test_json_includes_all_nodes_with_suppressed_flag():
     assert hosts["down.net"]["status_text"] == "Unpingable"
 
 
+def test_json_marks_degraded_node():
+    states = [
+        ns("lossy.net", CheckType.PING, Status.DEGRADED),
+        ns("up.net", CheckType.TCP, Status.OK, port=22),
+    ]
+    hosts = {h["hostname"]: h for h in json.loads(to_json(states, now_wall=NOW))["hosts"]}
+    assert hosts["lossy.net"]["degraded"] is True and hosts["lossy.net"]["up"] is False
+    assert hosts["lossy.net"]["status"] == int(Status.DEGRADED)
+    assert hosts["lossy.net"]["status_text"] == "Degraded"
+    assert hosts["up.net"]["degraded"] is False
+
+
 def test_json_down_count_excludes_suppressed_and_up():
     """`down` counts only nodes that are down AND not suppressed; up + suppressed don't count."""
     states = [
@@ -407,7 +428,7 @@ async def test_scheduler_states_render(tmp_path):
     s = Settings()
     s.interval_s = 10
     s.status_path = str(tmp_path / "out.html")
-    s.org_hostname = "qiclab"
+    s.org_hostname = "mon.example.net"
     node = Node(hostname="rtr", check_type=CheckType.PING, max_down=1)
     sched = Scheduler([node], s, clock=clock, runner=runner, stagger=False)
     await sched.tick()

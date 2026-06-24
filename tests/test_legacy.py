@@ -247,6 +247,15 @@ def test_config_heartbeat():
     assert parse("config heartbeat 120\n").overrides["heartbeat_s"] == 120
 
 
+def test_config_savestate():
+    # The legacy directive takes a (optionally quoted) path; surrounding quotes are stripped.
+    assert (parse('config savestate "/var/lib/psysmon/state.json"\n').overrides["state_path"]
+            == "/var/lib/psysmon/state.json")
+    assert parse("config savestate /tmp/state.json\n").overrides["state_path"] == "/tmp/state.json"
+    # A bare directive with no path needs >= 3 tokens, so it is skipped, not stored empty.
+    assert "state_path" not in parse("config savestate\n").overrides
+
+
 # --- format detection -----------------------------------------------------------------
 
 def test_detect_legacy(sample_config_text):

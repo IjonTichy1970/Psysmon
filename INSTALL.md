@@ -61,6 +61,8 @@ PSYSMON reads `/etc/psysmon.conf` by default (override with `-f/--config`). It u
 config statusfile html /var/www/psysmon/status.html
 config pageinterval 18        ; minutes between re-pages while a host stays down
 config numfailures 5          ; consecutive failures before alerting
+# optional: persist up/down state so a restart/upgrade doesn't re-page known outages
+config savestate "/var/lib/psysmon/state.json"
 
 # a router, and a couple of things that depend on it being reachable
 core-router.example.net ping core-router.example.net noc@example.net {
@@ -91,6 +93,11 @@ If you publish the HTML status page, the daemon automatically places its logo ne
 file on first publish (the page references it by a relative path), so there's nothing to copy. To
 use your own logo instead, drop a `psysmon-logo.png` into the status-file's directory beforehand —
 the daemon won't overwrite an existing one.
+
+A few other useful flags: `--state-file <path>` (or `config savestate "<path>"`) persists up/down
+state so a restart or upgrade doesn't re-page known outages; `--send-pings N --min-pings M` turn
+ping into a loss-tolerant check that reports a distinct *Degraded* status on partial packet loss
+instead of flapping (add `--page-on-degraded` to alert on it; the default 1/1 is unchanged).
 
 ## 4. Run
 

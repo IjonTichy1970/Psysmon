@@ -247,6 +247,41 @@ async def test_child_resumes_when_parent_recovers():
     assert runner.calls["c"] >= 1
 
 
+async def test_degraded_parent_does_not_suppress_children():
+    # A loss-tolerant ping that returns DEGRADED is still reachable: a lossy router forwards, so
+    # its children must keep being checked — suppressing them would mask real outages behind it.
+    clock = ManualClock()
+    child = node("c", CheckType.TCP)
+    parent = node("p", CheckType.PING, children=[child], max_down=1)
+    runner = ScriptedRunner({"p": Status.DEGRADED, "c": Status.UNPINGABLE})
+    sched, _ = make([parent], runner, clock)
+
+    await tick_drain(sched)  # parent checked -> degraded (reachable); child becomes eligible
+    clock.advance(10)
+    await tick_drain(sched)  # child gets checked behind the degraded-but-reachable parent
+
+    assert runner.calls["c"] >= 1
+    assert state_of(sched, "p").lastcheck == Status.DEGRADED
+    assert state_of(sched, "c").suppressed is False
+
+
+async def test_degraded_does_not_page_by_default_through_scheduler():
+    clock = ManualClock()
+    runner = ScriptedRunner({"r": Status.DEGRADED})
+    sched, notifier = make([node("r", max_down=1)], runner, clock)  # page_on_degraded default off
+    await tick_drain(sched)
+    assert notifier.count(PageIntent.DOWN) == 0  # informational by default — no page
+    assert state_of(sched, "r").lastcheck == Status.DEGRADED
+
+
+async def test_page_on_degraded_setting_escalates_through_scheduler():
+    clock = ManualClock()
+    runner = ScriptedRunner({"r": Status.DEGRADED})
+    sched, notifier = make([node("r", max_down=1)], runner, clock, page_on_degraded=True)
+    await tick_drain(sched)  # the setting routes DEGRADED through normal escalation -> page
+    assert notifier.count(PageIntent.DOWN) == 1
+
+
 async def test_unreachable_behind_non_ping_is_not_scheduled():
     # A child behind a non-ping (tcp) parent can never be reached in the original's model.
     child = node("c", CheckType.TCP)

@@ -10,6 +10,7 @@ from psysmon.status import Status
 
 PING_DOWN = int(Status.UNPINGABLE)  # 6
 CONN_REF = int(Status.CONN_REFUSED)  # 1
+DEGRADED = int(Status.DEGRADED)  # 14
 
 
 def st(**kw) -> NodeState:
@@ -110,6 +111,48 @@ def test_nodns_persisting_is_noop():
     t = apply_result(s, Status.NO_DNS, now_wall=999.0)
     assert s.deathtime == 50.0  # not reset while persisting
     assert not t.state_changed
+
+
+# --- DEGRADED (loss-tolerant ping, #22) -----------------------------------------------
+
+def test_degraded_display_only_does_not_page_or_disturb_counters():
+    # By default a DEGRADED reading is informational: reflect it for display, but leave
+    # downct/contacted/deathtime alone so a soft blip neither starts nor clears an outage.
+    s = st(max_down=2, lastcheck=Status.OK, downct=0, contacted=False)
+    t = apply_result(s, DEGRADED, now_wall=100.0)
+    assert s.lastcheck == DEGRADED
+    assert s.downct == 0 and s.contacted is False and s.deathtime == 0.0
+    assert t.intent is PageIntent.NONE
+    assert t.state_changed  # the display flipped OK -> Degraded
+
+
+def test_degraded_does_not_disturb_an_existing_outage():
+    s = st(max_down=2, lastcheck=PING_DOWN, downct=5, contacted=True, deathtime=10.0)
+    t = apply_result(s, DEGRADED, now_wall=200.0)
+    assert s.lastcheck == DEGRADED  # shown as degraded now ...
+    assert s.downct == 5 and s.contacted is True and s.deathtime == 10.0  # ... but outage intact
+    assert t.intent is PageIntent.NONE
+
+
+def test_degraded_then_up_no_spurious_recovery():
+    # Degraded was never paged, so coming up fully must not emit a recovery page.
+    s = st(max_down=2, lastcheck=DEGRADED, downct=0, contacted=False)
+    t = apply_result(s, Status.OK, now_wall=300.0)
+    assert s.lastcheck == Status.OK
+    assert t.intent is PageIntent.NONE
+
+
+def test_degraded_pages_when_page_on_degraded_enabled():
+    s = st(max_down=1, lastcheck=Status.OK, downct=0, contacted=False)
+    t = apply_result(s, DEGRADED, now_wall=1.0, page_on_degraded=True)
+    assert s.lastcheck == DEGRADED and s.downct == 1
+    assert t.intent is PageIntent.DOWN  # escalates like any error at max_down=1
+
+
+def test_degraded_escalates_over_threshold_when_paging_enabled():
+    s = st(max_down=2, lastcheck=DEGRADED, downct=1, contacted=False)
+    t = apply_result(s, DEGRADED, now_wall=2.0, page_on_degraded=True)
+    assert s.downct == 2 and t.intent is PageIntent.DOWN  # same-error escalation to threshold
 
 
 # --- re-page timer --------------------------------------------------------------------

@@ -130,11 +130,13 @@ async def test_no_response_when_dropped_at_pass(check_ctx, tcp_server):
     assert seen[1] == b"PASS secret\r\n"  # PASS was sent; the server just never answered
 
 
-async def test_bad_greeting_no_response(check_ctx, tcp_server):
+async def test_malformed_greeting_bad_response(check_ctx, tcp_server):
+    # A non-+OK greeting (the server responded, but not "ready") is BAD_RESPONSE — parity with
+    # the SMTP check and the USER/PASS taxonomy (#55). The empty-greeting case stays NO_RESPONSE.
     handler, _ = make_pop3_handler(b"+OK", greeting=b"-ERR not ready\r\n")
     port = await tcp_server(handler)
 
-    assert await check(node(port=port), check_ctx) == Status.NO_RESPONSE
+    assert await check(node(port=port), check_ctx) == Status.BAD_RESPONSE
 
 
 async def test_no_greeting_no_response(check_ctx, tcp_server):

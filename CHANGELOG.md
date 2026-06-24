@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Loss-tolerant ping. `--send-pings N` / `--min-pings M` make a ping check send `N` echoes and
+  require `M` replies to count the host up; with some-but-fewer-than-`M` replies it reports a new
+  `Degraded` status (reachable but lossy) instead of flapping between up and `Unpingable`, and
+  zero replies still reads `Unpingable`. The defaults (1/1) are exactly the previous
+  first-reply-wins behavior, so nothing changes unless you opt in. A degraded host shows with its
+  own badge on the status page, does **not** suppress the things behind it (a lossy router still
+  forwards), and is informational by default — `--page-on-degraded` makes it page like a normal
+  outage ([#22](https://github.com/IjonTichy1970/Psysmon/issues/22)).
+- Optional on-disk persistence of live monitoring state, so a restart or software upgrade no
+  longer forgets what was already down and re-pages outages the operator already knows about.
+  Enable it with `config savestate "<path>"` or `--state-file <path>` (off when unset); the file
+  is written atomically on a periodic flush (`--state-save-interval`, default 60s) and on a
+  graceful stop, and merged back in on startup by `(hostname, type, port)`. A node that was DOWN
+  and already paged stays that way without re-paging; the re-page timer restarts fresh. A
+  missing, unreadable, wrong-schema, or stale (`--state-max-age`, default 24h) file is ignored
+  with a log line and the daemon starts clean
+  ([#21](https://github.com/IjonTichy1970/Psysmon/issues/21)).
+
+### Fixed
+- A POP3 server that answers the initial greeting with a non-`+OK` line (e.g. an `-ERR`
+  "temporarily unavailable") is now reported as `Bad Resp` rather than `No Srvr Resp`, matching
+  the SMTP check and the `USER`/`PASS` reply handling — a server that *responded* is no longer
+  labelled silent. An empty/dropped greeting still reports `No Srvr Resp`
+  ([#55](https://github.com/IjonTichy1970/Psysmon/issues/55)).
+
 ## [0.1.3] — 2026-06-23 — logo auto-deploy + operational logging
 
 ### Added

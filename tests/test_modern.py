@@ -7,6 +7,7 @@ import pytest
 from psysmon.config.detect import ConfigFormat, detect
 from psysmon.config.legacy import ParseError
 from psysmon.config.modern import Token, TokenKind, parse, tokenize
+from psysmon.config.settings import merge
 
 
 def kinds(text: str) -> list[TokenKind]:
@@ -141,12 +142,12 @@ def test_parse_comment_only_is_clean_empty_result():
     assert res.roots == [] and res.overrides == {} and res.warnings == []
 
 
-def test_parse_real_config_refused_until_implemented():
-    # Until M2+ interprets directives/objects, a real modern file is REFUSED (fail loud) rather
-    # than loaded as an empty monitor — so a daemon never silently watches nothing.
+def test_parse_objects_refused_until_m3():
+    # Globals parse now (M2), but the monitored graph (root/object) is refused until M3 — fail
+    # loud rather than load a daemon that monitors nothing.
     with pytest.raises(ParseError) as exc:
         parse('root = "gw";\nobject gw {\n  ip "192.0.2.1";\n  type ping;\n};\n')
-    assert "not yet implemented" in str(exc.value)
+    assert "aren't parsed yet" in str(exc.value)
 
 
 def test_parse_propagates_lexical_error():
@@ -157,6 +158,148 @@ def test_parse_propagates_lexical_error():
 def test_parse_accepts_numfailures_kwarg():
     # Same signature as the legacy parser so the daemon can call either uniformly.
     assert parse("", numfailures=5).roots == []
+
+
+# --- M2: global config directives + set/$var ------------------------------------------
+
+def ov(text: str) -> dict:
+    return parse(text).overrides
+
+
+def test_config_int_directives():
+    assert ov("config pageinterval 18;\n")["pageinterval_min"] == 18
+    assert ov("config send_pings 3;\nconfig min_pings 2;\n") == {"send_pings": 3, "min_pings": 2}
+    assert ov("config maxqueued 80;\n")["max_concurrency"] == 80
+    assert ov("config heartbeat 120;\n")["heartbeat_s"] == 120
+
+
+def test_config_queuetime_accepts_int_or_float():
+    # queuetime -> interval_s, a float field (and --interval is type=float), so a fractional
+    # cadence must parse rather than warn-skip.
+    assert ov("config queuetime 30;\n")["interval_s"] == 30.0
+    assert ov("config queuetime 2.5;\n")["interval_s"] == 2.5
+    assert any("number" in w for w in parse("config queuetime nope;\n").warnings)
+
+
+def test_config_str_directives():
+    assert ov('config savestate "/var/lib/psysmon/state.json";\n')["state_path"] == (
+        "/var/lib/psysmon/state.json")
+    assert ov('config source_ip "203.0.113.9";\n')["source_ip"] == "203.0.113.9"
+    assert ov('config hostname "mon1.example.net";\n')["org_hostname"] == "mon1.example.net"
+    assert ov('config sender "noc@example.net";\n')["mail_from"] == "noc@example.net"
+    assert ov('config from "ops@example.net";\n')["mail_from"] == "ops@example.net"
+
+
+def test_config_flag_directives():
+    assert ov("config page_on_degraded;\n")["page_on_degraded"] is True
+    assert ov("config noheartbeat;\n")["heartbeat_s"] == 0
+
+
+def test_config_loglevel_and_logging():
+    assert ov("config loglevel debug;\n")["log_level"] == "debug"
+    bad_level = parse("config loglevel bogus;\n")
+    assert bad_level.overrides["log_level"] == "info" and any(
+        "loglevel" in w for w in bad_level.warnings)
+    assert ov("config logging local0;\n")["syslog_facility"] == "local0"
+    assert ov("config logging none;\n")["syslog_facility"] is None
+    bad_fac = parse("config logging nope;\n")
+    assert bad_fac.overrides["syslog_facility"] == "daemon" and bad_fac.warnings
+
+
+def test_config_statusfile():
+    o = ov('config statusfile html "/var/www/status.html";\n')
+    assert o["status_html"] is True and o["status_path"] == "/var/www/status.html"
+    assert ov('config statusfile text "/tmp/s.txt";\n')["status_html"] is False
+    assert parse('config statusfile bogus "/x";\n').warnings  # invalid format -> warn + skip
+
+
+def test_config_unknown_invalid_obsolete_warn_skip():
+    unknown = parse("config bogusdirective 5;\n")
+    assert unknown.overrides == {}
+    assert any("unknown config directive" in w for w in unknown.warnings)
+    bad_int = parse("config heartbeat notanint;\n")
+    assert bad_int.overrides == {} and any("integer" in w for w in bad_int.warnings)
+    obsolete = parse("config sleeptime 30;\n")
+    assert obsolete.overrides == {} and any("obsolete" in w for w in obsolete.warnings)
+
+
+def test_set_and_var_substitution():
+    res = parse('set on = "noc@example.net";\nconfig sender "$on";\n')
+    assert res.overrides["mail_from"] == "noc@example.net" and res.warnings == []
+
+
+def test_undefined_var_warns_and_stays_literal():
+    res = parse('config sender "$missing";\n')
+    assert res.overrides["mail_from"] == "$missing"
+    assert any("undefined variable" in w for w in res.warnings)
+
+
+def test_malformed_set_warns():
+    assert any("malformed 'set'" in w for w in parse("set broken;\n").warnings)
+
+
+def test_globals_only_config_parses_without_objects():
+    res = parse('# header\nconfig queuetime 30;\nset x = "y";\nconfig hostname "$x";\n')
+    assert res.roots == [] and res.overrides["interval_s"] == 30
+    assert res.overrides["org_hostname"] == "y"  # $x substituted from `set`
+
+
+def test_root_and_include_are_refused():
+    for snippet in ('root = "gw";\n', 'include "other.conf";\n'):
+        with pytest.raises(ParseError):
+            parse(snippet)
+
+
+def test_all_overrides_are_valid_settings_fields():
+    # Every directive maps to a real Settings field, so merge() accepts the overrides unchanged
+    # (the _FIELD_NAMES contract) — and no directive in this exhaustive config warns.
+    text = (
+        'config pageinterval 18;\nconfig numfailures 5;\nconfig queuetime 45;\n'
+        'config send_pings 3;\nconfig min_pings 2;\nconfig page_on_degraded;\n'
+        'config savestate "/x";\nconfig statesave_interval 30;\nconfig state_max_age 0;\n'
+        'config source_ip "203.0.113.9";\nconfig hostname "mon";\nconfig maxqueued 80;\n'
+        'config sender "noc@example.net";\nconfig loglevel debug;\nconfig logging local0;\n'
+        'config dnsexpire 7200;\nconfig dnslog 600;\nconfig heartbeat 120;\n'
+        'config statusfile html "/p";\n'
+    )
+    res = parse(text)
+    assert res.warnings == []  # every directive recognized
+    s = merge(file_overrides=res.overrides)  # must not raise "unknown setting"
+    assert s.interval_s == 45 and s.send_pings == 3 and s.state_path == "/x"
+    assert s.page_on_degraded is True and s.status_path == "/p" and s.max_concurrency == 80
+
+
+# --- M2: parser-robustness regressions (review follow-ups) ----------------------------
+
+def test_statement_walk_safety_on_garbage():
+    # Stray punctuation / strings at statement start warn and skip — no crash, no infinite loop.
+    res = parse('{ } = "x";\n= = =;\n"lonely";\n')
+    assert res.overrides == {} and res.roots == []
+    assert len(res.warnings) >= 3
+
+
+def test_config_missing_semi_and_arity():
+    no_semi = parse("config heartbeat 5\n")  # missing terminating ';'
+    assert no_semi.overrides["heartbeat_s"] == 5
+    assert any("terminating" in w for w in no_semi.warnings)
+    assert any("needs a value" in w for w in parse("config heartbeat;\n").warnings)
+    extra = parse("config heartbeat 1 2 3;\n")
+    assert extra.overrides["heartbeat_s"] == 1 and any("one value" in w for w in extra.warnings)
+
+
+def test_set_malformed_punctuation_value_warns():
+    # `set x = = ;` is malformed -> warn, NOT a silent empty binding (review LOW).
+    res = parse('set x = = ;\nconfig hostname "$x";\n')
+    assert any("malformed 'set'" in w for w in res.warnings)
+    assert res.overrides["org_hostname"] == "$x"  # x never bound -> $x left literal
+
+
+def test_var_substitution_edge_cases():
+    # used-before-set -> literal + warn; self-reference -> literal, no loop; non-identifier $1 ->
+    # left literal silently (single-pass; a substituted value's own $ isn't re-expanded).
+    res = parse('config hostname "$y";\nset y = "later";\nset z = "$z";\nset n = "a$1b";\n')
+    assert res.overrides["org_hostname"] == "$y"  # $y used before it was set
+    assert any("undefined variable $y" in w for w in res.warnings)
 
 
 # --- detect() routes the modern grammar -----------------------------------------------

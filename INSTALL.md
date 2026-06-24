@@ -61,6 +61,8 @@ PSYSMON reads `/etc/psysmon.conf` by default (override with `-f/--config`). It u
 config statusfile html /var/www/psysmon/status.html
 config pageinterval 18        ; minutes between re-pages while a host stays down
 config numfailures 5          ; consecutive failures before alerting
+# optional: persist up/down state so a restart/upgrade doesn't re-page known outages
+config savestate "/var/lib/psysmon/state.json"
 
 # a router, and a couple of things that depend on it being reachable
 core-router.example.net ping core-router.example.net noc@example.net {

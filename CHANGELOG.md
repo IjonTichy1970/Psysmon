@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- Optional on-disk persistence of live monitoring state, so a restart or software upgrade no
+  longer forgets what was already down and re-pages outages the operator already knows about.
+  Enable it with `config savestate "<path>"` or `--state-file <path>` (off when unset); the file
+  is written atomically on a periodic flush (`--state-save-interval`, default 60s) and on a
+  graceful stop, and merged back in on startup by `(hostname, type, port)`. A node that was DOWN
+  and already paged stays that way without re-paging; the re-page timer restarts fresh. A
+  missing, unreadable, wrong-schema, or stale (`--state-max-age`, default 24h) file is ignored
+  with a log line and the daemon starts clean
+  ([#21](https://github.com/IjonTichy1970/Psysmon/issues/21)).
+
 ### Fixed
 - A POP3 server that answers the initial greeting with a non-`+OK` line (e.g. an `-ERR`
   "temporarily unavailable") is now reported as `Bad Resp` rather than `No Srvr Resp`, matching

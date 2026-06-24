@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import logging.handlers
+import time
 from pathlib import Path
 
 from psysmon import daemon
@@ -13,6 +14,7 @@ from psysmon.config.settings import Settings
 from psysmon.daemon import build, load_roots, main, serve
 from psysmon.engine.clock import ManualClock, SystemClock
 from psysmon.engine.scheduler import Scheduler
+from psysmon.engine.statestore import StateStore
 from psysmon.status import Status
 
 SAMPLE = (
@@ -368,6 +370,73 @@ def test_daemonize_redirects_stdio(monkeypatch):
     assert calls["setsid"] == 1
     assert calls["dup2"] == [(7, 0), (7, 1), (7, 2)]  # stdin/stdout/stderr all redirected
     assert calls["closed"] == [7]  # the spare /dev/null fd is closed
+
+
+# --- state persistence wiring (savestate, #21) ----------------------------------------
+
+
+def _down_record(hostname="p"):
+    return {
+        "hostname": hostname, "type": "ping", "port": 0, "lastcheck": int(Status.UNPINGABLE),
+        "downct": 5, "contacted": True, "lastcontacted": 0.0, "deathtime": 5.0, "last_up": 1.0,
+    }
+
+
+def test_restore_state_imports_from_file(tmp_path):
+    settings = Settings()
+    settings.state_path = str(tmp_path / "state.json")
+    StateStore(settings.state_path).save([_down_record()], now_wall=time.time())
+
+    sched = Scheduler([Node("p", CheckType.PING)], settings, clock=ManualClock(), stagger=False)
+    daemon._restore_state(sched, settings)
+
+    st = next(s for nd, s in sched.node_states() if nd.hostname == "p")
+    assert st.lastcheck == int(Status.UNPINGABLE) and st.contacted is True
+
+
+def test_restore_state_noop_when_disabled(tmp_path):
+    settings = Settings()  # state_path is None -> persistence off, no disk touch
+    sched = Scheduler([Node("p", CheckType.PING)], settings, clock=ManualClock(), stagger=False)
+    daemon._restore_state(sched, settings)
+    st = next(s for nd, s in sched.node_states() if nd.hostname == "p")
+    assert st.lastcheck == Status.OK  # untouched, started fresh
+
+
+async def test_serve_saves_state_on_stop(tmp_path):
+    settings = Settings()
+    settings.state_path = str(tmp_path / "state.json")
+    settings.interval_s = 10.0
+    settings.statesave_s = 0  # disable the periodic flush; the final flush on stop must still run
+
+    async def runner(node, ctx):
+        return Status.UNPINGABLE
+
+    sched = Scheduler(
+        [Node("p", CheckType.PING, max_down=1)],
+        settings, clock=SystemClock(), runner=runner, stagger=False,
+    )
+    task = asyncio.create_task(serve(sched, settings))
+    await asyncio.sleep(0.1)  # let it tick the node down
+    sched.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    records = StateStore(settings.state_path).load(now_wall=time.time())
+    assert any(r["hostname"] == "p" and r["lastcheck"] == int(Status.UNPINGABLE) for r in records)
+
+
+def test_save_state_callback_writes_current_state(tmp_path):
+    # The callback serve() schedules on the periodic timer (and the final flush) exports and
+    # writes the live state, so an ungraceful exit loses at most one interval's worth.
+    state_path = str(tmp_path / "state.json")
+    sched = Scheduler([Node("p", CheckType.PING)], Settings(), clock=ManualClock(), stagger=False)
+    st = next(s for nd, s in sched.node_states() if nd.hostname == "p")
+    st.lastcheck = Status.UNPINGABLE
+    st.downct = 3
+
+    daemon._save_state(sched, StateStore(state_path))
+
+    records = StateStore(state_path).load(now_wall=time.time())
+    assert any(r["hostname"] == "p" and r["downct"] == 3 for r in records)
 
 
 async def test_serve_cleans_up_helper_tasks_on_stop(tmp_path):

@@ -71,6 +71,47 @@ _CHECKERS: dict[CheckType, base.Checker] = {
 Runner = Callable[[Node, base.CheckContext], Awaitable[int]]
 
 
+def _as_int(value: object) -> int:
+    # bool is an int subclass, so guard it out: a JSON `true` must not pass as a status/count.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError
+    return value
+
+
+def _as_float(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError
+    return float(value)
+
+
+def _as_bool(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError
+    return value
+
+
+def _validated_carry(record: dict) -> dict | None:
+    """Type-check a persisted record's carried fields; None if any is missing or wrong-typed.
+
+    A corrupt or hand-edited state file must degrade to a fresh start, never crash or wedge the
+    state machine: a string ``downct`` would raise ``TypeError`` inside ``apply_result`` (caught
+    by the scheduler's broad handler, leaving the node retrying every interval forever), and a
+    wrong-typed ``lastcheck`` would mis-render or distort the up/down comparison. A bad record is
+    skipped wholesale rather than half-restored. ``lastcontacted`` is intentionally absent: import
+    rebases it to the live monotonic clock regardless of the persisted value.
+    """
+    try:
+        return {
+            "lastcheck": _as_int(record["lastcheck"]),
+            "downct": _as_int(record["downct"]),
+            "contacted": _as_bool(record["contacted"]),
+            "deathtime": _as_float(record["deathtime"]),
+            "last_up": _as_float(record["last_up"]),
+        }
+    except (KeyError, TypeError):
+        return None
+
+
 class _NullNotifier:
     """Default no-op notifier: no delivery, but reports 'contacted' so dedup still works."""
 
@@ -332,6 +373,69 @@ class Scheduler:
     def ping_service(self) -> PingService:
         """The shared ping service (so the daemon can open its raw socket up front)."""
         return self._ping
+
+    # --- state persistence (savestate, #21) -------------------------------------------
+
+    def export_state(self) -> list[dict]:
+        """Serialize the carried runtime fields per node for on-disk persistence (#21).
+
+        Emits one record per scheduled node — keyed by ``(hostname, type, port)`` like the
+        SIGHUP merge — carrying exactly :data:`_CARRIED`. The type is stored as its string value
+        so the record is plain JSON. Config-derived fields (``max_down``, contacts, intervals)
+        and the transient ``suppressed`` flag are deliberately *not* persisted: they come from
+        the config and the live gate on load and must not be resurrected from a stale file.
+        """
+        records: list[dict] = []
+        for sched in self._scheduled:
+            record = {
+                "hostname": sched.node.hostname,
+                "type": sched.node.check_type.value,
+                "port": sched.node.port,
+            }
+            for field_name in self._CARRIED:
+                record[field_name] = getattr(sched.state, field_name)
+            records.append(record)
+        return records
+
+    def import_state(self, records: list[dict], *, now_mono: float | None = None) -> int:
+        """Merge persisted ``records`` into the current node set, returning the match count (#21).
+
+        Mirrors :meth:`reload`'s carried-field merge: a node still present (matched by
+        ``(hostname, type, port)``) restores its up/down state and counters; a record with no
+        matching node is dropped; a node new in the config keeps its fresh state. So a node that
+        was DOWN and already contacted before the restart stays contacted and is not re-paged on
+        the first post-restart sweep.
+
+        ``lastcontacted`` is special: it is a *monotonic* timestamp, and a fresh process starts a
+        new monotonic clock, so the persisted value is meaningless here. It is rebased to "now",
+        which means a restored, still-contacted outage waits a fresh ``pageinterval`` before
+        re-paging — never an immediate duplicate page, never a never-again page. ``checked`` is
+        left ``False`` so each restored node is re-confirmed by its first real check (and its
+        children stay gated until then) rather than trusting the snapshot's reachability.
+        """
+        if now_mono is None:
+            now_mono = self._clock.monotonic()
+        current = {
+            (s.node.hostname, s.node.check_type.value, s.node.port): s for s in self._scheduled
+        }
+        matched = 0
+        skipped = 0
+        for record in records:
+            key = (record.get("hostname"), record.get("type"), record.get("port"))
+            sched = current.get(key)
+            if sched is None:
+                continue  # in the state file but absent from the current config -> drop
+            carried = _validated_carry(record)
+            if carried is None:
+                skipped += 1  # malformed/wrong-typed fields -> skip wholesale, leave node fresh
+                continue
+            for field_name, value in carried.items():
+                setattr(sched.state, field_name, value)
+            sched.state.lastcontacted = now_mono  # rebase the monotonic re-page timer
+            matched += 1
+        if skipped:
+            logger.warning("ignored %d state record(s) with malformed fields", skipped)
+        return matched
 
     # --- config reload (SIGHUP) -------------------------------------------------------
 

@@ -7,7 +7,7 @@ Faithfully reproduces ``loadconfig.c``/``parseline``:
 * ``}`` closes the current block; a trailing ``{`` opens a recursive **child block** (only on
   the ping-like branch — ping/smtp — as in the original).
 * ``config <directive> ...`` sets globals: ``statusfile``, ``pageinterval`` (minutes),
-  ``logging``, ``dnslog``, ``dnsexpire``, ``numfailures``, ``sleeptime``.
+  ``logging``, ``dnslog``, ``dnsexpire``, ``numfailures``, ``savestate``, ``sleeptime``.
 * **``numfailures`` is position-dependent** — its current value snapshots into each
   subsequently-parsed node's ``max_down`` (a running value, not last-wins).
 * Per-type field positions exactly as in C (ping/smtp: label[,contact][,``{``];
@@ -267,6 +267,8 @@ class _Parser:
             self._set_int(lineno, "dnsexpire_s", tokens[2])
         elif directive.startswith("heartbeat"):
             self._set_int(lineno, "heartbeat_s", tokens[2])
+        elif directive.startswith("savestate"):
+            self._set_savestate(lineno, tokens)
         elif directive.startswith("statusfile"):
             self._set_statusfile(lineno, tokens)
         elif directive.startswith("numfailures"):
@@ -295,6 +297,20 @@ class _Parser:
         else:
             self._warn(lineno, f"unknown loglevel {level!r}; using info")
             self.overrides["log_level"] = "info"
+
+    def _set_savestate(self, lineno: int, tokens: list[str]) -> None:
+        """``config savestate "/path/to/state.json"`` — the legacy directive (#21).
+
+        The original required a double-quoted path; we accept it quoted or bare and strip a
+        surrounding pair of quotes, joining any whitespace-split remainder so a quoted path with
+        single spaces survives. Enabling persistence from the legacy config keeps a drop-in
+        ``sysmon.conf`` working unchanged.
+        """
+        path = " ".join(tokens[2:]).strip().strip('"')
+        if not path:
+            self._warn(lineno, "savestate needs a file path; skipping")
+            return
+        self.overrides["state_path"] = path
 
     def _set_statusfile(self, lineno: int, tokens: list[str]) -> None:
         if len(tokens) != 4:

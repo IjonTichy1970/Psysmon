@@ -50,6 +50,11 @@ class Settings:
     dnsexpire_s: int = 900
     dnslog_s: int = 600
 
+    # State persistence (savestate, #21) — survive restarts/upgrades without re-paging
+    state_path: str | None = None  # None disables on-disk persistence (set by `config savestate`)
+    statesave_s: int = 60  # periodic flush interval (bounds loss on an ungraceful exit; 0 = off)
+    state_max_age_s: int = 86400  # ignore a state file older than this on load (0 disables)
+
     # Alerting (SMTP)
     smtp_host: str = "localhost"
     smtp_port: int = 25
@@ -123,6 +128,20 @@ def build_parser() -> argparse.ArgumentParser:
     # DNS cache
     p.add_argument("--dnsexpire", dest="dnsexpire_s", type=int, metavar="SEC", help="DNS cache TTL")
     p.add_argument("--dnslog", dest="dnslog_s", type=int, metavar="SEC", help="DNS stats interval")
+
+    # State persistence
+    p.add_argument(
+        "--state-file", dest="state_path", metavar="PATH",
+        help="persist monitoring state here to survive restarts (off when unset)",
+    )
+    p.add_argument(
+        "--state-save-interval", dest="statesave_s", type=int, metavar="SEC",
+        help="how often to flush the state file (0 saves only on shutdown)",
+    )
+    p.add_argument(
+        "--state-max-age", dest="state_max_age_s", type=int, metavar="SEC",
+        help="ignore a state file older than this on load (0 disables the check)",
+    )
 
     # Alerting
     p.add_argument("--smtp-host", dest="smtp_host", metavar="HOST", help="SMTP server host")

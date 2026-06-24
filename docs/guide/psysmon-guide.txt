@@ -480,9 +480,9 @@ on startup for line N: ... warnings.
 Field-by-field reference per check type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Every stanza starts with the hostname (field 1) and the type keyword (field 2). The
-remaining positional fields depend on the type. contact is the notification address; an
-absent contact means syslog only, no page.
+Every stanza starts with the host (field 1 -- a hostname *or* an IP) and the type keyword
+(field 2). The remaining positional fields depend on the type. contact is the
+notification address; an absent contact means syslog only, no page.
 
 | Type | Positional fields after hostname |
 |---|---|
@@ -939,7 +939,15 @@ object or force the modern parser.
 4. Worked examples
 ------------------
 
-Each check type below is shown in both formats. The two columns describe the same check.
+Each check type below is written in both formats -- the legacy positional line and the
+modern object{} block for the same check.
+
+    The host field takes a hostname _or_ an IP in either format; psysmon resolves a hostname via
+    DNS at check time (when the check runs), never at parse or conversion time. The pairs below
+    show both forms -- a hostname in the legacy line, a literal IP in the modern block -- and both are
+    valid. They are hand-written equivalents, not literal converter output: psysmon-convert
+    copies the host string verbatim into ip, so router.example.net  ping ... converts to
+    ip "router.example.net", not a resolved address.
 
 ping
 ~~~~

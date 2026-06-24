@@ -826,9 +826,11 @@ is skipped.
 
 config sleeptime is obsolete and ignored with a warning (use queuetime / --interval).
 
-    config numfailures is a global default only in the modern format. Unlike the legacy
-    positional behavior, it just sets the baseline. To give one object a different threshold, use its
-    per-object numfailures attribute.
+    Several of these globals have a matching per-object override. queuetime, numfailures,
+    send_pings / min_pings, contact_on, and source can each be set on an individual object to
+    override the global default (see Per-object overrides). numfailures is
+    the only one whose *legacy* behavior also differs -- it is position-dependent in the legacy format
+    (see above), but a plain global default here.
 
 Control / query channel. The opt-in control channel (control channel docs) is configured
 with these directives; it is off by default and binds loopback 127.0.0.1:2026 when

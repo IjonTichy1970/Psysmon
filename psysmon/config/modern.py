@@ -154,6 +154,7 @@ _INT_DIRECTIVES = {
     "statesave_interval": "statesave_s",
     "state_max_age": "state_max_age_s",
     "maxqueued": "max_concurrency",   # 0.93's "max objects queued to check at once"
+    "control_port": "control_port",   # control plane (#69)
 }
 _FLOAT_DIRECTIVES = {
     "queuetime": "interval_s",        # 0.93's per-poll cadence; interval_s/--interval are floats
@@ -164,10 +165,15 @@ _STR_DIRECTIVES = {
     "hostname": "org_hostname",
     "sender": "mail_from",
     "from": "mail_from",
+    "control_bind": "control_bind",            # control plane (#69)
+    "control_token_file": "control_token_file",
+    "control_tls_cert": "control_tls_cert",
+    "control_tls_key": "control_tls_key",
 }
 _FLAG_DIRECTIVES = {                   # value-less booleans
     "page_on_degraded": ("page_on_degraded", True),
     "noheartbeat": ("heartbeat_s", 0),
+    "control": ("control_enabled", True),  # control plane (#69)
 }
 _LOGLEVELS = ("warning", "info", "debug")
 _VAR_RE = re.compile(r"\$([A-Za-z_]\w*)")  # a $NAME reference (set / $var substitution)

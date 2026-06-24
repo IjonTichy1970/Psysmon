@@ -540,6 +540,24 @@ def test_contact_on_global_directive():
     assert any("contact_on" in w for w in res_bad.warnings)
 
 
+def test_control_plane_global_directives():
+    res = parse(
+        'config control;\n'
+        'config control_bind "::1";\n'
+        'config control_port 9443;\n'
+        'config control_token_file "/etc/psysmon.token";\n'
+        'config control_tls_cert "/c.pem";\n'
+        'config control_tls_key "/k.pem";\n'
+        'object x { ip "h"; type ping; };\n'
+    )
+    o = res.overrides
+    assert o["control_enabled"] is True
+    assert o["control_bind"] == "::1" and o["control_port"] == 9443
+    assert o["control_token_file"] == "/etc/psysmon.token"
+    assert o["control_tls_cert"] == "/c.pem" and o["control_tls_key"] == "/k.pem"
+    assert res.warnings == []
+
+
 def test_per_object_queuetime_rejects_non_finite():
     # A non-finite queuetime must NOT reach node.interval: inf -> never-due, nan -> heap corruption.
     for bad in ("inf", "nan", "-inf", "Infinity"):

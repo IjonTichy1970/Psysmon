@@ -77,6 +77,14 @@ class Settings:
     heartbeat_s: int = 300  # periodic "monitoring N hosts" summary interval; 0 disables
     foreground: bool = False  # `-d` / don't fork
 
+    # Control plane (#69) — opt-in JSON-over-TLS query/control channel; OFF by default.
+    control_enabled: bool = False
+    control_bind: str = "127.0.0.1"  # loopback by default; a non-loopback bind requires TLS
+    control_port: int = 2026
+    control_token_file: str | None = None  # bearer token for mutating actions (a 0600 file)
+    control_tls_cert: str | None = None
+    control_tls_key: str | None = None
+
 
 _FIELD_NAMES = frozenset(f.name for f in fields(Settings))
 
@@ -194,6 +202,28 @@ def build_parser() -> argparse.ArgumentParser:
         help='periodic "monitoring N hosts" summary interval (0 disables)',
     )
     p.add_argument("-d", "--no-fork", dest="no_fork", action="store_true", help="run in foreground")
+
+    # Control plane (#69)
+    p.add_argument(
+        "--control", dest="control", action="store_true",
+        help="enable the control/query channel (off by default)",
+    )
+    p.add_argument(
+        "--control-bind", dest="control_bind", metavar="ADDR",
+        help="control channel bind address (default 127.0.0.1; a non-loopback bind needs TLS)",
+    )
+    p.add_argument(
+        "--control-port", dest="control_port", type=int, metavar="PORT",
+        help="control channel port (default 2026)",
+    )
+    p.add_argument(
+        "--control-token-file", dest="control_token_file", metavar="PATH",
+        help="file holding the bearer token required for mutating control actions",
+    )
+    p.add_argument("--control-tls-cert", dest="control_tls_cert", metavar="PATH",
+                   help="TLS certificate for the control channel")
+    p.add_argument("--control-tls-key", dest="control_tls_key", metavar="PATH",
+                   help="TLS private key for the control channel")
     return p
 
 
@@ -214,6 +244,8 @@ def cli_overrides(argv: list[str] | None = None) -> dict[str, object]:
         out["foreground"] = True
     if raw.get("show_up"):
         out["show_up_also"] = True
+    if raw.get("control"):
+        out["control_enabled"] = True
     # -v/-vv set the level only when --log-level wasn't given explicitly (mapped above).
     if "log_level" not in out and raw.get("verbose"):
         out["log_level"] = "debug" if raw["verbose"] >= 2 else "info"

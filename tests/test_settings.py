@@ -89,6 +89,28 @@ def test_boolean_flags_translation():
     assert cli_overrides(["-n", "-d"]) == {"notify_enabled": False, "foreground": True}
 
 
+def test_control_defaults_off_loopback_2026():
+    s = Settings()
+    assert s.control_enabled is False
+    assert s.control_bind == "127.0.0.1" and s.control_port == 2026
+    assert s.control_token_file is None and s.control_tls_cert is None
+
+
+def test_control_cli_flags():
+    got = cli_overrides([
+        "--control", "--control-bind", "0.0.0.0", "--control-port", "9443",
+        "--control-token-file", "/etc/psysmon.token",
+        "--control-tls-cert", "/c.pem", "--control-tls-key", "/k.pem",
+    ])
+    assert got == {
+        "control_enabled": True, "control_bind": "0.0.0.0", "control_port": 9443,
+        "control_token_file": "/etc/psysmon.token",
+        "control_tls_cert": "/c.pem", "control_tls_key": "/k.pem",
+    }
+    assert "--control" not in cli_overrides([])  # off unless asked (the flag dest isn't a field)
+    assert cli_overrides([]) == {}
+
+
 def test_invalid_choice_errors():
     with pytest.raises(SystemExit):
         cli_overrides(["--status-format", "xml"])

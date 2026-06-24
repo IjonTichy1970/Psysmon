@@ -1,8 +1,9 @@
 """POP3 authentication check.
 
-Resolves the node, opens a TCP connection, reads the greeting (must be ``+OK``), then performs
-a ``USER``/``PASS`` login. The ``USER`` reply is checked too: ``-ERR`` (username rejected) is
-``BAD_AUTH``; a dropped connection (empty reply) is ``NO_RESPONSE``. On the ``PASS`` reply,
+Resolves the node, opens a TCP connection, reads the greeting (empty/EOF → ``NO_RESPONSE``, a
+non-``+OK`` line → ``BAD_RESPONSE``), then performs a ``USER``/``PASS`` login. The ``USER`` reply
+is checked too: ``-ERR`` (username rejected) is ``BAD_AUTH``; a dropped connection (empty reply)
+is ``NO_RESPONSE``. On the ``PASS`` reply,
 ``+OK`` means the credentials are accepted (``OK``); ``-ERR`` means the auth was rejected
 (``BAD_AUTH``); a dropped connection is ``NO_RESPONSE``; anything else is ``BAD_RESPONSE``.
 
@@ -27,8 +28,10 @@ async def check(node: Node, ctx: base.CheckContext) -> int:
     """Probe a POP3 server, authenticating with ``node.username``/``node.password``."""
     async with base.open_check_connection(node, ctx) as (reader, writer):
         greeting = await reader.readline()
-        if not greeting.startswith(b"+OK"):
+        if not greeting:  # connection dropped before the greeting
             return Status.NO_RESPONSE
+        if not greeting.startswith(b"+OK"):  # responded, but not a "+OK" ready greeting
+            return Status.BAD_RESPONSE
 
         writer.write(b"USER " + node.username.encode("utf-8") + b"\r\n")
         await writer.drain()

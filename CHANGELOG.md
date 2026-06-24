@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- A POP3 server that answers the initial greeting with a non-`+OK` line (e.g. an `-ERR`
+  "temporarily unavailable") is now reported as `Bad Resp` rather than `No Srvr Resp`, matching
+  the SMTP check and the `USER`/`PASS` reply handling — a server that *responded* is no longer
+  labelled silent. An empty/dropped greeting still reports `No Srvr Resp`
+  ([#55](https://github.com/IjonTichy1970/Psysmon/issues/55)).
+
 ## [0.1.3] — 2026-06-23 — logo auto-deploy + operational logging
 
 ### Added

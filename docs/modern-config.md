@@ -80,7 +80,7 @@ unknown directive is warned and skipped.
 | `config page_on_degraded` | (no value) | off | Page on a degraded (partial-loss) ping |
 | `config contact_on` | `down`\|`up`\|`both`\|`none` | `both` | Default transitions that page (per-object override; see below) |
 | `config maxqueued` | integer | `50` | Cap on concurrent checks |
-| `config source_ip` | `"ip"` | (auto) | Outbound bind source IP |
+| `config source_ip` | `"ip"` | (auto) | Default outbound bind source for the **connection** checks (firewall ACLs). Ping ignores it — ping is unbound by default; see the per-object `source` below |
 | `config hostname` | `"name"` | (auto) | Org hostname shown in alerts / status page |
 | `config sender` / `config from` | `"addr"` | (none) | Alert `From:` address |
 
@@ -181,8 +181,9 @@ The per-type default differs:
 
 Set `source` to:
 
-- an **IP** (`source "203.0.113.5";`) — bind this object's probes to that local address. Works for
-  ping too (pin a stable VPN local address), and for the connection checks.
+- an **IPv4 address** (`source "203.0.113.5";`) — bind this object's probes to that local address.
+  Works for ping too (pin a stable VPN local address), and for the connection checks. (IPv6 source
+  binding isn't supported yet — an IPv6 `source` is rejected at load; that's #24.)
 - **`auto`** (`source auto;`) — keep this object **unbound** (route by destination) even when a
   group default or `config source_ip` would otherwise bind it. This is the explicit opt-out.
 

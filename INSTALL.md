@@ -80,7 +80,9 @@ for the router instead of flooding you for everything behind it. See the README 
 field layout per check type.
 
 Any setting can also be passed on the command line, which **overrides** the file — most usefully
-the outbound source IP (for firewall ACLs), the hostname shown in alerts/status, and SMTP:
+the outbound source IP for the connection checks (firewall ACLs; ping is unbound by default, and
+either can be set per object/group with `source` — see [docs/modern-config.md](docs/modern-config.md)),
+the hostname shown in alerts/status, and SMTP:
 
 ```bash
 psysmon -f /etc/psysmon.conf \

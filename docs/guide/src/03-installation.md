@@ -98,7 +98,7 @@ If you installed without the symlink, run it by full path (`/opt/psysmon-venv/bi
 
 ## Running as root for ICMP
 
-ICMP ping opens a raw socket, so the daemon must run **as root**. Unlike the original C `sysmon`, which was a setuid binary, the Python daemon is simply launched as a root process — via `sudo` or a service manager. It opens the raw socket at startup and, per the current deploy choice, keeps root for the process lifetime (a privilege-drop option is tracked as issue [#2](https://github.com/IjonTichy1970/Psysmon/issues/2)).
+ICMP ping opens a raw socket, so the daemon must run **as root**. Unlike the original C `sysmon`, which was a setuid binary, the Python daemon is simply launched as a root process — via `sudo` or a service manager. It opens the raw socket at startup and, per the current deploy choice, keeps root for the process lifetime (a privilege-drop option is planned ([tracked on GitHub](https://github.com/IjonTichy1970/Psysmon/issues/2))).
 
 The non-ping checks (TCP, UDP, DNS, SMTP, POP3, HTTP/HTTPS) do not need root — only ICMP ping does. If pings always report hosts as down, the usual cause is not running as root; see [09-troubleshooting.md](09-troubleshooting.md).
 

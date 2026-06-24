@@ -37,7 +37,7 @@ psysmon --help         # print the full flag list and exit
 ## How the flags are grouped
 
 Every daemon flag overrides a single runtime setting. Most of those settings were *hardcoded* in
-the original 1998 C `sysmon` (the source IP, the org hostname, the mail transport, ports,
+the original C `sysmon` (the source IP, the org hostname, the mail transport, ports,
 intervals, thresholds); PSYSMON lifts them into the config file and the command line. They fall
 into eight logical groups.
 

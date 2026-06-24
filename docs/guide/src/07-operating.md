@@ -85,7 +85,8 @@ doesn't fill the page with everything behind it). Pass `--show-up` to list up ho
 The HTML page auto-refreshes on an interval (`--status-refresh`, default 30s).
 
 If any objects carry a `group` label (set in the modern config — see
-[Configuration](04-configuration.md)), the page lists them under per-group headings, with
+[Configuration → Group scopes](04-configuration.md#group-scopes)), the page lists them under
+per-group headings, with
 an "Ungrouped" bucket for the rest; the JSON view (below) carries a `group` field per host
 so a dashboard can filter on it. With no groups in use the page renders flat.
 
@@ -255,7 +256,7 @@ config savestate "/var/lib/psysmon/state.json"
 This is what makes the upgrade procedure below safe: with savestate on, an upgrade restart
 doesn't flood you with re-pages for outages already in progress.
 
-## Acknowledging and annotating alerts at runtime
+## Acknowledging and annotating alerts at runtime {#control-channel}
 
 You can acknowledge an outage or attach an operator note **without editing the config**,
 via the opt-in **control channel** and the bundled `psysmonctl` client. This is the runtime

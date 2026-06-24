@@ -258,6 +258,7 @@ _RE_LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _RE_BOLD = re.compile(r"\*\*([^*]+)\*\*")
 _RE_CODE = re.compile(r"`([^`]+)`")
 _RE_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
+_HEADING_ATTR = re.compile(r"\s*\{[^}]*\}\s*$")  # trailing attr-list, e.g. ` {#anchor}` (HTML-only)
 _UNDERLINE = {1: "=", 2: "-", 3: "~"}
 # Fold common typographic characters to ASCII so the TXT is safe on any terminal / over SSH.
 _ASCII_FOLD = {
@@ -293,7 +294,8 @@ def _render_prose(lines: list[str]) -> list[str]:
             return
         h = _RE_HEADING.match(block[0])
         if h and len(block) == 1:
-            level, text = len(h.group(1)), _strip_inline(h.group(2))
+            level = len(h.group(1))
+            text = _strip_inline(_HEADING_ATTR.sub("", h.group(2)))
             out.append(text)
             if level in _UNDERLINE:
                 out.append(_UNDERLINE[level] * len(text))

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "psysmon"
 version = "0.5.0"
-description = "PSYSMON — dependency-aware network monitoring daemon (Python rewrite of the 1998 C sysmon)"
+description = "PSYSMON — dependency-aware network monitoring daemon (Python rewrite of the C sysmon by Jared Mauch, v0.93)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "GPL-2.0-or-later" }

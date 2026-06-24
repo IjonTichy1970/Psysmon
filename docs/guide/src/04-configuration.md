@@ -3,9 +3,9 @@
 PSYSMON reads a single configuration file (default `/etc/psysmon.conf`, overridable with
 `-f/--config`). One daemon understands **two configuration formats**:
 
-- **Legacy positional** — the original 1998 `sysmon.conf` grammar. This is the **default**: an
+- **Legacy positional** — the original `sysmon.conf` grammar. This is the **default**: an
   existing `sysmon.conf` keeps working unchanged.
-- **Modern `object{}`** — an opt-in, named-block grammar adopted in issue #3, more readable and
+- **Modern `object{}`** — an opt-in, named-block grammar that is more readable and
   order-independent.
 
 The format is **auto-detected per file**, and the two are never mixed in one file. A file is read
@@ -192,7 +192,7 @@ object web {
 
 ### Lexical rules
 
-- **Statements end with `;`.** Object and group bodies are delimited by `{ ... }`.
+- **Statements end with `;`.** Object and [group](#group-scopes) bodies are delimited by `{ ... }`.
 - **Strings are double-quoted** (`"a value"`) with **no escape sequences** — a string cannot
   contain a `"` or span a newline.
 - **Barewords** are unquoted runs used for keywords, hostnames, and numbers (`ping`, `192.0.2.1`,
@@ -230,6 +230,10 @@ Inside an object body, attributes are `key value;` pairs:
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
 | `dep` | `"object-name"` | optional | Parent object for dependency suppression |
 
+This table covers the **structural** attributes. An object body can also carry **per-object
+override** attributes — `queuetime`, `numfailures`, `send_pings` / `min_pings`, `group`,
+`contact_on`, and `source` — documented under [Per-object overrides](#per-object-overrides) below.
+
 **Check types** (`type` keyword): `ping`, `tcp`, `udp`, `smtp`, `pop3`, `dns`, `http`, `https`. For
 legacy familiarity, `authdns` is accepted as an alias for `dns` and `www` for `http`. Default
 ports: smtp `25`, pop3 `110`, dns `53`, http `80`, https `443` (ping has none; tcp/udp require an
@@ -258,7 +262,7 @@ named graph:
 Recoverable problems warn and degrade gracefully rather than failing the load:
 
 - **One parent only** (single-`dep` MVP). Listing more than one `dep` warns and keeps the first.
-  True named multi-parent (DAG) dependencies are **planned (#62)** and not yet implemented.
+  True named multi-parent (DAG) dependencies are **planned** and not yet implemented.
 - An **unknown `dep` target** warns and the object becomes a root.
 - A **cycle** warns and the object becomes a root (the forest is kept acyclic).
 
@@ -274,7 +278,7 @@ a value — a string or a bareword, including as a substring (`"$noc and a note"
 undefined variable is left literal with a warning. Variables must be defined before use.
 
 > **`include` is reserved, not yet supported.** A config that uses `include` is **rejected at load**
-> with an error (it's a planned follow-up under #3). Do not rely on it working today.
+> with an error — it's a planned feature, not yet implemented. Do not rely on it working today.
 
 ### Per-object overrides
 
@@ -286,7 +290,7 @@ object still loads with the global default).
 | `queuetime` | seconds (> 0) | Per-object check interval — poll a critical host faster than the tail |
 | `numfailures` | integer (≥ 1) | Per-object page threshold |
 | `send_pings` / `min_pings` | integers (≥ 1, `min ≤ send`) | Per-object loss-tolerant ping; an invalid pair falls back to the globals |
-| `group` | `"name"` | Operator grouping label (status-page headings + a JSON field); a matching `group "name" { … }` block can give the group default settings |
+| `group` | `"name"` | Operator grouping label (status-page headings + a JSON field); a matching `group "name" { … }` block can give the group default settings — see [Group scopes](#group-scopes) |
 | `contact_on` | `down`\|`up`\|`both`\|`none` | Which transitions page this object (overrides global) |
 | `source` | `"ip"` \| `auto` | Outbound bind source for this object's check (see below) |
 
@@ -317,14 +321,14 @@ per-type default differs by check type, and this is a common source of confusion
 Set `source` to:
 
 - an **IPv4 address** (`source "203.0.113.5";`) — bind this object's probes to that local address.
-  Works for ping too. (IPv6 source binding is rejected at load; that's planned under #24.)
+  Works for ping too. (IPv6 source binding is rejected at load; that's planned.)
 - **`auto`** (`source auto;`) — keep this object **unbound** (route by destination) even when a
   group default or `config source_ip` would otherwise bind it. This is the explicit opt-out.
 
 > **HTTP/HTTPS exception:** `source` is not applied to http/https checks (the HTTP client offers no
 > per-request source bind).
 
-### Group scopes — `group "NAME" { ... }`
+### Group scopes — `group "NAME" { ... }` {#group-scopes}
 
 A top-level `group "NAME" { … }` block gives every object that joins the group (via the
 `group "NAME"` attribute) shared default settings. Today it carries `source`; it's a scope, so
@@ -382,12 +386,16 @@ can still override (CLI > config file > default). An unknown directive warns and
 
 `config sleeptime` is obsolete and ignored with a warning (use `queuetime` / `--interval`).
 
-> **`config numfailures` is a global default only in the modern format.** Unlike the legacy
-> positional behavior, it just sets the baseline. To give one object a different threshold, use its
-> per-object `numfailures` attribute.
+> **Several of these globals have a matching per-object override.** `queuetime`, `numfailures`,
+> `send_pings` / `min_pings`, `contact_on`, and `source` can each be set on an individual object to
+> override the global default (see [Per-object overrides](#per-object-overrides)). `numfailures` is
+> the only one whose *legacy* behavior also differs — it is position-dependent in the legacy format
+> (see above), but a plain global default here.
 
-**Control / query channel.** The opt-in control channel ([control channel docs](07-operating.md))
-is configured with these directives; it is **off by default** and binds loopback `127.0.0.1:2026`
+**Control / query channel.** The opt-in control channel (operate it from
+[Operating → the control channel](07-operating.md#control-channel); full security reference in
+[docs/control-channel.md](control-channel.md)) is configured with these directives; it is **off by
+default** and binds loopback `127.0.0.1:2026`
 when enabled, refusing to start on a non-loopback address without TLS:
 
 ```

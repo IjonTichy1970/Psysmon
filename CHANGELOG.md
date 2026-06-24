@@ -16,6 +16,11 @@ All notable changes to this project are documented here. The format is based on
   grammar, directives, per-object overrides, the legacy→modern migration guide, and the
   differences from sysmon 0.93.
 
+### Fixed
+- Config files saved with a UTF-8 byte-order mark (BOM) are now read correctly — the BOM is
+  stripped on load instead of being glued onto the first directive/host (which would break that
+  line). Applies to the daemon's config load and `psysmon-convert`.
+
 ## [0.2.0] — 2026-06-23 — modern object{} config format + converter
 
 ### Added

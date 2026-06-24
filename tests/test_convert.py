@@ -232,3 +232,13 @@ def test_cli_writes_output(tmp_path):
     assert main([str(src), "-o", str(out)]) == 0
     text = out.read_text(encoding="utf-8")
     assert detect(text) is ConfigFormat.MODERN and "object host.example.net {" in text
+
+
+def test_cli_handles_utf8_bom_input(tmp_path):
+    # A legacy file saved with a UTF-8 BOM must not glue the BOM onto the first host (utf-8-sig).
+    src = tmp_path / "old.conf"
+    src.write_text("host.example.net ping label noc@example.net\n", encoding="utf-8-sig")
+    out = tmp_path / "new.conf"
+    assert main([str(src), "-o", str(out)]) == 0
+    text = out.read_text(encoding="utf-8")
+    assert 'ip "host.example.net";' in text  # hostname clean, no leading BOM

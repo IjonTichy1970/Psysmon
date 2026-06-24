@@ -238,7 +238,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.input == "-":
             text = sys.stdin.read()
         else:
-            text = Path(args.input).read_text(encoding="utf-8")
+            text = Path(args.input).read_text(encoding="utf-8-sig")  # strips a leading BOM
+        text = text.removeprefix("\ufeff")  # utf-8-sig covers files; this covers a BOM on stdin
         modern, warnings = convert(text, numfailures=args.numfailures)
         if args.output:
             Path(args.output).write_text(modern, encoding="utf-8")

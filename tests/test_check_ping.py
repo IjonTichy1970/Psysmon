@@ -609,6 +609,50 @@ async def test_socket_for_falls_back_to_unbound_when_bind_fails(monkeypatch, cap
     assert "203.0.113.5" not in caplog.text           # but warns only once
 
 
+async def test_socket_for_does_not_retry_a_known_bad_source(monkeypatch):
+    # A source recorded as unbindable is fast-pathed to the unbound default with NO further
+    # _open_raw attempt — _warned_unbindable is load-bearing, not just cosmetic (#70 review).
+    svc = ping.PingService()
+    unbound = _CountingSocket()
+    svc._socks[None] = unbound
+    svc._registered.add(None)
+    opens: list = []
+
+    def boom(source=None):
+        opens.append(source)
+        if source is not None:
+            raise PermissionError("operation not permitted")
+        return unbound
+
+    monkeypatch.setattr(svc, "_open_raw", boom)
+    svc._socket_for("203.0.113.5")  # first: attempts the bind, fails, records it
+    svc._socket_for("203.0.113.5")  # second: must NOT attempt _open_raw again
+    svc._socket_for("203.0.113.5")
+    assert opens == ["203.0.113.5"]  # exactly one bind attempt for the dead source
+
+
+async def test_prune_closes_dropped_bound_sockets(monkeypatch):
+    # On reload, sockets for sources the new config dropped are closed; the unbound default and
+    # still-configured sources are kept (#70 review).
+    svc = ping.PingService()
+    svc.set_sources(["203.0.113.5", "203.0.113.9"])
+    monkeypatch.setattr(svc, "_open_raw", lambda source=None: _CountingSocket())
+    loop = asyncio.get_running_loop()
+    removes: list[int] = []
+    monkeypatch.setattr(loop, "add_reader", lambda fd, *a: None)
+    monkeypatch.setattr(loop, "remove_reader", lambda fd: removes.append(fd))
+
+    svc.prepare()
+    for src in (None, "203.0.113.5", "203.0.113.9"):
+        svc._ensure_socket(src)
+    dropped = svc._socks["203.0.113.9"]
+
+    svc.prune(["203.0.113.5"])  # 203.0.113.9 no longer configured
+    assert set(svc._socks) == {None, "203.0.113.5"}  # unbound + the kept source remain
+    assert dropped.closed is True and dropped.fileno() in removes
+    assert "203.0.113.9" not in svc._registered
+
+
 async def test_close_iterates_the_whole_pool(monkeypatch):
     svc = ping.PingService()
     svc.set_sources(["203.0.113.5"])

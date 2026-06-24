@@ -695,6 +695,32 @@ def test_group_attribute_still_sets_display_label():
     assert res.roots[0].group == "core"  # trimmed, as before
 
 
+def test_group_block_name_is_var_substituted():
+    # A $var in the group BLOCK name must expand the same as in the membership attr, else the
+    # block keys under "$G" and its members (keyed under the expanded name) never match it.
+    res = parse(
+        'set G = "edge";\n'
+        'group "$G" { source "192.0.2.9"; }\n'
+        'object x { ip "h"; type tcp; port 80; group "$G"; };\n'
+    )
+    assert res.roots[0].source == "192.0.2.9" and res.warnings == []
+
+
+def test_source_ipv6_is_rejected():
+    # The bind stack is IPv4-only; an IPv6 source could never bind, so reject it at load (#24).
+    for v6 in ("::1", "fe80::1", "2001:db8::5"):
+        res = parse(f'object x {{ ip "h"; type tcp; port 80; source "{v6}"; }};\n')
+        assert res.roots[0].source is None
+        assert any("IPv6" in w for w in res.warnings)
+
+
+def test_source_rejects_non_ip_tokens():
+    # ip_address() coerces a bare int, but the token is always a str, so "5"/"300" are rejected.
+    for bad in ("5", "300", "10.0.0", "0x7f000001"):
+        res = parse(f'object x {{ ip "h"; type ping; source "{bad}"; }};\n')
+        assert res.roots[0].source is None and any("source" in w for w in res.warnings)
+
+
 # --- detect() routes the modern grammar -----------------------------------------------
 
 def test_detect_modern_signals():

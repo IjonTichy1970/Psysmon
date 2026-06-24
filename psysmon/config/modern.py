@@ -463,7 +463,9 @@ class _Parser:
             self._warn(line, "group needs a name; skipping")
             self._skip_block_or_semi()
             return
-        name = name.strip()
+        # Expand $vars in the name exactly like the object-side `group "..."` membership attr
+        # (else `group "$G" {...}` would key under the literal "$G" and never match its members).
+        name = self._subst(line, name).strip()
         if not self._take(TokenKind.LBRACE):
             self._warn(line, f"group '{name}' is missing '{{'; skipping")
             self._collect_to_semi()
@@ -612,9 +614,16 @@ class _Parser:
         if val.lower() == SOURCE_AUTO:
             return SOURCE_AUTO
         try:
-            ipaddress.ip_address(val)
+            addr = ipaddress.ip_address(val)
         except ValueError:
-            self._warn(line, f"{who}: source must be an IP address or 'auto', got '{raw}'; "
+            self._warn(line, f"{who}: source must be an IPv4 address or 'auto', got '{raw}'; "
+                       "ignoring")
+            return None
+        if addr.version != 4:
+            # The whole bind stack is IPv4-only (raw AF_INET ping; IPv4 connection checks); an IPv6
+            # source could never bind, so reject it at load with a clear warning rather than letting
+            # it silently fail at probe time. IPv6 is #24.
+            self._warn(line, f"{who}: IPv6 source binding isn't supported yet (#24), got '{raw}'; "
                        "ignoring")
             return None
         return val

@@ -201,6 +201,8 @@ class PingService:
         """The pooled socket to send a probe from. Falls back to the (pre-opened) unbound socket,
         with a one-time warning, if a bound source can't be opened now — e.g. a source introduced
         by a reload after the daemon dropped raw-socket privilege (#70)."""
+        if source is not None and source in self._warned_unbindable:
+            source = None  # already known-unbindable: straight to the unbound default, no retry
         if source is not None and source not in self._socks:
             try:
                 self._socks[source] = self._open_raw(source)
@@ -214,6 +216,26 @@ class PingService:
             self._warned_unbindable.add(source)
             logger.warning("ping: cannot bind source %s (%s); routing affected checks unbound "
                            "until restart", source, exc)
+
+    def prune(self, keep: Iterable[str]) -> None:
+        """Close pooled BOUND sockets whose source is no longer configured (#70 reload cleanup).
+
+        The unbound default (key ``None``) is always kept. Called from the scheduler on reload so
+        a source the new config dropped doesn't keep a raw socket + reader open for the daemon's
+        life. Safe mid-flight: an orphaned in-flight probe's result is discarded anyway, and its
+        next send on a closed socket is the same caught OSError as a transient route failure.
+        """
+        keep_set = frozenset(s for s in keep if s)
+        for source in [s for s in self._socks if s is not None and s not in keep_set]:
+            sock = self._socks.pop(source)
+            if source in self._registered:
+                try:
+                    asyncio.get_running_loop().remove_reader(sock.fileno())
+                except RuntimeError:  # no running loop — close still suffices
+                    pass
+                self._registered.discard(source)
+            self._warned_unbindable.discard(source)
+            sock.close()
 
     def close(self) -> None:
         """Unregister and close every pooled socket (idempotent)."""

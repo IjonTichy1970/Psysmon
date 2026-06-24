@@ -574,9 +574,12 @@ class Scheduler:
             old.alive = False
         self.warnings = []
         self._scheduled = self._flatten(roots)
-        # Refresh the configured ping-source set for the new tree. (Sockets aren't re-opened —
-        # prepare() already ran pre-privilege-drop; a brand-new source falls back to unbound.)
-        self._ping.set_sources(self._collect_ping_sources())
+        # Refresh the configured ping-source set for the new tree, and close pooled sockets for
+        # sources the new config dropped. (New sources aren't opened — prepare() already ran
+        # pre-privilege-drop; a brand-new source falls back to unbound at check time.)
+        ping_sources = self._collect_ping_sources()
+        self._ping.set_sources(ping_sources)
+        self._ping.prune(ping_sources)
         seen: set[tuple[str, CheckType, int]] = set()
         for sched in self._scheduled:
             key = (sched.node.hostname, sched.node.check_type, sched.node.port)

@@ -64,10 +64,9 @@ def build(argv: list[str] | None = None) -> tuple[Scheduler, Settings]:
     settings = merge(overrides, cli)  # CLI > config file > defaults
     notifier = SmtpNotifier(settings) if settings.notify_enabled else None
     # PingService validates the loss-tolerance pair, so a bad --send-pings/--min-pings is a clean
-    # startup error (main() catches ValueError) rather than a per-check failure (#22).
-    ping = PingService(
-        settings.source_ip, send_pings=settings.send_pings, min_pings=settings.min_pings
-    )
+    # startup error (main() catches ValueError) rather than a per-check failure (#22). Its bound
+    # sources (#70) are supplied by the scheduler once it has resolved every ping node's source.
+    ping = PingService(send_pings=settings.send_pings, min_pings=settings.min_pings)
     scheduler = Scheduler(roots, settings, ping_service=ping, notifier=notifier)
     for warning in scheduler.warnings:
         logger.warning("schedule: %s", warning)

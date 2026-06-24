@@ -80,7 +80,7 @@ unknown directive is warned and skipped.
 | `config page_on_degraded` | (no value) | off | Page on a degraded (partial-loss) ping |
 | `config contact_on` | `down`\|`up`\|`both`\|`none` | `both` | Default transitions that page (per-object override; see below) |
 | `config maxqueued` | integer | `50` | Cap on concurrent checks |
-| `config source_ip` | `"ip"` | (auto) | Outbound bind source IP |
+| `config source_ip` | `"ip"` | (auto) | Default outbound bind source for the **connection** checks (firewall ACLs). Ping ignores it — ping is unbound by default; see the per-object `source` below |
 | `config hostname` | `"name"` | (auto) | Org hostname shown in alerts / status page |
 | `config sender` / `config from` | `"addr"` | (none) | Alert `From:` address |
 
@@ -147,8 +147,9 @@ These override the global defaults for a single object. An invalid value is warn
 | `queuetime` | seconds (> 0) | Per-object check interval — poll a critical host faster than the long tail |
 | `numfailures` | integer (≥ 1) | Per-object page threshold |
 | `send_pings` / `min_pings` | integers (≥ 1, `min ≤ send`) | Per-object loss-tolerant ping; an invalid pair falls back to the globals |
-| `group` | `"name"` | Operator grouping label — groups objects under headings on the status page and adds a `group` field to the JSON |
+| `group` | `"name"` | Operator grouping label — groups objects under headings on the status page and adds a `group` field to the JSON. A matching `group "name" { … }` block (below) can also give the group default settings |
 | `contact_on` | `down` \| `up` \| `both` \| `none` | Which transitions page this object (overrides the global `config contact_on`; see below) |
+| `source` | `"ip"` \| `auto` | Outbound bind source for this object's check (overrides the group default and `config source_ip`; see below) |
 
 Any other attribute (a typo) is warned and ignored.
 
@@ -162,6 +163,64 @@ globally (`config contact_on …` / `--contact-on`); a per-object value override
 - `none` — never page this object (it's still monitored and shown on the status page).
 
 An object with no `contact` address never pages regardless of `contact_on`.
+
+### Outbound bind source — `source` (#70)
+
+`source` controls which local address a check's probes go out from. The resolution, per object, is:
+
+**per-object `source` › the object's group `source` › the per-type default › unbound.**
+
+The per-type default differs:
+
+- **ping (ICMP) is unbound by default** — the kernel routes each probe by destination, *regardless
+  of `config source_ip`*. This is the right behavior for hosts reached over a VPN or a dynamic
+  interface (nothing to track when the local address changes), and it matches a plain `ping` with
+  no `-I`.
+- **all other checks** (tcp/udp/smtp/pop3/dns) default to the global **`config source_ip`** (the
+  ACL-egress address), or unbound if none is set.
+
+Set `source` to:
+
+- an **IPv4 address** (`source "203.0.113.5";`) — bind this object's probes to that local address.
+  Works for ping too (pin a stable VPN local address), and for the connection checks. (IPv6 source
+  binding isn't supported yet — an IPv6 `source` is rejected at load; that's #24.)
+- **`auto`** (`source auto;`) — keep this object **unbound** (route by destination) even when a
+  group default or `config source_ip` would otherwise bind it. This is the explicit opt-out.
+
+> **HTTP/HTTPS exception:** `source` is not applied to http/https checks — httpx offers no
+> per-request source bind. (Production configs use no http checks, so this is documented rather
+> than worked around.)
+
+> **Note:** binding a *literal* per-VPN IP is fragile if that address changes across reboots/VPN
+> restarts — prefer `auto` (unbound) for such hosts.
+
+### Group scopes — `group "NAME" { ... }`
+
+A top-level `group "NAME" { … }` block gives every object that joins the group (via the
+`group "NAME"` attribute) shared default settings. Today it carries `source`; it's a scope, so
+future per-group defaults slot in the same way. A per-object value always wins over the group
+default, and the per-object `group "NAME"` membership attribute keeps working with or without a
+matching block (a block-less group is just a display label, #20). Group/object declaration order
+doesn't matter — defaults are resolved after the whole file is read.
+
+```
+group "vpn-sites" {
+    source auto;            # these hosts route freely (unbound)
+}
+group "dmz" {
+    source "192.0.2.9";     # bind DMZ checks to this egress address
+}
+
+object gw {
+    ip "198.51.100.1"; type ping;
+    group "vpn-sites";       # inherits: source auto
+}
+object mail {
+    ip "198.51.100.2"; type smtp; port 25;
+    group "dmz";
+    source "203.0.113.5";    # per-object source WINS over the dmz default
+}
+```
 
 ## Dependencies and the monitored forest
 

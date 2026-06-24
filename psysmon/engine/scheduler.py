@@ -21,8 +21,8 @@ Design:
   original's rules and is dropped from scheduling with a warning.
 * A check result is **discarded** if the node's gate fell while the check was in flight
   (re-checked at completion), so a parent going down mid-check can't produce a stale alarm.
-* **Ping** runs on the shared :class:`~psysmon.checks.ping.PingService` (one raw socket) and is
-  *not* bounded by the per-check semaphore; all other checks are.
+* **Ping** runs on the shared :class:`~psysmon.checks.ping.PingService` (a source-keyed pool of
+  raw sockets, #70) and is *not* bounded by the per-check semaphore; all other checks are.
 * Paging is wired through a :class:`~psysmon.notify.base.Notifier`: on a DOWN intent it pages
   and marks ``contacted``; on RECOVERY it pages the clear; otherwise a still-down contacted
   node is re-paged once ``pageinterval`` has elapsed (eligible nodes only — a fix vs. the C).
@@ -34,11 +34,11 @@ import asyncio
 import heapq
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from psysmon.checks import base, dns, http, pop3, smtp, tcp, udp
 from psysmon.checks.ping import PingService
-from psysmon.config.model import CheckType, Node, NodeState, type_to_name
+from psysmon.config.model import SOURCE_AUTO, CheckType, Node, NodeState, type_to_name
 from psysmon.config.settings import Settings
 from psysmon.engine.clock import Clock, SystemClock
 from psysmon.engine.dnscache import DnsCache
@@ -141,6 +141,7 @@ class _Scheduled:
     state: NodeState
     gate: list[_Scheduled]  # ancestor ping nodes; all must be checked-and-up to run
     interval: float
+    source: str | None = None  # resolved outbound bind source (#70); None = unbound
     next_due: float = 0.0
     in_flight: bool = False
     checked: bool = False  # has completed at least one (non-discarded) check
@@ -167,7 +168,7 @@ class Scheduler:
         self._clock = clock or SystemClock()
         self._resolver = resolver or DnsCache(settings.dnsexpire_s, settings.dnslog_s)
         self._ping = ping_service or PingService(
-            settings.source_ip, send_pings=settings.send_pings, min_pings=settings.min_pings
+            send_pings=settings.send_pings, min_pings=settings.min_pings
         )
         self._notifier = notifier or _NullNotifier()
         self._runner = runner or self._default_runner
@@ -188,10 +189,19 @@ class Scheduler:
         self.warnings: list[str] = []
 
         self._scheduled = self._flatten(roots)
+        # Tell the ping service which bound sources to pre-open (while still privileged) so each
+        # configured per-object/group ping source gets its own raw socket in the pool (#70).
+        self._ping.set_sources(self._collect_ping_sources())
         self._stagger_due(stagger)
         self._build_heap()
 
     # --- tree flattening + gate computation -------------------------------------------
+
+    def _collect_ping_sources(self) -> set[str]:
+        """Distinct bound sources among scheduled ping nodes — the bound sockets the ping pool
+        must pre-open (the unbound default is implicit). Unset/`auto` ping nodes contribute none."""
+        return {s.source for s in self._scheduled
+                if s.node.check_type is CheckType.PING and s.source}
 
     def _flatten(self, roots: list[Node]) -> list[_Scheduled]:
         scheduled: list[_Scheduled] = []
@@ -209,6 +219,7 @@ class Scheduler:
                 state=state,
                 gate=list(gate),
                 interval=max(node.interval or self._default_interval, _MIN_INTERVAL_S),
+                source=self._effective_source(node),
             )
             scheduled.append(sched)
             is_ping = node.check_type is CheckType.PING
@@ -321,6 +332,31 @@ class Scheduler:
 
     # --- check execution + paging -----------------------------------------------------
 
+    def _effective_source(self, node: Node) -> str | None:
+        """Resolve a node's outbound bind source (#70): the per-object/group token on
+        ``node.source``, else the per-type default. Returns the local IP to bind, or ``None`` to
+        leave the check unbound (the kernel routes by destination).
+
+        ``auto`` -> unbound; an explicit IP -> bind (ping and connection checks alike); unset ->
+        ping defaults unbound (ignoring the global ``source_ip``), every other check defaults to
+        the global ``source_ip``.
+        """
+        tok = node.source
+        if tok == SOURCE_AUTO:
+            return None
+        if tok:
+            return tok
+        if node.check_type is CheckType.PING:
+            return None
+        return self._settings.source_ip
+
+    def _ctx_for(self, sched: _Scheduled) -> base.CheckContext:
+        """The CheckContext for a non-ping check — the shared default unless this node resolved to
+        a different outbound source (#70). Reused unchanged in the common (global-source) case."""
+        if sched.source == self._ctx.source_ip:
+            return self._ctx
+        return replace(self._ctx, source_ip=sched.source)
+
     async def _default_runner(self, node: Node, ctx: base.CheckContext) -> int:
         if node.check_type is CheckType.PING:
             return await self._ping.check(node, ctx)
@@ -331,13 +367,15 @@ class Scheduler:
         try:
             if node.check_type is CheckType.PING:
                 started = self._clock.monotonic()
-                code = await self._runner(node, self._ctx)
+                # ctx.source_ip carries this node's resolved ping source; the PingService picks the
+                # matching pooled socket (None = unbound, ping's default regardless of source_ip).
+                code = await self._runner(node, self._ctx_for(sched))
             else:
                 async with self._sem:
                     # Start timing only after acquiring the slot: a check that merely queued
                     # behind the concurrency cap shouldn't read as "ran for N seconds".
                     started = self._clock.monotonic()
-                    code = await self._runner(node, self._ctx)
+                    code = await self._runner(node, self._ctx_for(sched))
             elapsed = self._clock.monotonic() - started
             if self._slow_check_s > 0 and elapsed >= self._slow_check_s:
                 logger.info("Check of %s of %s ran for %.1f seconds",
@@ -536,6 +574,12 @@ class Scheduler:
             old.alive = False
         self.warnings = []
         self._scheduled = self._flatten(roots)
+        # Refresh the configured ping-source set for the new tree, and close pooled sockets for
+        # sources the new config dropped. (New sources aren't opened — prepare() already ran
+        # pre-privilege-drop; a brand-new source falls back to unbound at check time.)
+        ping_sources = self._collect_ping_sources()
+        self._ping.set_sources(ping_sources)
+        self._ping.prune(ping_sources)
         seen: set[tuple[str, CheckType, int]] = set()
         for sched in self._scheduled:
             key = (sched.node.hostname, sched.node.check_type, sched.node.port)

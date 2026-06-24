@@ -68,6 +68,11 @@ def type_to_name(check_type: CheckType) -> str:
 # pages. Used as the per-object `contact_on` attr and the global `config contact_on` default.
 CONTACT_ON_CHOICES = ("down", "up", "both", "none")
 
+# The per-object / per-group `source` value that means "explicitly leave this check unbound"
+# (let the kernel route by destination), even when a group default or the global source_ip would
+# otherwise apply. Distinct from an unset source (None = inherit the default). See #70.
+SOURCE_AUTO = "auto"
+
 
 @dataclass(slots=True)
 class Node:
@@ -84,6 +89,11 @@ class Node:
     contact: str = ""  # notification address ("" = no page, syslog only)
     group: str = ""  # operator grouping label (modern `group "..."` attr; display use is #20)
     contact_on: str = ""  # which transitions page (down|up|both|none); "" = use the global default
+    # Per-object outbound bind source (#70). None = inherit (ping -> unbound; others -> the global
+    # source_ip); the literal SOURCE_AUTO ("auto") = explicitly unbound (overrides an inherited
+    # source); any other string = a literal IP to bind. Resolved from the object's `source` attr or
+    # its group's `source` default at parse time (the per-object value wins).
+    source: str | None = None
     username: str = ""  # pop3 auth
     password: str = ""  # pop3 auth
     url: str = ""  # http/https path

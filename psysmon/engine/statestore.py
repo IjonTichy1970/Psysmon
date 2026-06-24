@@ -31,7 +31,7 @@ log = logging.getLogger("psysmon.statestore")
 # Bump when the persisted record shape changes incompatibly. A file written by a different
 # schema is ignored (logged) on load rather than misread — an upgrade that changes the layout
 # degrades to a fresh start instead of a startup crash.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # v2 added acked/note to the carried record (#68); v1 files ignored on load
 
 # Refuse to read an implausibly large state file. A real file is a few hundred bytes per node
 # (the production scope is ~1200 nodes ~= 300 KB); this cap (32 MiB) is far above any sane

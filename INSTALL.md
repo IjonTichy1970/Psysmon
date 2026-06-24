@@ -164,6 +164,13 @@ journalctl -u psysmon -f          # follow the logs
   Live up/down state is preserved for hosts that still exist.
 - **Stop:** `sudo systemctl stop psysmon` (or `kill -TERM <pid>`) — it drains in-flight checks
   and writes a final status snapshot.
+- **Control channel (optional):** to query status and acknowledge/annotate alerts at runtime,
+  enable the opt-in control channel. Generate a token once — `psysmon-token
+  /etc/psysmon/control.token` — then run with `--control --control-token-file
+  /etc/psysmon/control.token` (or the `config control` directives). It binds `127.0.0.1:2026` and
+  is driven by `psysmonctl` (`psysmonctl status`, `psysmonctl ack <host> <type>`). See
+  [docs/control-channel.md](docs/control-channel.md) — including how to expose it beyond localhost
+  with TLS.
 
 ## 6. Upgrade
 

@@ -22,6 +22,7 @@ import argparse
 from dataclasses import dataclass, fields
 
 from psysmon import __version__
+from psysmon.config.model import CONTACT_ON_CHOICES
 
 
 @dataclass(slots=True)
@@ -51,6 +52,10 @@ class Settings:
     min_pings: int = 1  # replies required to count up; in between -> DEGRADED, 0 -> UNPINGABLE
     page_on_degraded: bool = False  # by default a DEGRADED result is informational, not paged
 
+    # Which transitions page (down | up | both | none); the global default, overridable per-object
+    # in the modern config. "both" preserves psysmon's historical page-on-down-and-recovery.
+    contact_on: str = "both"
+
     # DNS cache
     dnsexpire_s: int = 900
     dnslog_s: int = 600
@@ -71,6 +76,14 @@ class Settings:
     log_level: str = "info"  # warning | info | debug — verbosity of operational logging
     heartbeat_s: int = 300  # periodic "monitoring N hosts" summary interval; 0 disables
     foreground: bool = False  # `-d` / don't fork
+
+    # Control plane (#69) — opt-in JSON-over-TLS query/control channel; OFF by default.
+    control_enabled: bool = False
+    control_bind: str = "127.0.0.1"  # loopback by default; a non-loopback bind requires TLS
+    control_port: int = 2026
+    control_token_file: str | None = None  # bearer token for mutating actions (a 0600 file)
+    control_tls_cert: str | None = None
+    control_tls_key: str | None = None
 
 
 _FIELD_NAMES = frozenset(f.name for f in fields(Settings))
@@ -141,6 +154,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--page-on-degraded", dest="page_on_degraded", action="store_true",
         help="escalate/page on a degraded (partial-loss) ping (default: informational only)",
     )
+    p.add_argument(
+        "--contact-on", dest="contact_on", choices=list(CONTACT_ON_CHOICES),
+        help="which transitions page: down | up | both | none (default both; per-object override)",
+    )
 
     # DNS cache
     p.add_argument("--dnsexpire", dest="dnsexpire_s", type=int, metavar="SEC", help="DNS cache TTL")
@@ -185,6 +202,28 @@ def build_parser() -> argparse.ArgumentParser:
         help='periodic "monitoring N hosts" summary interval (0 disables)',
     )
     p.add_argument("-d", "--no-fork", dest="no_fork", action="store_true", help="run in foreground")
+
+    # Control plane (#69)
+    p.add_argument(
+        "--control", dest="control", action="store_true",
+        help="enable the control/query channel (off by default)",
+    )
+    p.add_argument(
+        "--control-bind", dest="control_bind", metavar="ADDR",
+        help="control channel bind address (default 127.0.0.1; a non-loopback bind needs TLS)",
+    )
+    p.add_argument(
+        "--control-port", dest="control_port", type=int, metavar="PORT",
+        help="control channel port (default 2026)",
+    )
+    p.add_argument(
+        "--control-token-file", dest="control_token_file", metavar="PATH",
+        help="file holding the bearer token required for mutating control actions",
+    )
+    p.add_argument("--control-tls-cert", dest="control_tls_cert", metavar="PATH",
+                   help="TLS certificate for the control channel")
+    p.add_argument("--control-tls-key", dest="control_tls_key", metavar="PATH",
+                   help="TLS private key for the control channel")
     return p
 
 
@@ -205,6 +244,8 @@ def cli_overrides(argv: list[str] | None = None) -> dict[str, object]:
         out["foreground"] = True
     if raw.get("show_up"):
         out["show_up_also"] = True
+    if raw.get("control"):
+        out["control_enabled"] = True
     # -v/-vv set the level only when --log-level wasn't given explicitly (mapped above).
     if "log_level" not in out and raw.get("verbose"):
         out["log_level"] = "debug" if raw["verbose"] >= 2 else "info"

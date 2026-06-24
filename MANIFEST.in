@@ -6,5 +6,8 @@ include INSTALL.md
 include CHANGELOG.md
 include LICENSE
 
+# The docs/ guides the README/INSTALL link to (the modern-config + control-channel references).
+recursive-include docs *.md
+
 # Bundled runtime asset: the status-page logo the daemon deploys next to the status file.
 recursive-include psysmon/assets *.png

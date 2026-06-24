@@ -27,6 +27,7 @@ from psysmon.config.legacy import parse as parse_legacy
 from psysmon.config.model import CheckType, Node
 from psysmon.config.modern import parse as parse_modern
 from psysmon.config.settings import Settings, cli_overrides, merge
+from psysmon.control.server import ControlServer
 from psysmon.engine.scheduler import Scheduler
 from psysmon.engine.statestore import StateStore
 from psysmon.notify.email_smtp import SmtpNotifier
@@ -202,6 +203,13 @@ async def serve(scheduler: Scheduler, settings: Settings) -> None:
     reload_flag = asyncio.Event()
     _install_signals(loop, scheduler, reload_flag)
 
+    # Control channel (#69): opt-in. A bad bind / TLS / token config raises and aborts startup
+    # (fail closed) rather than running with the channel silently disabled or unprotected.
+    control = None
+    if settings.control_enabled:
+        control = ControlServer(scheduler, reload_flag, settings)
+        await control.start()
+
     store = (
         StateStore(settings.state_path, max_age_s=settings.state_max_age_s)
         if settings.state_path else None
@@ -220,6 +228,8 @@ async def serve(scheduler: Scheduler, settings: Settings) -> None:
     try:
         await run_task  # returns once scheduler.stop() is called (it drains in-flight checks)
     finally:
+        if control is not None:
+            await control.stop()
         for task in helpers:
             task.cancel()
         await asyncio.gather(*helpers, return_exceptions=True)

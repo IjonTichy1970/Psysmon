@@ -78,6 +78,7 @@ unknown directive is warned and skipped.
 | `config send_pings` | integer | `1` | Global echoes per ping check (loss-tolerant ping) |
 | `config min_pings` | integer | `1` | Global replies required to count a host up |
 | `config page_on_degraded` | (no value) | off | Page on a degraded (partial-loss) ping |
+| `config contact_on` | `down`\|`up`\|`both`\|`none` | `both` | Default transitions that page (per-object override; see below) |
 | `config maxqueued` | integer | `50` | Cap on concurrent checks |
 | `config source_ip` | `"ip"` | (auto) | Outbound bind source IP |
 | `config hostname` | `"name"` | (auto) | Org hostname shown in alerts / status page |
@@ -146,9 +147,21 @@ These override the global defaults for a single object. An invalid value is warn
 | `queuetime` | seconds (> 0) | Per-object check interval — poll a critical host faster than the long tail |
 | `numfailures` | integer (≥ 1) | Per-object page threshold |
 | `send_pings` / `min_pings` | integers (≥ 1, `min ≤ send`) | Per-object loss-tolerant ping; an invalid pair falls back to the globals |
-| `group` | `"name"` | Operator grouping label (display use is a future feature) |
+| `group` | `"name"` | Operator grouping label — groups objects under headings on the status page and adds a `group` field to the JSON |
+| `contact_on` | `down` \| `up` \| `both` \| `none` | Which transitions page this object (overrides the global `config contact_on`; see below) |
 
-Any other attribute (a typo, or the not-yet-supported `contact_on`) is warned and ignored.
+Any other attribute (a typo) is warned and ignored.
+
+**`contact_on`** selects which state transitions send a page — for one object (the attribute) or
+globally (`config contact_on …` / `--contact-on`); a per-object value overrides the global:
+
+- `both` *(default)* — page on a host going **down** and on its **recovery** (psysmon's historical
+  behavior; nothing changes unless you set this).
+- `down` — page on outages only; suppress recovery pages.
+- `up` — page on recovery only; stay quiet on the way down.
+- `none` — never page this object (it's still monitored and shown on the status page).
+
+An object with no `contact` address never pages regardless of `contact_on`.
 
 ## Dependencies and the monitored forest
 
@@ -212,8 +225,6 @@ clean warning or a clear refusal, never a silent surprise):
 
 - **`include`** — not yet supported; a config using it is **rejected at load**. (A follow-up,
   M2b, will add it with proper `$var`-across-include scoping.)
-- **`contact_on`** — not yet supported; warned and ignored. Its paging semantics need their own
-  design (see [defaults](#differences-from-sysmon-093-defaults)).
 - **Multiple `dep` edges (DAG)** — single parent only; extra edges warn and the first is kept
   ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)).
 - **IPv6 ping** (`ping6` / `pingv6` / `icmp6`) — deferred ([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)); these `type`s warn and skip.
@@ -233,9 +244,9 @@ behave like psysmon, not like 0.93:
 | Check interval (`queuetime`) | **30s** | 60s |
 | Failure threshold (`numfailures`) | **2** | 4 |
 
-**`contact_on`** is not implemented yet. When it lands, note that psysmon's notifier currently
-pages on **both** transitions — a host going *down* and a host *recovering* — so `contact_on`'s
-default will be defined against that actual behavior, not the "down-only" an earlier draft assumed.
+`contact_on` defaults to **`both`** — psysmon's own historical page-on-down-and-recovery
+behavior — so adopting it changes nothing by default. Its values (`down` / `up` / `both` /
+`none`) are covered in the per-object overrides section above.
 
 ## Reloading (SIGHUP)
 

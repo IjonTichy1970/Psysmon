@@ -91,6 +91,17 @@ def _as_bool(value: object) -> bool:
     return value
 
 
+_MAX_NOTE_LEN = 1024  # cap an operator note (#68): bounds rendering + a hand-edited state file
+
+
+def _as_note(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError
+    return value[:_MAX_NOTE_LEN]
+
+
 def _validated_carry(record: dict) -> dict | None:
     """Type-check a persisted record's carried fields; None if any is missing or wrong-typed.
 
@@ -108,6 +119,8 @@ def _validated_carry(record: dict) -> dict | None:
             "contacted": _as_bool(record["contacted"]),
             "deathtime": _as_float(record["deathtime"]),
             "last_up": _as_float(record["last_up"]),
+            "acked": _as_bool(record["acked"]),
+            "note": _as_note(record["note"]),
         }
     except (KeyError, TypeError):
         return None
@@ -166,6 +179,7 @@ class Scheduler:
         self._pageinterval_s = settings.pageinterval_min * 60
         self._slow_check_s = settings.slow_check_s
         self._page_on_degraded = settings.page_on_degraded
+        self._contact_on_default = settings.contact_on  # global default; per-object override wins
         self._sem = asyncio.Semaphore(settings.max_concurrency)
         self._stop = asyncio.Event()
         self._dirty = asyncio.Event()
@@ -357,20 +371,73 @@ class Scheduler:
 
     async def _handle_paging(self, sched: _Scheduled, transition) -> None:
         node, state = sched.node, sched.state
+        # contact_on gates which transitions actually page. "both" (the default) preserves the
+        # historical behavior. A per-object value overrides the global default.
+        contact_on = node.contact_on or self._contact_on_default
         if transition.intent is PageIntent.DOWN:
-            if await self._notifier.send(node, state, PageIntent.DOWN):
+            if state.acked:
+                # Acknowledged (#68): suppress the down page, but mark contacted so a later
+                # recovery still pages (subject to contact_on). acked auto-clears on recovery.
                 state.contacted = True
                 state.lastcontacted = self._clock.monotonic()
+            elif contact_on in ("down", "both"):
+                if await self._notifier.send(node, state, PageIntent.DOWN):
+                    state.contacted = True
+                    state.lastcontacted = self._clock.monotonic()
+            elif contact_on == "up":
+                # Don't page on the way down, but mark contacted so the recovery still pages
+                # (apply_result only emits RECOVERY for a node that was contacted).
+                state.contacted = True
+                state.lastcontacted = self._clock.monotonic()
+            # "none": page on neither transition — leave contacted clear (no re-page, no recovery).
         elif transition.intent is PageIntent.RECOVERY:
-            await self._notifier.send(node, state, PageIntent.RECOVERY)
+            # acked was cleared by apply_result on the up-transition, so contact_on alone decides.
+            if contact_on in ("up", "both"):
+                await self._notifier.send(node, state, PageIntent.RECOVERY)
         elif state.contacted and maybe_repage(state, self._clock.monotonic(), self._pageinterval_s):
-            if await self._notifier.send(node, state, PageIntent.DOWN):
+            if not state.acked and contact_on in ("down", "both"):
+                if await self._notifier.send(node, state, PageIntent.DOWN):
+                    state.lastcontacted = self._clock.monotonic()
+            else:  # acked, or "up": no re-page; advance the clock so we don't recheck every tick.
+                # ("none" never reaches here — it stays uncontacted, so maybe_repage is False.)
                 state.lastcontacted = self._clock.monotonic()
 
     # --- introspection (for output / tests) -------------------------------------------
 
     def node_states(self) -> list[tuple[Node, NodeState]]:
         return [(s.node, s.state) for s in self._scheduled]
+
+    # --- runtime control (#68 ack/notes; driven by the control plane #69) -------------
+
+    def _match(self, hostname: str, type_value: str, port: int) -> list[_Scheduled]:
+        """Scheduled nodes with this (hostname, type-as-string, port) key (duplicates allowed)."""
+        return [
+            s for s in self._scheduled
+            if s.node.hostname == hostname
+            and s.node.check_type.value == type_value
+            and s.node.port == port
+        ]
+
+    def ack(self, hostname: str, type_value: str, port: int) -> int:
+        """Acknowledge an object's outage (#68): suppress its paging while down (auto-clears on
+        recovery). Returns the number of matched nodes. Synchronous — no await between lookup and
+        write — so a concurrent reload can't orphan the mutation."""
+        matches = self._match(hostname, type_value, port)
+        for sched in matches:
+            sched.state.acked = True
+        if matches:
+            self._dirty.set()  # re-render the status page to show the ack
+        return len(matches)
+
+    def set_note(self, hostname: str, type_value: str, port: int, text: str | None) -> int:
+        """Set (or clear, when empty/None) an object's operator note (#68); returns match count."""
+        note = text[:_MAX_NOTE_LEN] if text else None
+        matches = self._match(hostname, type_value, port)
+        for sched in matches:
+            sched.state.note = note
+        if matches:
+            self._dirty.set()
+        return len(matches)
 
     def dns_stats(self) -> dict[str, int] | None:
         """DNS-cache stats for the periodic ``dnslog`` line, or None if the resolver has none."""
@@ -447,7 +514,9 @@ class Scheduler:
 
     # --- config reload (SIGHUP) -------------------------------------------------------
 
-    _CARRIED = ("lastcheck", "downct", "contacted", "lastcontacted", "deathtime", "last_up")
+    _CARRIED = (
+        "lastcheck", "downct", "contacted", "lastcontacted", "deathtime", "last_up", "acked", "note"
+    )
 
     def reload(self, roots: list[Node]) -> None:
         """Rebuild the monitored tree from new config, preserving live state.

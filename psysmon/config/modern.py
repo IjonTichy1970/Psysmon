@@ -39,7 +39,7 @@ from enum import Enum, auto
 # and the legacy facility allow-list (the single source of valid syslog facilities). These are
 # format-neutral despite currently living in the legacy module — hoist to a shared module later.
 from psysmon.config.legacy import _FACILITIES, ParseError, ParseResult
-from psysmon.config.model import DEFAULT_PORT, CheckType, Node
+from psysmon.config.model import CONTACT_ON_CHOICES, DEFAULT_PORT, CheckType, Node
 
 # Characters that end a bareword (and are otherwise their own tokens or comment/string starts).
 _SPECIAL = set('"{}=;#')
@@ -154,6 +154,7 @@ _INT_DIRECTIVES = {
     "statesave_interval": "statesave_s",
     "state_max_age": "state_max_age_s",
     "maxqueued": "max_concurrency",   # 0.93's "max objects queued to check at once"
+    "control_port": "control_port",   # control plane (#69)
 }
 _FLOAT_DIRECTIVES = {
     "queuetime": "interval_s",        # 0.93's per-poll cadence; interval_s/--interval are floats
@@ -164,10 +165,15 @@ _STR_DIRECTIVES = {
     "hostname": "org_hostname",
     "sender": "mail_from",
     "from": "mail_from",
+    "control_bind": "control_bind",            # control plane (#69)
+    "control_token_file": "control_token_file",
+    "control_tls_cert": "control_tls_cert",
+    "control_tls_key": "control_tls_key",
 }
 _FLAG_DIRECTIVES = {                   # value-less booleans
     "page_on_degraded": ("page_on_degraded", True),
     "noheartbeat": ("heartbeat_s", 0),
+    "control": ("control_enabled", True),  # control plane (#69)
 }
 _LOGLEVELS = ("warning", "info", "debug")
 _VAR_RE = re.compile(r"\$([A-Za-z_]\w*)")  # a $NAME reference (set / $var substitution)
@@ -185,12 +191,12 @@ _TYPE_KEYWORDS = {
 }
 _DROPPED_TYPES = frozenset({"imap", "nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
 _DEFERRED_TYPES = frozenset({"ping6", "pingv6", "icmp6"})  # IPv6 ping -> #24
-# Object attributes the parser understands; anything else (e.g. the deferred `contact_on`, or a
-# typo) warns and is ignored. Structural fields (M3) + per-object overrides (M4).
+# Object attributes the parser understands; anything else (a typo, or a not-yet-supported key)
+# warns and is ignored. Structural fields (M3) + per-object overrides (M4) + contact_on.
 _OBJECT_ATTRS = frozenset({
     "ip", "type", "port", "desc", "contact", "url", "urltext", "username", "password",
     "dns-query", "dep",                                          # structural (M3)
-    "queuetime", "send_pings", "min_pings", "numfailures", "group",  # overrides (M4)
+    "queuetime", "send_pings", "min_pings", "numfailures", "group", "contact_on",  # overrides
 })
 
 
@@ -316,6 +322,8 @@ class _Parser:
             self._set_loglevel(line, values)
         elif name == "logging":
             self._set_logging(line, values)
+        elif name == "contact_on":
+            self._set_contact_on(line, values)
         elif name == "statusfile":
             self._set_statusfile(line, values)
         elif name == "sleeptime":
@@ -375,6 +383,17 @@ class _Parser:
         else:
             self._warn(line, f"unknown logging facility '{raw}'; using daemon")
             self.overrides["syslog_facility"] = "daemon"
+
+    def _set_contact_on(self, line: int, values: list[Token]) -> None:
+        raw = self._one_value(line, "contact_on", values)
+        if raw is None:
+            return
+        if raw in CONTACT_ON_CHOICES:
+            self.overrides["contact_on"] = raw
+        else:
+            self._warn(line, f"unknown contact_on '{raw}' (want {'/'.join(CONTACT_ON_CHOICES)});"
+                       " using both")
+            self.overrides["contact_on"] = "both"
 
     def _set_statusfile(self, line: int, values: list[Token]) -> None:
         if len(values) != 2:
@@ -581,7 +600,8 @@ class _Parser:
 
         These map onto Node fields the engine already honors: ``queuetime``->``interval``
         (closes #23), ``send_pings``/``min_pings`` (validated; PingService also clamps at run
-        time), ``numfailures``->``max_down``, and ``group`` (display use is #20).
+        time), ``numfailures``->``max_down``, ``group`` (display use is #20), and ``contact_on``
+        (which transitions page; "" = use the global default).
         """
         if "queuetime" in resolved:
             interval = self._number(line, name, "queuetime", resolved["queuetime"], float)
@@ -596,7 +616,14 @@ class _Parser:
             elif nf is not None:
                 node.max_down = nf
         if "group" in resolved:
-            node.group = resolved["group"]
+            node.group = resolved["group"].strip()  # blank/whitespace-only -> no group
+        if "contact_on" in resolved:
+            val = resolved["contact_on"]
+            if val in CONTACT_ON_CHOICES:
+                node.contact_on = val
+            else:
+                self._warn(line, f"object '{name}': contact_on must be one of "
+                           f"{'/'.join(CONTACT_ON_CHOICES)}; ignoring")
         self._apply_ping_counts(line, name, node, resolved)
 
     def _apply_ping_counts(

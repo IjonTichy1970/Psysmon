@@ -515,11 +515,47 @@ def test_per_object_invalid_override_values_warn_and_ignore():
     assert len(res.warnings) >= 3
 
 
-def test_contact_on_still_deferred():
-    # contact_on is carved to a follow-up; it still warns as not-yet-supported in M4.
-    res = parse('object x { ip "h"; type ping; contact_on both; };\n')
-    assert res.roots[0].hostname == "h"
-    assert any("contact_on" in w and "isn't supported" in w for w in res.warnings)
+def test_group_whitespace_only_is_treated_as_no_group():
+    # A blank/whitespace-only group must not become a distinct, empty-looking section.
+    assert parse('object x { ip "h"; type ping; group "   "; };\n').roots[0].group == ""
+    assert parse('object x { ip "h"; type ping; group " core "; };\n').roots[0].group == "core"
+
+
+def test_contact_on_per_object():
+    res = parse('object x { ip "h"; type ping; contact_on down; };\n')
+    assert res.roots[0].contact_on == "down" and res.warnings == []
+
+
+def test_contact_on_invalid_value_warns_and_ignores():
+    res = parse('object x { ip "h"; type ping; contact_on sometimes; };\n')
+    assert res.roots[0].contact_on == ""  # left at default; object still loads
+    assert any("contact_on" in w for w in res.warnings)
+
+
+def test_contact_on_global_directive():
+    res = parse('config contact_on up;\nobject x { ip "h"; type ping; };\n')
+    assert res.overrides.get("contact_on") == "up"
+    res_bad = parse('config contact_on nope;\nobject x { ip "h"; type ping; };\n')
+    assert res_bad.overrides.get("contact_on") == "both"  # unknown -> falls back to both + warns
+    assert any("contact_on" in w for w in res_bad.warnings)
+
+
+def test_control_plane_global_directives():
+    res = parse(
+        'config control;\n'
+        'config control_bind "::1";\n'
+        'config control_port 9443;\n'
+        'config control_token_file "/etc/psysmon.token";\n'
+        'config control_tls_cert "/c.pem";\n'
+        'config control_tls_key "/k.pem";\n'
+        'object x { ip "h"; type ping; };\n'
+    )
+    o = res.overrides
+    assert o["control_enabled"] is True
+    assert o["control_bind"] == "::1" and o["control_port"] == 9443
+    assert o["control_token_file"] == "/etc/psysmon.token"
+    assert o["control_tls_cert"] == "/c.pem" and o["control_tls_key"] == "/k.pem"
+    assert res.warnings == []
 
 
 def test_per_object_queuetime_rejects_non_finite():

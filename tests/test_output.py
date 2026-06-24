@@ -25,10 +25,13 @@ NOW = 1781827570.0
 
 
 def ns(host, ctype=CheckType.PING, lastcheck=Status.OK, *, port=0, downct=0, contacted=False,
-       suppressed=False, deathtime=0.0, last_up=0.0, label="", contact=""):
-    node = Node(hostname=host, check_type=ctype, port=port, label=label, contact=contact)
+       suppressed=False, deathtime=0.0, last_up=0.0, label="", contact="", group="",
+       acked=False, note=None):
+    node = Node(hostname=host, check_type=ctype, port=port, label=label, contact=contact,
+                group=group)
     state = NodeState(lastcheck=lastcheck, downct=downct, contacted=contacted,
-                      suppressed=suppressed, deathtime=deathtime, last_up=last_up)
+                      suppressed=suppressed, deathtime=deathtime, last_up=last_up,
+                      acked=acked, note=note)
     return (node, state)
 
 
@@ -109,6 +112,93 @@ def test_html_is_well_formed():
     parser.feed(h)  # must not raise
     parser.close()
     assert h.startswith("<!DOCTYPE html>")
+
+
+# --- ack / notes (#68) -----------------------------------------------------------------
+
+def test_json_includes_acked_and_note():
+    states = [
+        ns("a.example.net", CheckType.PING, Status.UNPINGABLE, acked=True, note="ticket 4711"),
+        ns("b.example.net", CheckType.TCP, Status.OK, port=22),
+    ]
+    hosts = {h["hostname"]: h for h in json.loads(to_json(states, now_wall=NOW))["hosts"]}
+    assert hosts["a.example.net"]["acked"] is True
+    assert hosts["a.example.net"]["note"] == "ticket 4711"
+    assert hosts["b.example.net"]["acked"] is False and hosts["b.example.net"]["note"] is None
+
+
+def test_html_shows_ack_badge_and_escapes_note():
+    states = [ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW,
+                 acked=True, note="<script>alert(1)</script>")]
+    h = html_for(states)
+    assert "badge acked" in h and ">ACK<" in h
+    assert "<script>alert(1)</script>" not in h  # the note must be escaped (stored-XSS guard)
+    assert "&lt;script&gt;" in h
+    parser = HTMLParser()
+    parser.feed(h)  # still well-formed with the ack badge + note
+    parser.close()
+
+
+def test_text_shows_ack_and_note():
+    t = render_text([ns("d.example.net", CheckType.PING, Status.UNPINGABLE, acked=True,
+                        note="known flaky")], org_hostname="o", show_up_also=False, now_wall=NOW)
+    assert "[ACK]" in t and "known flaky" in t
+
+
+# --- grouping (#20) --------------------------------------------------------------------
+
+def test_html_groups_objects_under_headings():
+    states = [
+        ns("a.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, group="core"),
+        ns("b.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, group="edge"),
+        ns("c.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW),  # no group
+    ]
+    h = html_for(states)
+    assert '<h2 class="group">core</h2>' in h
+    assert '<h2 class="group">edge</h2>' in h
+    assert '<h2 class="group">Ungrouped</h2>' in h  # the no-group object gets its own bucket
+    # core (alphabetical) precedes edge, and the Ungrouped bucket comes last.
+    assert h.index("core") < h.index("edge") < h.index("Ungrouped")
+    for host in ("a.example.net", "b.example.net", "c.example.net"):
+        assert host in h
+    parser = HTMLParser()
+    parser.feed(h)  # still well-formed with grouped sections
+    parser.close()
+
+
+def test_html_operator_ungrouped_group_does_not_duplicate_heading():
+    # An operator who literally names a group "Ungrouped" must not collide with the no-group
+    # bucket into two identical headings; the no-group objects merge into that one section.
+    states = [
+        ns("a.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, group="Ungrouped"),
+        ns("b.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW),  # no group
+    ]
+    h = html_for(states)
+    assert h.count('<h2 class="group">Ungrouped</h2>') == 1
+    assert "a.example.net" in h and "b.example.net" in h
+
+
+def test_html_no_group_headings_when_no_groups():
+    # The common case (no groups in use) renders exactly as before: one flat table, no headings.
+    h = html_for([ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)])
+    assert 'class="group"' not in h
+    assert h.count("<table>") == 1
+
+
+def test_text_groups_objects_under_headings():
+    states = [
+        ns("a.example.net", CheckType.PING, Status.UNPINGABLE, group="core"),
+        ns("b.example.net", CheckType.PING, Status.UNPINGABLE),  # ungrouped
+    ]
+    t = render_text(states, org_hostname="o", show_up_also=False, now_wall=NOW)
+    assert "== core ==" in t and "== Ungrouped ==" in t
+    assert "a.example.net" in t and "b.example.net" in t
+
+
+def test_text_no_group_headings_when_no_groups():
+    t = render_text([ns("d.example.net", CheckType.PING, Status.UNPINGABLE)],
+                    org_hostname="o", show_up_also=False, now_wall=NOW)
+    assert "==" not in t  # flat, no group section markers
 
 
 # --- text ------------------------------------------------------------------------------
@@ -367,6 +457,16 @@ def test_json_includes_all_nodes_with_suppressed_flag():
     assert hosts["hidden.example.net"]["suppressed"] is True  # full blast radius queryable in JSON
     assert hosts["up.example.net"]["up"] is True
     assert hosts["down.example.net"]["status_text"] == "Unpingable"
+
+
+def test_json_includes_group_field():
+    states = [
+        ns("a.example.net", CheckType.PING, Status.UNPINGABLE, group="core"),
+        ns("b.example.net", CheckType.TCP, Status.OK, port=22),  # no group
+    ]
+    hosts = {h["hostname"]: h for h in json.loads(to_json(states, now_wall=NOW))["hosts"]}
+    assert hosts["a.example.net"]["group"] == "core"
+    assert hosts["b.example.net"]["group"] is None  # null when unset
 
 
 def test_json_marks_degraded_node():

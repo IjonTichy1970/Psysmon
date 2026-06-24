@@ -63,6 +63,12 @@ def type_to_name(check_type: CheckType) -> str:
     return _DISPLAY_NAME[check_type]
 
 
+# Which state transitions trigger a page. "both" is psysmon's historical behavior (page on a
+# host going down AND on its recovery); "down"/"up" page on only that transition; "none" never
+# pages. Used as the per-object `contact_on` attr and the global `config contact_on` default.
+CONTACT_ON_CHOICES = ("down", "up", "both", "none")
+
+
 @dataclass(slots=True)
 class Node:
     """A monitored host or service (static configuration).
@@ -77,6 +83,7 @@ class Node:
     label: str = ""  # the original "message" field
     contact: str = ""  # notification address ("" = no page, syslog only)
     group: str = ""  # operator grouping label (modern `group "..."` attr; display use is #20)
+    contact_on: str = ""  # which transitions page (down|up|both|none); "" = use the global default
     username: str = ""  # pop3 auth
     password: str = ""  # pop3 auth
     url: str = ""  # http/https path
@@ -107,3 +114,5 @@ class NodeState:
     deathtime: float = 0.0  # wall-clock time the current outage began
     last_up: float = 0.0  # wall-clock time it was last seen up
     suppressed: bool = False  # currently gated off by a down ancestor ping
+    acked: bool = False  # operator acked this outage (#68): suppress paging while down
+    note: str | None = None  # operator free-text note (#68); shown on the status page (escaped)

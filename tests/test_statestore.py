@@ -23,6 +23,7 @@ from psysmon.status import Status
 RECORD = {
     "hostname": "p", "type": "ping", "port": 0, "lastcheck": int(Status.UNPINGABLE),
     "downct": 5, "contacted": True, "lastcontacted": 0.0, "deathtime": 50.0, "last_up": 10.0,
+    "acked": False, "note": None,  # carried since schema v2 (#68)
 }
 
 
@@ -162,6 +163,19 @@ def test_export_import_round_trip():
     d = {nd.hostname: s for nd, s in dst.node_states()}
     assert d["p"].lastcheck == Status.UNPINGABLE and d["p"].downct == 4
     assert d["p"].contacted is True and d["p"].deathtime == 7.0 and d["p"].last_up == 2.0
+
+
+def test_export_import_carries_ack_and_note():
+    # #68: acked/note are carried fields (schema v2) so they survive a restart, like 0.93.
+    src = _scheduler([Node("p", CheckType.PING)])
+    ps = next(s for nd, s in src.node_states() if nd.hostname == "p")
+    ps.lastcheck, ps.downct, ps.contacted, ps.deathtime, ps.last_up = (
+        int(Status.UNPINGABLE), 2, True, 1.0, 1.0)
+    ps.acked, ps.note = True, "vendor ticket 4711"
+    dst = _scheduler([Node("p", CheckType.PING)])
+    assert dst.import_state(src.export_state()) == 1
+    d = next(s for nd, s in dst.node_states() if nd.hostname == "p")
+    assert d.acked is True and d.note == "vendor ticket 4711"
 
 
 def test_import_rebases_lastcontacted_to_now():

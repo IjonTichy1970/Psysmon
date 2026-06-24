@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- `psysmon-convert` command — the legacy→modern config converter now installs as a console script
+  (`psysmon-convert old.conf -o new.conf`), alongside the `psysmon` daemon command, so it no longer
+  needs the `python -m psysmon.config.convert` form (which is easy to run under the wrong
+  interpreter when a virtualenv isn't activated; the `-m` form still works)
+  ([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)).
+- A reference for the modern config format at [`docs/modern-config.md`](docs/modern-config.md) —
+  grammar, directives, per-object overrides, the legacy→modern migration guide, and the
+  differences from sysmon 0.93.
+
+### Fixed
+- Config files saved with a UTF-8 byte-order mark (BOM) are now read correctly — the BOM is
+  stripped on load instead of being glued onto the first directive/host (which would break that
+  line). Applies to the daemon's config load and `psysmon-convert`.
+
 ## [0.2.0] — 2026-06-23 — modern object{} config format + converter
 
 ### Added

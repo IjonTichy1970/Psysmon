@@ -9,8 +9,8 @@ daemon that pings hosts, checks services, and alerts you when things break — w
 > alerting behavior while modernizing the engine, fixing long-standing bugs, and making the
 > historically hardcoded bits configurable. While it tracks the v0.78.3.2 production fork, it
 > also **selectively rolls in features from the later sysmon 0.93 line** — e.g. loss-tolerant
-> ping and on-disk state persistence — with more (a modern config format, per-object intervals)
-> in progress.
+> ping, on-disk state persistence, and an opt-in modern `object{}` config format with per-object
+> intervals and a legacy→modern converter.
 
 ## What it does
 
@@ -32,7 +32,7 @@ daemon that pings hosts, checks services, and alerts you when things break — w
 | ---------------------------------------- | ------------------------------ | ------------------------------------------------------------ |
 | Concurrency                              | single-threaded serial sweep   | **asyncio**, concurrent per-host scheduling                  |
 | ICMP privilege                           | whole daemon suid root         | raw socket opened as root; runs as a root process (no setuid binary) |
-| Config                                   | legacy `sysmon.conf` only      | **legacy `sysmon.conf` (drop-in)** + auto-detect; modern format planned |
+| Config                                   | legacy `sysmon.conf` only      | **legacy `sysmon.conf` (drop-in)** + auto-detect; opt-in modern `object{}` format + converter |
 | Hardcoded source IP / hostnames / paths  | compiled in                    | **config file + CLI** (CLI wins)                             |
 | Status page                              | malformed legacy HTML          | **HTML5 + CSS**, plus JSON                                   |
 | Known bugs                               | fd leaks, silent host drops    | fixed                                                         |
@@ -73,6 +73,11 @@ Settings can also be given on the command line, which **overrides** the config f
 outbound source IP (used for firewall ACLs), the hostname shown in alerts and the status page,
 and SMTP settings.
 
+psysmon also supports an **opt-in modern `object{}` config format** (auto-detected per file) with
+named objects, `dep` dependency edges, `set`/`$var` reuse, and per-object overrides. See
+[docs/modern-config.md](docs/modern-config.md) for the full reference and a migration guide — the
+legacy format above keeps working unchanged.
+
 ## Requirements
 
 - Python **3.11+**
@@ -92,11 +97,12 @@ under systemd).
 ## Project status & roadmap
 
 The core daemon is feature-complete (config parser, check engine, async scheduler, notifier, and
-HTML/JSON status output) and under active development toward a first release — see the
-[issue tracker](https://github.com/IjonTichy1970/Psysmon/issues). Planned enhancements include a
-modern config format with a converter
-([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)), operator annotations
-([#20](https://github.com/IjonTichy1970/Psysmon/issues/20)), and IPv6 ping
+HTML/JSON status output) and shipping releases — see the
+[issue tracker](https://github.com/IjonTichy1970/Psysmon/issues). A modern `object{}` config
+format with a legacy→modern converter has landed
+([#3](https://github.com/IjonTichy1970/Psysmon/issues/3); see
+[docs/modern-config.md](docs/modern-config.md)); planned enhancements include operator annotations
+([#20](https://github.com/IjonTichy1970/Psysmon/issues/20)) and IPv6 ping
 ([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)).
 
 ## Heritage

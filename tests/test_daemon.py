@@ -126,6 +126,19 @@ def test_load_roots(tmp_path):
     assert warnings == []
 
 
+def test_load_roots_strips_utf8_bom(tmp_path):
+    # A config saved with a UTF-8 BOM must parse as if it weren't there; otherwise the BOM glues
+    # onto the first `config` token and that directive is silently lost.
+    cfg = tmp_path / "psysmon.conf"
+    cfg.write_text(SAMPLE, encoding="utf-8-sig")  # prepends a BOM
+    s = Settings()
+    s.config_path = str(cfg)
+    roots, overrides, warnings = load_roots(s)
+    assert [r.hostname for r in roots] == ["rtr.example.net"]
+    assert overrides["status_path"] == "/var/www/psysmon/status.html"
+    assert warnings == []
+
+
 def test_build_merges_cli_over_file_over_defaults(tmp_path):
     cfg = tmp_path / "psysmon.conf"
     cfg.write_text(SAMPLE, encoding="utf-8")

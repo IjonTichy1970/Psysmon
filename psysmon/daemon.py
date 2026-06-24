@@ -45,7 +45,9 @@ RENDER_MAX_INTERVAL_S = 60.0
 
 def load_roots(settings: Settings) -> tuple[list[Node], dict, list[str]]:
     """Read + parse the config file named by ``settings.config_path`` (legacy or modern)."""
-    text = Path(settings.config_path).read_text(encoding="utf-8", errors="replace")
+    # utf-8-sig transparently strips a leading BOM (some editors add one) — a plain utf-8 read
+    # would leave it glued to the first directive/host; identical to utf-8 when no BOM is present.
+    text = Path(settings.config_path).read_text(encoding="utf-8-sig", errors="replace")
     parser = parse_modern if detect(text) is ConfigFormat.MODERN else parse_legacy
     result = parser(text, numfailures=settings.numfailures)
     return result.roots, result.overrides, result.warnings

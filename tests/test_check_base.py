@@ -18,7 +18,7 @@ from psysmon.status import Status
 from .conftest import FakeResolver
 
 
-def node(host="h.net", port=0):
+def node(host="h.example.net", port=0):
     return Node(hostname=host, check_type=CheckType.TCP, port=port)
 
 

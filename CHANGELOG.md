@@ -6,6 +6,25 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Modern `object{}` config format** (the sysmon 0.93 grammar), opt-in alongside the legacy
+  positional `sysmon.conf` — the format is auto-detected per file, so existing configs keep
+  working unchanged. A modern config is a single `root`, named `object NAME { ... };` blocks with
+  named attributes (`ip`, `type`, `port`, `desc`, `contact`, `url`/`urltext`, `username`/
+  `password`, `dns-query`) and named `dep` edges for dependency suppression, plus `config` globals
+  and `set`/`$var` variable reuse. Each object also takes **per-object overrides** — notably a
+  **per-object check interval** (`queuetime`, so a critical router can be polled faster than the
+  long tail; [#23](https://github.com/IjonTichy1970/Psysmon/issues/23)), plus per-object
+  loss-tolerant ping (`send_pings`/`min_pings`), per-object `numfailures`, and a `group` label
+  ([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)).
+- **Legacy → modern config converter** — `python -m psysmon.config.convert old.conf` reads a
+  legacy positional `sysmon.conf` and writes the equivalent modern `object{}` config (`-o` to a
+  file, otherwise stdout), so you can migrate at your own pace. It runs the config through
+  psysmon's own parser, so the output reflects psysmon's semantics: `{ }` nesting becomes named
+  `dep` edges, the position-dependent `numfailures` is resolved onto each object, default ports
+  are dropped, and the result round-trips to the same monitoring tree
+  ([#3](https://github.com/IjonTichy1970/Psysmon/issues/3)).
+
 ## [0.1.4] — 2026-06-23 — state persistence + loss-tolerant ping
 
 ### Added

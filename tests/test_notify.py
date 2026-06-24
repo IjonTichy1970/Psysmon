@@ -155,9 +155,10 @@ async def test_delivery_failure_returns_false():
 
 async def test_custom_mail_from():
     cap = Capture()
-    n = SmtpNotifier(settings(mail_from="alerts@corp.net"), send_fn=cap, now_wall=lambda: FIXED_NOW)
+    n = SmtpNotifier(
+        settings(mail_from="alerts@corp.example.net"), send_fn=cap, now_wall=lambda: FIXED_NOW)
     await n.send(ping_node(), NodeState(lastcheck=Status.UNPINGABLE), PageIntent.DOWN)
-    assert cap.messages[0]["From"] == "alerts@corp.net"
+    assert cap.messages[0]["From"] == "alerts@corp.example.net"
 
 
 async def test_header_injection_contact_returns_false_not_raises():
@@ -168,7 +169,7 @@ async def test_header_injection_contact_returns_false_not_raises():
     """
     cap = Capture()
     n = SmtpNotifier(settings(), send_fn=cap, now_wall=lambda: FIXED_NOW)
-    evil = ping_node(contact="good@x.net\nBcc: attacker@evil.net")
+    evil = ping_node(contact="good@x.example.net\nBcc: attacker@evil.example.net")
     ok = await n.send(evil, NodeState(lastcheck=Status.UNPINGABLE), PageIntent.DOWN)
     assert ok is False
     assert cap.messages == []  # nothing was handed to delivery

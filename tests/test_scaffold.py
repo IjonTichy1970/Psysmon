@@ -14,6 +14,7 @@ MODULES = [
     "psysmon.privilege",
     "psysmon.config.model",
     "psysmon.config.legacy",
+    "psysmon.config.modern",
     "psysmon.config.detect",
     "psysmon.config.settings",
     "psysmon.engine.clock",

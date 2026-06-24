@@ -25,6 +25,7 @@ from psysmon.checks.ping import PingService
 from psysmon.config.detect import ConfigFormat, detect
 from psysmon.config.legacy import parse as parse_legacy
 from psysmon.config.model import CheckType, Node
+from psysmon.config.modern import parse as parse_modern
 from psysmon.config.settings import Settings, cli_overrides, merge
 from psysmon.engine.scheduler import Scheduler
 from psysmon.engine.statestore import StateStore
@@ -43,11 +44,10 @@ RENDER_MAX_INTERVAL_S = 60.0
 
 
 def load_roots(settings: Settings) -> tuple[list[Node], dict, list[str]]:
-    """Read + parse the config file named by ``settings.config_path``."""
+    """Read + parse the config file named by ``settings.config_path`` (legacy or modern)."""
     text = Path(settings.config_path).read_text(encoding="utf-8", errors="replace")
-    if detect(text) is not ConfigFormat.LEGACY:
-        raise ValueError("only the legacy sysmon.conf format is supported yet (see issue #3)")
-    result = parse_legacy(text, numfailures=settings.numfailures)
+    parser = parse_modern if detect(text) is ConfigFormat.MODERN else parse_legacy
+    result = parser(text, numfailures=settings.numfailures)
     return result.roots, result.overrides, result.warnings
 
 

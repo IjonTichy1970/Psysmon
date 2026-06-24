@@ -43,15 +43,15 @@ def html_for(states, **kw):
 
 def test_html_shows_down_hides_up_and_suppressed():
     states = [
-        ns("down.net", CheckType.PING, Status.UNPINGABLE, downct=3,
+        ns("down.example.net", CheckType.PING, Status.UNPINGABLE, downct=3,
            deathtime=NOW - 100, last_up=NOW - 100),
-        ns("up.net", CheckType.TCP, Status.OK, port=22),
-        ns("hidden.net", CheckType.TCP, Status.CONN_REFUSED, suppressed=True),
+        ns("up.example.net", CheckType.TCP, Status.OK, port=22),
+        ns("hidden.example.net", CheckType.TCP, Status.CONN_REFUSED, suppressed=True),
     ]
     h = html_for(states)
-    assert "down.net" in h
-    assert "up.net" not in h       # up hidden by default
-    assert "hidden.net" not in h   # suppressed always hidden
+    assert "down.example.net" in h
+    assert "up.example.net" not in h       # up hidden by default
+    assert "hidden.example.net" not in h   # suppressed always hidden
     assert 'src="psysmon-logo.png"' in h
     assert 'http-equiv="refresh" content="30"' in h
     assert "mon.example.net" in h
@@ -60,20 +60,20 @@ def test_html_shows_down_hides_up_and_suppressed():
 
 
 def test_html_show_up_also():
-    h = html_for([ns("up.net", CheckType.TCP, Status.OK, port=22)], show_up_also=True)
-    assert "up.net" in h
+    h = html_for([ns("up.example.net", CheckType.TCP, Status.OK, port=22)], show_up_also=True)
+    assert "up.example.net" in h
 
 
 def test_html_all_operational_when_none_down():
-    h = html_for([ns("up.net", CheckType.TCP, Status.OK)])
+    h = html_for([ns("up.example.net", CheckType.TCP, Status.OK)])
     assert "All systems operational" in h
 
 
 def test_html_degraded_row_uses_its_own_badge():
     # A degraded (loss-tolerant ping, #22) node is not up, so it shows on the down-only page —
     # but with its own badge class, not the red "down" one.
-    h = html_for([ns("lossy.net", CheckType.PING, Status.DEGRADED, last_up=NOW - 50)])
-    assert "lossy.net" in h
+    h = html_for([ns("lossy.example.net", CheckType.PING, Status.DEGRADED, last_up=NOW - 50)])
+    assert "lossy.example.net" in h
     assert "badge degraded" in h
     assert ">Degraded<" in h
 
@@ -87,7 +87,7 @@ def test_html_escapes_hostname():
 def test_html_escapes_attributes_and_title():
     """A quote in logo_url or org_hostname must not break out of its attribute / element."""
     h = html_for(
-        [ns("h.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
+        [ns("h.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
         org_hostname='org"<x>&',
         logo_url='x" onerror=alert(1) y',
     )
@@ -103,7 +103,8 @@ def test_html_escapes_attributes_and_title():
 
 
 def test_html_is_well_formed():
-    h = html_for([ns("a.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, last_up=NOW)])
+    h = html_for(
+        [ns("a.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, last_up=NOW)])
     parser = HTMLParser()
     parser.feed(h)  # must not raise
     parser.close()
@@ -113,15 +114,15 @@ def test_html_is_well_formed():
 # --- text ------------------------------------------------------------------------------
 
 def test_text_lists_down_only():
-    states = [ns("down.net", CheckType.PING, Status.UNPINGABLE),
-              ns("up.net", CheckType.TCP, Status.OK)]
+    states = [ns("down.example.net", CheckType.PING, Status.UNPINGABLE),
+              ns("up.example.net", CheckType.TCP, Status.OK)]
     t = render_text(states, org_hostname="o", show_up_also=False, now_wall=NOW)
-    assert "down.net" in t and "up.net" not in t
+    assert "down.example.net" in t and "up.example.net" not in t
 
 
 def test_last_outage_never_for_node_never_up():
     """A node down at first sight (last_up == 0) shows "Never", not a span since the epoch."""
-    states = [ns("new.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, last_up=0.0)]
+    states = [ns("new.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, last_up=0.0)]
     t = render_text(states, org_hostname="o", show_up_also=False, now_wall=NOW)
     assert "Never" in t
     # And not the bogus ~20000-day elapsed-since-epoch value.
@@ -237,20 +238,20 @@ def test_render_and_publish_html(tmp_path):
     s.status_path = str(tmp_path / "s.html")
     s.status_html = True
     s.org_hostname = "org"
-    states = [ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, last_up=NOW)]
+    states = [ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, last_up=NOW)]
     render_and_publish(states, s, now_wall=NOW)
     out = Path(s.status_path).read_text()
-    assert "<!DOCTYPE html>" in out and "d.net" in out
+    assert "<!DOCTYPE html>" in out and "d.example.net" in out
 
 
 def test_render_and_publish_text(tmp_path):
     s = Settings()
     s.status_path = str(tmp_path / "s.txt")
     s.status_html = False
-    states = [ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, last_up=NOW)]
+    states = [ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW, last_up=NOW)]
     render_and_publish(states, s, now_wall=NOW)
     out = Path(s.status_path).read_text()
-    assert "d.net" in out and "<html" not in out.lower()
+    assert "d.example.net" in out and "<html" not in out.lower()
 
 
 def test_render_and_publish_noop_without_path():
@@ -280,7 +281,7 @@ def test_render_and_publish_html_deploys_logo(tmp_path):
     s = Settings()
     s.status_path = str(tmp_path / "s.html")
     s.status_html = True
-    render_and_publish([ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
+    render_and_publish([ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
                        s, now_wall=NOW)
     logo = tmp_path / "psysmon-logo.png"
     assert logo.exists()
@@ -294,7 +295,7 @@ def test_render_and_publish_does_not_overwrite_existing_logo(tmp_path):
     s.status_html = True
     custom = tmp_path / "psysmon-logo.png"
     custom.write_bytes(b"CUSTOM-LOGO-BYTES")
-    render_and_publish([ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
+    render_and_publish([ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
                        s, now_wall=NOW)
     assert custom.read_bytes() == b"CUSTOM-LOGO-BYTES"
 
@@ -304,7 +305,7 @@ def test_render_and_publish_text_does_not_deploy_logo(tmp_path):
     s = Settings()
     s.status_path = str(tmp_path / "s.txt")
     s.status_html = False
-    render_and_publish([ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
+    render_and_publish([ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)],
                        s, now_wall=NOW)
     assert not (tmp_path / "psysmon-logo.png").exists()
 
@@ -316,7 +317,7 @@ def test_logo_deploy_failure_never_blocks_publish(tmp_path, monkeypatch):
     # to delete the 0o444 file Windows won't unlink.)
     import psysmon.output.statuspage as sp
 
-    states = [ns("d.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)]
+    states = [ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW)]
 
     def settings_for(name):
         s = Settings()
@@ -354,30 +355,31 @@ def test_logo_deploy_failure_never_blocks_publish(tmp_path, monkeypatch):
 
 def test_json_includes_all_nodes_with_suppressed_flag():
     states = [
-        ns("down.net", CheckType.PING, Status.UNPINGABLE, downct=2),
-        ns("hidden.net", CheckType.TCP, Status.CONN_REFUSED, suppressed=True),
-        ns("up.net", CheckType.TCP, Status.OK, port=22),
+        ns("down.example.net", CheckType.PING, Status.UNPINGABLE, downct=2),
+        ns("hidden.example.net", CheckType.TCP, Status.CONN_REFUSED, suppressed=True),
+        ns("up.example.net", CheckType.TCP, Status.OK, port=22),
     ]
     data = json.loads(to_json(states, now_wall=NOW))
     assert data["total"] == 3
     assert data["down"] == 1  # only the visible down node counts (suppressed excluded)
     hosts = {h["hostname"]: h for h in data["hosts"]}
-    assert set(hosts) == {"down.net", "hidden.net", "up.net"}
-    assert hosts["hidden.net"]["suppressed"] is True  # full blast radius queryable in JSON
-    assert hosts["up.net"]["up"] is True
-    assert hosts["down.net"]["status_text"] == "Unpingable"
+    assert set(hosts) == {"down.example.net", "hidden.example.net", "up.example.net"}
+    assert hosts["hidden.example.net"]["suppressed"] is True  # full blast radius queryable in JSON
+    assert hosts["up.example.net"]["up"] is True
+    assert hosts["down.example.net"]["status_text"] == "Unpingable"
 
 
 def test_json_marks_degraded_node():
     states = [
-        ns("lossy.net", CheckType.PING, Status.DEGRADED),
-        ns("up.net", CheckType.TCP, Status.OK, port=22),
+        ns("lossy.example.net", CheckType.PING, Status.DEGRADED),
+        ns("up.example.net", CheckType.TCP, Status.OK, port=22),
     ]
     hosts = {h["hostname"]: h for h in json.loads(to_json(states, now_wall=NOW))["hosts"]}
-    assert hosts["lossy.net"]["degraded"] is True and hosts["lossy.net"]["up"] is False
-    assert hosts["lossy.net"]["status"] == int(Status.DEGRADED)
-    assert hosts["lossy.net"]["status_text"] == "Degraded"
-    assert hosts["up.net"]["degraded"] is False
+    lossy = hosts["lossy.example.net"]
+    assert lossy["degraded"] is True and lossy["up"] is False
+    assert lossy["status"] == int(Status.DEGRADED)
+    assert lossy["status_text"] == "Degraded"
+    assert hosts["up.example.net"]["degraded"] is False
 
 
 def test_json_down_count_excludes_suppressed_and_up():

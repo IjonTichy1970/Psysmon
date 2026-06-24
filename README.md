@@ -7,7 +7,10 @@ daemon that pings hosts, checks services, and alerts you when things break — w
 > **Status: early development.** This is a from-scratch Python 3.11+ rewrite of the original
 > 1998 C `sysmon` (v0.78.3.2 by Jared Mauch), preserving its battle-tested monitoring and
 > alerting behavior while modernizing the engine, fixing long-standing bugs, and making the
-> historically hardcoded bits configurable.
+> historically hardcoded bits configurable. While it tracks the v0.78.3.2 production fork, it
+> also **selectively rolls in features from the later sysmon 0.93 line** — e.g. loss-tolerant
+> ping and on-disk state persistence — with more (a modern config format, per-object intervals)
+> in progress.
 
 ## What it does
 

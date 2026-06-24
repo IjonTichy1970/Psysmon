@@ -12,6 +12,10 @@ dist/
 .installed.cfg
 *.egg
 
+# Generated user-guide HTML (#64); built by tools/build_guide.py + CI for GitHub Pages.
+# The consolidated docs/guide/psysmon-guide.txt IS committed (ships in the sdist).
+site/
+
 # Virtual environments
 .venv/
 venv/

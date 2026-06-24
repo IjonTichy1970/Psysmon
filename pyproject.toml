@@ -32,6 +32,10 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
 ]
+# Build-only: rendering the end-user guide (tools/build_guide.py). Not a runtime dependency.
+docs = [
+    "markdown>=3.5",
+]
 
 [project.urls]
 Homepage = "https://github.com/IjonTichy1970/Psysmon"

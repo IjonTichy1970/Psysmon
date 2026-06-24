@@ -94,6 +94,17 @@ sudo psysmon --config /etc/psysmon.conf        # CLI flags override config value
 See [INSTALL.md](INSTALL.md) for step-by-step setup (venv install, configuration, and running
 under systemd).
 
+## Documentation
+
+The full **User Guide** — install, both config formats with worked examples, every CLI flag, a
+feature tour, status codes, and troubleshooting — is published to **GitHub Pages**
+(<https://ijontichy1970.github.io/Psysmon/>) and ships as a plain-text copy at
+[docs/guide/psysmon-guide.txt](docs/guide/psysmon-guide.txt). It's generated from one Markdown
+source (`docs/guide/src/`) by `python tools/build_guide.py`. `README.md` and `INSTALL.md` are the
+getting-started level; the guide is the complete reference. The modern config format also has a
+focused reference at [docs/modern-config.md](docs/modern-config.md) and the control channel at
+[docs/control-channel.md](docs/control-channel.md).
+
 ## Project status & roadmap
 
 The core daemon is feature-complete (config parser, check engine, async scheduler, notifier, and

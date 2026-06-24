@@ -1,0 +1,66 @@
+name: Pages
+
+# Build the end-user guide (#64) and publish the HTML to GitHub Pages. The `build` job also runs
+# on pull requests as the docs build-check gate (CI's ci.yml ignores docs/**, so the guide is
+# gated here instead); `deploy` runs only on a push to main. Publishing requires the repo to be
+# public (or a plan that allows Pages on a private repo) and Pages set to the "GitHub Actions"
+# source — until then the build still runs and the deploy step is simply a no-op/blocked.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "docs/guide/**"
+      - "tools/build_guide.py"
+      - "psysmon/**"          # the CLI + status appendices are generated from the code
+      - "pyproject.toml"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "docs/guide/**"
+      - "tools/build_guide.py"
+      - "psysmon/**"
+      - "pyproject.toml"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (with docs extra)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[docs]"
+      - name: Build the guide
+        run: python tools/build_guide.py
+      - name: Verify the build (gate)
+        run: python tools/build_guide.py --check
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

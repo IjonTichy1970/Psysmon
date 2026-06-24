@@ -6,8 +6,11 @@ include INSTALL.md
 include CHANGELOG.md
 include LICENSE
 
-# The docs/ guides the README/INSTALL link to (the modern-config + control-channel references).
+# The docs/ guides the README/INSTALL link to (modern-config + control-channel references, and
+# the user-guide chapter sources under docs/guide/src), plus the generated plain-text user guide
+# (#64) as the offline copy. The HTML build tooling (tools/) and the generated site/ stay out.
 recursive-include docs *.md
+include docs/guide/psysmon-guide.txt
 
 # Bundled runtime asset: the status-page logo the daemon deploys next to the status file.
 recursive-include psysmon/assets *.png

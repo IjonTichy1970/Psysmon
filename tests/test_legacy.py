@@ -93,34 +93,34 @@ def test_sample_warns_on_dropped_type(sample_config_text):
 # --- focused grammar unit tests -------------------------------------------------------
 
 def test_comments_and_blanks_skipped():
-    res = parse("; a comment\n#another\n\n   \nhost.net ping host.net noc@x\n")
-    assert [r.hostname for r in res.roots] == ["host.net"]
+    res = parse("; a comment\n#another\n\n   \nhost.example.net ping host.example.net noc@x\n")
+    assert [r.hostname for r in res.roots] == ["host.example.net"]
 
 
 def test_starting_numfailures_used():
-    res = parse("h.net ping h.net noc@x\n", numfailures=5)
+    res = parse("h.example.net ping h.example.net noc@x\n", numfailures=5)
     assert res.roots[0].max_down == 5
 
 
 def test_tcp_invalid_port_skipped():
-    res = parse("h.net tcp notaport ssh noc@x\n")
+    res = parse("h.example.net tcp notaport ssh noc@x\n")
     assert res.roots == []
     assert any("invalid port" in w for w in res.warnings)
 
 
 def test_dropped_types_skip_not_fail():
     res = parse(
-        "a.net imap u p l c@x\n"
-        "b.net nntp news c@x\n"
-        "c.net radius u p s c@x\n"
-        "d.net ping d.net c@x\n"
+        "a.example.net imap u p l c@x\n"
+        "b.example.net nntp news c@x\n"
+        "c.example.net radius u p s c@x\n"
+        "d.example.net ping d.example.net c@x\n"
     )
-    assert [r.hostname for r in res.roots] == ["d.net"]
+    assert [r.hostname for r in res.roots] == ["d.example.net"]
     assert len(res.warnings) == 3
 
 
 def test_invalid_type_warns():
-    res = parse("h.net frobnicate x y\n")
+    res = parse("h.example.net frobnicate x y\n")
     assert res.roots == []
     assert any("invalid check type" in w for w in res.warnings)
 
@@ -134,9 +134,9 @@ def test_deferred_dns_keeps_unresolvable_host():
 
 def test_nesting_depth_three():
     text = (
-        "a.net ping a.net c@x {\n"
-        "  b.net ping b.net c@x {\n"
-        "    b.net tcp 22 ssh c@x\n"
+        "a.example.net ping a.example.net c@x {\n"
+        "  b.example.net ping b.example.net c@x {\n"
+        "    b.example.net tcp 22 ssh c@x\n"
         "  }\n"
         "}\n"
     )
@@ -148,15 +148,15 @@ def test_unbalanced_brace_on_service_line_is_contained():
     # A non-ping line cannot open children; its stray block is consumed + warned, so the
     # following top-level host still parses.
     text = (
-        "a.net ping a.net c@x {\n"
-        "  a.net tcp 22 ssh c@x {\n"
-        "    a.net tcp 23 telnet c@x\n"
+        "a.example.net ping a.example.net c@x {\n"
+        "  a.example.net tcp 22 ssh c@x {\n"
+        "    a.example.net tcp 23 telnet c@x\n"
         "  }\n"
         "}\n"
-        "b.net ping b.net c@x\n"
+        "b.example.net ping b.example.net c@x\n"
     )
     res = parse(text)
-    assert [r.hostname for r in res.roots] == ["a.net", "b.net"]
+    assert [r.hostname for r in res.roots] == ["a.example.net", "b.example.net"]
     assert any("cannot have children" in w for w in res.warnings)
 
 
@@ -199,12 +199,12 @@ def test_stray_top_level_brace_does_not_truncate_file():
     # A misplaced top-level '}' must NOT silently terminate parsing of the rest of the file;
     # it is warned and skipped so trailing stanzas still parse (#42).
     text = (
-        "a.net ping a.net noc@x\n"
+        "a.example.net ping a.example.net noc@x\n"
         "}\n"                          # stray close brace at the root
-        "b.net ping b.net noc@x\n"     # must still be parsed, not dropped
+        "b.example.net ping b.example.net noc@x\n"     # must still be parsed, not dropped
     )
     res = parse(text)
-    assert [r.hostname for r in res.roots] == ["a.net", "b.net"]
+    assert [r.hostname for r in res.roots] == ["a.example.net", "b.example.net"]
     assert any("unexpected '}'" in w for w in res.warnings)
 
 
@@ -220,8 +220,8 @@ def test_excessive_nesting_raises_clean_parse_error():
 
 
 def test_unknown_config_directive_warns():
-    res = parse("config wibble 7\nh.net ping h.net c@x\n")
-    assert [r.hostname for r in res.roots] == ["h.net"]
+    res = parse("config wibble 7\nh.example.net ping h.example.net c@x\n")
+    assert [r.hostname for r in res.roots] == ["h.example.net"]
     assert any("unknown config directive" in w for w in res.warnings)
 
 

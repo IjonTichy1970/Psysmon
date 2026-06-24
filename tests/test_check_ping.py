@@ -22,7 +22,7 @@ from psysmon.status import Status
 from .conftest import FakeResolver
 
 
-def node(host="h.net"):
+def node(host="h.example.net"):
     return Node(hostname=host, check_type=CheckType.PING)
 
 
@@ -452,7 +452,7 @@ async def test_per_node_counts_override_global_default():
     sock.answer_limit = 0  # nothing answers
     _install_fake_socket(svc, sock)
 
-    n = Node(hostname="h.net", check_type=CheckType.PING, send_pings=3, min_pings=2)
+    n = Node(hostname="h.example.net", check_type=CheckType.PING, send_pings=3, min_pings=2)
     ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
     assert await svc.check(n, ctx) == Status.UNPINGABLE
     assert len(sock.sent) == 3  # the per-node send_pings=3 took effect, not the global 1
@@ -466,7 +466,7 @@ async def test_per_node_invalid_counts_are_clamped():
     sock = _FakeSocket()  # answers all
     _install_fake_socket(svc, sock)
 
-    n = Node(hostname="h.net", check_type=CheckType.PING, send_pings=3, min_pings=9)
+    n = Node(hostname="h.example.net", check_type=CheckType.PING, send_pings=3, min_pings=9)
     ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
     assert await svc.check(n, ctx) == Status.OK  # 3/3 replies, min clamped to 3 -> OK
     assert len(sock.sent) == 3

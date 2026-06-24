@@ -9,7 +9,7 @@ from psysmon.status import Status
 from .conftest import FakeResolver
 
 
-def node(host="mail.net", port=25):
+def node(host="mail.example.net", port=25):
     return Node(hostname=host, check_type=CheckType.SMTP, port=port)
 
 

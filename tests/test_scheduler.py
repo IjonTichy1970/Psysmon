@@ -84,15 +84,16 @@ async def test_slow_check_is_logged(caplog):
         clock.advance(31)  # the check "ran" 31s on the (manual) clock
         return Status.OK
 
-    sched, _ = make([node("slow.net", CheckType.TCP)], slow, clock, slow_check_s=30.0)
+    sched, _ = make([node("slow.example.net", CheckType.TCP)], slow, clock, slow_check_s=30.0)
     with caplog.at_level(logging.INFO, logger="psysmon.engine.scheduler"):
         await tick_drain(sched)
-    assert "Check of slow.net of tcp ran for 31.0 seconds" in caplog.text
+    assert "Check of slow.example.net of tcp ran for 31.0 seconds" in caplog.text
 
 
 async def test_fast_check_is_not_logged_as_slow(caplog):
     clock = ManualClock()
-    sched, _ = make([node("fast.net", CheckType.TCP)], ScriptedRunner(), clock, slow_check_s=30.0)
+    sched, _ = make(
+        [node("fast.example.net", CheckType.TCP)], ScriptedRunner(), clock, slow_check_s=30.0)
     with caplog.at_level(logging.INFO, logger="psysmon.engine.scheduler"):
         await tick_drain(sched)
     assert "ran for" not in caplog.text
@@ -105,7 +106,7 @@ async def test_slow_check_threshold_zero_disables(caplog):
         clock.advance(99)
         return Status.OK
 
-    sched, _ = make([node("slow.net", CheckType.TCP)], slow, clock, slow_check_s=0.0)
+    sched, _ = make([node("slow.example.net", CheckType.TCP)], slow, clock, slow_check_s=0.0)
     with caplog.at_level(logging.INFO, logger="psysmon.engine.scheduler"):
         await tick_drain(sched)
     assert "ran for" not in caplog.text  # 0 disables the slow-check log
@@ -114,21 +115,22 @@ async def test_slow_check_threshold_zero_disables(caplog):
 async def test_per_check_result_logged_at_debug(caplog):
     clock = ManualClock()
     sched, _ = make(
-        [node("h.net", CheckType.TCP)], ScriptedRunner({"h.net": Status.CONN_REFUSED}), clock
+        [node("h.example.net", CheckType.TCP)],
+        ScriptedRunner({"h.example.net": Status.CONN_REFUSED}), clock,
     )
     with caplog.at_level(logging.DEBUG, logger="psysmon.engine.scheduler"):
         await tick_drain(sched)
-    assert "checked h.net of tcp -> Conn Ref" in caplog.text
+    assert "checked h.example.net of tcp -> Conn Ref" in caplog.text
 
 
 async def test_per_check_result_not_logged_at_info(caplog):
     # The per-check result line is DEBUG-gated; at the default info level it must NOT appear —
     # this is what makes the leveled logging actually leveled.
     clock = ManualClock()
-    sched, _ = make([node("h.net", CheckType.TCP)], ScriptedRunner(), clock)
+    sched, _ = make([node("h.example.net", CheckType.TCP)], ScriptedRunner(), clock)
     with caplog.at_level(logging.INFO, logger="psysmon.engine.scheduler"):
         await tick_drain(sched)
-    assert "checked h.net" not in caplog.text
+    assert "checked h.example.net" not in caplog.text
 
 
 async def test_queue_wait_does_not_count_as_slow(caplog):

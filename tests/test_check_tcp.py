@@ -9,7 +9,7 @@ from psysmon.status import Status
 from .conftest import FakeResolver
 
 
-def node(host: str = "h.net", port: int = 0) -> Node:
+def node(host: str = "h.example.net", port: int = 0) -> Node:
     return Node(hostname=host, check_type=CheckType.TCP, port=port)
 
 

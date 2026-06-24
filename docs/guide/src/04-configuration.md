@@ -230,6 +230,10 @@ Inside an object body, attributes are `key value;` pairs:
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
 | `dep` | `"object-name"` | optional | Parent object for dependency suppression |
 
+This table covers the **structural** attributes. An object body can also carry **per-object
+override** attributes — `queuetime`, `numfailures`, `send_pings` / `min_pings`, `group`,
+`contact_on`, and `source` — documented under [Per-object overrides](#per-object-overrides) below.
+
 **Check types** (`type` keyword): `ping`, `tcp`, `udp`, `smtp`, `pop3`, `dns`, `http`, `https`. For
 legacy familiarity, `authdns` is accepted as an alias for `dns` and `www` for `http`. Default
 ports: smtp `25`, pop3 `110`, dns `53`, http `80`, https `443` (ping has none; tcp/udp require an

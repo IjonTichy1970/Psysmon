@@ -334,7 +334,7 @@ ICMP ping opens a raw socket, so the daemon must run as root. Unlike the origina
 sysmon, which was a setuid binary, the Python daemon is simply launched as a root
 process -- via sudo or a service manager. It opens the raw socket at startup and, per the
 current deploy choice, keeps root for the process lifetime (a privilege-drop option is
-tracked as issue #2 (https://github.com/IjonTichy1970/Psysmon/issues/2)).
+planned (tracked on GitHub (https://github.com/IjonTichy1970/Psysmon/issues/2))).
 
 The non-ping checks (TCP, UDP, DNS, SMTP, POP3, HTTP/HTTPS) do not need root -- only ICMP
 ping does. If pings always report hosts as down, the usual cause is not running as root;
@@ -442,7 +442,7 @@ PSYSMON reads a single configuration file (default /etc/psysmon.conf, overridabl
 
 - Legacy positional -- the original sysmon.conf grammar. This is the default: an existing
 sysmon.conf keeps working unchanged. - Modern object{} -- an opt-in, named-block grammar
-adopted in issue #3, more readable and order-independent.
+that is more readable and order-independent.
 
 The format is auto-detected per file, and the two are never mixed in one file. A file is
 read as modern when it contains an object NAME {, a root = ..., or a set NAME = ...
@@ -697,9 +697,9 @@ parent: it is checked only while every ancestor ping is up.
 Recoverable problems warn and degrade gracefully rather than failing the load:
 
 - One parent only (single-dep MVP). Listing more than one dep warns and keeps the first.
-True named multi-parent (DAG) dependencies are planned (#62) and not yet implemented. -
-An unknown dep target warns and the object becomes a root. - A cycle warns and the
-object becomes a root (the forest is kept acyclic).
+True named multi-parent (DAG) dependencies are planned and not yet implemented. - An
+unknown dep target warns and the object becomes a root. - A cycle warns and the object
+becomes a root (the forest is kept acyclic).
 
 Variables -- set / $var
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -713,7 +713,7 @@ reference to an undefined variable is left literal with a warning. Variables mus
 defined before use.
 
     include is reserved, not yet supported. A config that uses include is rejected at load
-    with an error (it's a planned follow-up under #3). Do not rely on it working today.
+    with an error -- it's a planned feature, not yet implemented. Do not rely on it working today.
 
 Per-object overrides
 ~~~~~~~~~~~~~~~~~~~~
@@ -759,10 +759,9 @@ or unbound if none is set.
 Set source to:
 
 - an IPv4 address (source "203.0.113.5";) -- bind this object's probes to that local
-address. Works for ping too. (IPv6 source binding is rejected at load; that's planned
-under #24.) - auto (source auto;) -- keep this object unbound (route by destination) even
-when a group default or config source_ip would otherwise bind it. This is the explicit
-opt-out.
+address. Works for ping too. (IPv6 source binding is rejected at load; that's planned.)
+- auto (source auto;) -- keep this object unbound (route by destination) even when a
+group default or config source_ip would otherwise bind it. This is the explicit opt-out.
 
     HTTP/HTTPS exception: source is not applied to http/https checks (the HTTP client offers no
     per-request source bind).
@@ -1394,8 +1393,7 @@ In the modern format, the same structure is named dep edges:
     };
 
 Each object has one parent today (single dep). Listing more than one dep warns and keeps
-the first; true multi-parent (DAG) dependencies are planned (#62
-(https://github.com/IjonTichy1970/Psysmon/issues/62)) and not yet implemented. An
+the first; true multi-parent (DAG) dependencies are planned and not yet implemented. An
 unknown dep target, or a cycle, warns and the object becomes a root.
 
 A *degraded* (lossy-but-answering) parent does not suppress its subtree -- a router that
@@ -1640,8 +1638,8 @@ with a non-empty contact):
 
 ---
 
-Per-object / per-group outbound source -- source (modern config only) (#70 (https://github.com/IjonTichy1970/Psysmon/issues/70))
--------------------------------------------------------------------------------------------------------------------------------
+Per-object / per-group outbound source -- source (modern config only)
+--------------------------------------------------------------------
 
 source controls which local address a check's probes go out from. Resolution per object
 is: per-object source > the object's group source > the per-type default > unbound. It
@@ -1677,12 +1675,13 @@ request source bind); those remain unbound.
 
 ---
 
-Named multi-dependency -- planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62))
--------------------------------------------------------------------------------------------
+Named multi-dependency -- planned
+--------------------------------
 
 Today every object has exactly one parent (a single dep). Listing more than one dep
 warns and keeps the first. True multi-parent (DAG) dependencies -- an object suppressed
-only when *all* of several parents are down -- are planned and not yet implemented.
+only when *all* of several parents are down -- are planned (tracked on GitHub
+(https://github.com/IjonTichy1970/Psysmon/issues/62)) and not yet implemented.
 
 ---
 
@@ -1731,7 +1730,7 @@ Availability matrix
 | Feature | Legacy | Modern | CLI |
 |---|---|---|---|
 | Dependency suppression (single parent) | Yes ({ } nesting) | Yes (dep) | -- (structure is config-only) |
-| Named multi-dependency (DAG) | Planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62)) | Planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62)) | Planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62)) |
+| Named multi-dependency (DAG) | Planned | Planned | Planned |
 | Threshold alerting (numfailures) | Yes | Yes | --numfailures |
 | Re-page interval (pageinterval) | Yes | Yes | --pageinterval |
 | Recovery notices | Yes | Yes | -- |
@@ -1749,7 +1748,7 @@ Availability matrix
 | Per-object check cadence (queuetime) | No (global only) | Yes | --interval (global only) |
 | Per-object page threshold (numfailures) | No (global only) | Yes | --numfailures (global only) |
 | DNS check query name (dns-query) | Yes (positional) | Yes (dns-query) | -- |
-| Per-object / per-group source (#70 (https://github.com/IjonTichy1970/Psysmon/issues/70)) | No | Yes | No (global --source-ip only) |
+| Per-object / per-group source | No | Yes | No (global --source-ip only) |
 | Control channel (psysmonctl / psysmon-token) | Enable via CLI | Enable via config control or CLI | --control / --control-bind / --control-port / --control-token-file / --control-tls-cert / --control-tls-key |
 
 See CLI reference and Appendix A for the complete flag list, Configuration for the full
@@ -2143,7 +2142,7 @@ Fixes:
 cap_net_raw+ep /path/to/venv/bin/python (see Installation). - What matters is opening
 the raw socket *as* root (or with CAP_NET_RAW) at startup. The daemon currently keeps
 root for the rest of its run; a privilege-drop option exists in the code but is not
-enabled (issue #2).
+enabled (planned).
 
 If a *single* host reads Unpingable while others ping fine, that's a real result: no
 echo reply came back within the retry budget. A host that answers *some* but fewer than
@@ -2241,7 +2240,7 @@ Notes:
 lossy router still forwards, so its subtree keeps being checked. Only a fully-down
 ancestor suppresses. - Each object has a single parent today (one dep edge). Listing
 more than one dep warns and keeps the first; true multi-parent (DAG) dependencies are
-planned (#62 (https://github.com/IjonTichy1970/Psysmon/issues/62)).
+planned.
 
 See the dependency model in Configuration and the feature tour.
 
@@ -2321,10 +2320,10 @@ with config loglevel debug / -vv) for the specific warning. Common causes:
 an http/https object without url + urltext) is warned and skipped. - A dropped check
 type (imap, nntp, pop2, umichx500, radius, bootp, snmp) warns and skips -- these aren't
 in scope for the rewrite. - IPv6 ping types (ping6 / pingv6 / icmp6) warn and skip; IPv6
-is deferred (#24 (https://github.com/IjonTichy1970/Psysmon/issues/24)). An IPv6 source
-is likewise rejected at load. - An unknown dep target, a dependency cycle, or a
-duplicate object name each warn and degrade gracefully (the object becomes a root, or
-the duplicate is skipped).
+is deferred (tracked on GitHub (https://github.com/IjonTichy1970/Psysmon/issues/24)). An
+IPv6 source is likewise rejected at load. - An unknown dep target, a dependency cycle,
+or a duplicate object name each warn and degrade gracefully (the object becomes a root,
+or the duplicate is skipped).
 
 The full required-fields and check-type tables are in Configuration.
 
@@ -2371,8 +2370,8 @@ dep : A *dependency edge* in the modern object{} config -- a named link from a c
 object to the parent it sits behind. In the legacy config the same relationship is
 expressed by { } nesting. A dep is the mechanism that drives dependency suppression
 (below). Each object currently has at most a single dep edge (one parent). Named multi-
-parent dependencies (an object behind two upstreams) are *planned* and tracked as issue
-#62; they are not yet implemented. See Configuration.
+parent dependencies (an object behind two upstreams) are *planned*; they are not yet
+implemented. See Configuration.
 
 Dependency suppression : Monitored objects form a tree. A child is only checked while
 its parent (a ping target, typically the upstream router) is reachable. When the parent
@@ -2398,11 +2397,11 @@ reachable vs up : Two different bars. *Up* means a check fully succeeded (status
 which includes both up and Degraded. Dependency suppression uses *reachable*; the status
 page and "did the service pass" logic use *up*. A Degraded host is reachable but not up.
 
-Degraded : A PSYSMON-only status (added in #22) with no equivalent in the original
-sysmon. It comes only from a loss-tolerant ping: the host replied to some echoes but
-fewer than the required min_pings, so it is reachable but lossy. Degraded is not counted
-as up, does not suppress the objects behind it, and is informational by default (it does
-not page unless you set page_on_degraded / --page-on-degraded). See Status codes.
+Degraded : A PSYSMON-only status with no equivalent in the original sysmon. It comes
+only from a loss-tolerant ping: the host replied to some echoes but fewer than the
+required min_pings, so it is reachable but lossy. Degraded is not counted as up, does
+not suppress the objects behind it, and is informational by default (it does not page
+unless you set page_on_degraded / --page-on-degraded). See Status codes.
 
 Loss-tolerant ping : A ping check that sends send_pings echoes and requires min_pings
 replies to count the host up. Some-but-fewer replies report Degraded; zero replies
@@ -2418,7 +2417,8 @@ don't memorize them from here.
 Gate : Informal term for the suppression relationship -- a ping parent "gates" its
 dependents. While the gate is closed (parent unreachable), the children behind it are
 not checked. This is why getting ping targets right matters: a forged or false-positive
-"up" on a gate would silence its whole subtree (the kind of bug closed in #29 and #53).
+"up" on a gate would silence its whole subtree (the kind of spoofing bug fixed in an
+earlier release).
 
 Re-page interval : How often the daemon re-alerts about an object that is *still* down,
 after the initial page. Controlled by config pageinterval / --pageinterval (minutes).
@@ -2431,13 +2431,13 @@ notifier is a pluggable interface so webhook/SMS/chat transports can be added.
 Notifications can be disabled globally with -n / --no-notify.
 
 source (auto) : The outbound bind address for an object's probes, set per object (source
-"203.0.113.5";) or for a whole group (introduced in #70). Precedence is per-object >
-group default > global config source_ip. source auto forces the target to stay unbound
-(the kernel picks the route) even when a group default or source_ip would otherwise bind
-it -- useful for hosts reached over a VPN or a dynamic interface. Note: ping is unbound
-by default and ignores the global source_ip; only an explicit per-object/group source
-binds ping. Connection checks (tcp/udp/smtp/pop3/dns) default to source_ip. The source
-value is IPv4-only, and HTTP/HTTPS checks are always unbound. See Configuration.
+"203.0.113.5";) or for a whole group. Precedence is per-object > group default > global
+config source_ip. source auto forces the target to stay unbound (the kernel picks the
+route) even when a group default or source_ip would otherwise bind it -- useful for hosts
+reached over a VPN or a dynamic interface. Note: ping is unbound by default and ignores
+the global source_ip; only an explicit per-object/group source binds ping. Connection
+checks (tcp/udp/smtp/pop3/dns) default to source_ip. The source value is IPv4-only, and
+HTTP/HTTPS checks are always unbound. See Configuration.
 
 savestate : Optional on-disk persistence of live monitoring state, so a restart or
 upgrade doesn't forget what was already down and re-page known outages. Enabled with
@@ -2461,7 +2461,7 @@ socket(s) while privileged at startup and then keeps root for the process lifeti
 does *not* currently drop to an unprivileged user. A privilege-drop helper exists in the
 code (it would drop to an unprivileged uid/gid such as nobody/nogroup while keeping the
 already-open socket descriptors), but it is not wired in today; tightening the run-as-
-root posture is tracked as security issue #2.
+root posture is a planned security-hardening option.
 
 A few practical consequences:
 
@@ -2471,8 +2471,8 @@ POSIX-oriented. - New ping sources need a restart. Because raw sockets are opene
 startup while privileged, a brand-new source address introduced by a later SIGHUP reload
 can't open a fresh socket -- it falls back to unbound (and logs that) until you restart
 the daemon. - Narrowing the posture -- dropping privilege after the sockets open, or
-running with only CAP_NET_RAW instead of full root -- is tracked as security issue #2;
-today the daemon runs as root throughout.
+running with only CAP_NET_RAW instead of full root -- is a planned security-hardening
+option; today the daemon runs as root throughout.
 
 The control / query channel
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2530,8 +2530,8 @@ aren't exposed to other local users. - Prefer a dedicated, low-privilege mailbox
 for monitoring rather than a credential that grants access to anything sensitive. - Note
 that the status output never exposes these credentials -- neither the status page nor the
 control channel's status reply includes them. The exposure surface is the config file on
-disk, not the wire. The fact that these credentials live in the config in cleartext is
-tracked as issue #2.
+disk, not the wire. The fact that these credentials live in the config in cleartext is a
+planned security-hardening option.
 
 State file permissions
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -2541,8 +2541,8 @@ operator ack flags and note text. It does not contain credentials, but it does r
 your monitoring topology and current outage state. Put it somewhere only the daemon
 account can read and write (e.g. under a dedicated /var/lib/psysmon/ directory), and
 don't place it in a world-writable directory -- the daemon hardens against a symlink race
-on the *status* file (#28), but you should still own the directories holding both the
-state file and the control token.
+on the *status* file, but you should still own the directories holding both the state
+file and the control token.
 
 What was removed from the original
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

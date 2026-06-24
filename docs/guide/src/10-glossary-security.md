@@ -19,7 +19,7 @@ and in `psysmonctl ack` / `note` commands. A bare host being pinged uses port `0
 parent it sits behind. In the legacy config the same relationship is expressed by `{ }` nesting.
 A `dep` is the mechanism that drives dependency suppression (below). Each object currently has at
 most a **single** `dep` edge (one parent). Named multi-parent dependencies (an object behind two
-upstreams) are *planned* and tracked as issue #62; they are not yet implemented. See
+upstreams) are *planned*; they are not yet implemented. See
 [Configuration](04-configuration.md).
 
 **Dependency suppression**
@@ -49,7 +49,7 @@ answered well enough to forward traffic to its dependents — which includes bot
 logic use *up*. A `Degraded` host is reachable but not up.
 
 **Degraded**
-: A PSYSMON-only status (added in #22) with no equivalent in the original sysmon. It comes only
+: A PSYSMON-only status with no equivalent in the original sysmon. It comes only
 from a **loss-tolerant ping**: the host replied to some echoes but fewer than the required
 `min_pings`, so it is reachable but lossy. `Degraded` is **not** counted as up, does **not**
 suppress the objects behind it, and is **informational by default** (it does not page unless you
@@ -72,7 +72,7 @@ don't memorize them from here.
 : Informal term for the suppression relationship — a ping parent "gates" its dependents. While the
 gate is closed (parent unreachable), the children behind it are not checked. This is why getting
 ping targets right matters: a forged or false-positive "up" on a gate would silence its whole
-subtree (the kind of bug closed in #29 and #53).
+subtree (the kind of spoofing bug fixed in an earlier release).
 
 **Re-page interval**
 : How often the daemon re-alerts about an object that is *still* down, after the initial page.
@@ -87,7 +87,7 @@ globally with `-n` / `--no-notify`.
 
 **source (auto)**
 : The outbound bind address for an object's probes, set per object (`source "203.0.113.5";`) or for
-a whole group (introduced in #70). Precedence is **per-object > group default > global
+a whole group. Precedence is **per-object > group default > global
 `config source_ip`**. `source auto` forces the target to stay **unbound** (the kernel picks the
 route) even when a group default or `source_ip` would otherwise bind it — useful for hosts reached
 over a VPN or a dynamic interface. Note: **ping is unbound by default** and ignores the global
@@ -115,8 +115,8 @@ therefore started **as root** (there is no setuid binary). It opens the raw ICMP
 privileged at startup and then **keeps root for the process lifetime** — it does *not* currently
 drop to an unprivileged user. A privilege-drop helper exists in the code (it would drop to an
 unprivileged uid/gid such as `nobody`/`nogroup` while keeping the already-open socket descriptors),
-but it is **not wired in** today; tightening the run-as-root posture is tracked as security issue
-#2.
+but it is **not wired in** today; tightening the run-as-root posture is a planned
+security-hardening option.
 
 A few practical consequences:
 
@@ -126,7 +126,7 @@ A few practical consequences:
   a brand-new `source` address introduced by a later `SIGHUP` reload can't open a fresh socket — it
   falls back to unbound (and logs that) until you restart the daemon.
 - **Narrowing the posture** — dropping privilege after the sockets open, or running with only
-  `CAP_NET_RAW` instead of full root — is tracked as security issue #2; today the daemon runs as
+  `CAP_NET_RAW` instead of full root — is a planned security-hardening option; today the daemon runs as
   root throughout.
 
 ### The control / query channel
@@ -184,8 +184,8 @@ Practical guidance:
   grants access to anything sensitive.
 - Note that the **status output never exposes these credentials** — neither the status page nor the
   control channel's `status` reply includes them. The exposure surface is the config file on disk,
-  not the wire. The fact that these credentials live in the config in cleartext is tracked as
-  issue #2.
+  not the wire. The fact that these credentials live in the config in cleartext is a planned
+  security-hardening option.
 
 ### State file permissions
 
@@ -193,7 +193,7 @@ If you enable `savestate`, the state file records each object's up/down state pl
 flags and `note` text. It does not contain credentials, but it does reveal your monitoring topology
 and current outage state. Put it somewhere only the daemon account can read and write (e.g. under a
 dedicated `/var/lib/psysmon/` directory), and don't place it in a world-writable directory — the
-daemon hardens against a symlink race on the *status* file (#28), but you should still own the
+daemon hardens against a symlink race on the *status* file, but you should still own the
 directories holding both the state file and the control token.
 
 ### What was removed from the original

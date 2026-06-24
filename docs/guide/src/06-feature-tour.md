@@ -47,7 +47,7 @@ object web {
 ```
 
 Each object has **one** parent today (single `dep`). Listing more than one `dep` warns and keeps
-the first; true multi-parent (DAG) dependencies are **planned ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62))**
+the first; true multi-parent (DAG) dependencies are **planned**
 and not yet implemented. An unknown `dep` target, or a cycle, warns and the object becomes a root.
 
 A *degraded* (lossy-but-answering) parent does **not** suppress its subtree — a router that still
@@ -298,7 +298,7 @@ object auth-ns {
 
 ---
 
-## Per-object / per-group outbound source — `source` **(modern config only)** ([#70](https://github.com/IjonTichy1970/Psysmon/issues/70))
+## Per-object / per-group outbound source — `source` **(modern config only)**
 
 `source` controls which local address a check's probes go out from. Resolution per object is:
 **per-object `source` › the object's group `source` › the per-type default › unbound.** It is
@@ -335,11 +335,12 @@ source bind); those remain unbound.
 
 ---
 
-## Named multi-dependency — **planned ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62))**
+## Named multi-dependency — **planned**
 
 Today every object has exactly one parent (a single `dep`). Listing more than one `dep` warns and
 keeps the first. True multi-parent (DAG) dependencies — an object suppressed only when *all* of
-several parents are down — are **planned** and not yet implemented.
+several parents are down — are planned ([tracked on GitHub](https://github.com/IjonTichy1970/Psysmon/issues/62))
+and not yet implemented.
 
 ---
 
@@ -391,7 +392,7 @@ control-channel documentation.
 | Feature | Legacy | Modern | CLI |
 |---|---|---|---|
 | Dependency suppression (single parent) | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
-| Named multi-dependency (DAG) | Planned ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)) | Planned ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)) | Planned ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)) |
+| Named multi-dependency (DAG) | Planned | Planned | Planned |
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |
@@ -409,7 +410,7 @@ control-channel documentation.
 | Per-object check cadence (`queuetime`) | No (global only) | Yes | `--interval` (global only) |
 | Per-object page threshold (`numfailures`) | No (global only) | Yes | `--numfailures` (global only) |
 | DNS check query name (`dns-query`) | Yes (positional) | Yes (`dns-query`) | — |
-| Per-object / per-group `source` ([#70](https://github.com/IjonTichy1970/Psysmon/issues/70)) | No | Yes | No (global `--source-ip` only) |
+| Per-object / per-group `source` | No | Yes | No (global `--source-ip` only) |
 | Control channel (`psysmonctl` / `psysmon-token`) | Enable via CLI | Enable via `config control` or CLI | `--control` / `--control-bind` / `--control-port` / `--control-token-file` / `--control-tls-cert` / `--control-tls-key` |
 
 See [CLI reference](05-cli-reference.md) and [Appendix A](90-appendices.md) for the complete flag

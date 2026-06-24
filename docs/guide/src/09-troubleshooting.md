@@ -20,7 +20,7 @@ Fixes:
   `setcap cap_net_raw+ep /path/to/venv/bin/python` (see [Installation](03-installation.md)).
 - What matters is opening the raw socket *as* root (or with `CAP_NET_RAW`) at startup. The daemon
   currently keeps root for the rest of its run; a privilege-drop option exists in the code but is
-  not enabled (issue #2).
+  not enabled (planned).
 
 If a *single* host reads `Unpingable` while others ping fine, that's a real result: no echo reply
 came back within the retry budget. A host that answers *some* but fewer than the required number
@@ -113,8 +113,7 @@ Notes:
 - Suppression is gated on the ancestor being *reachable*, which includes `Degraded` — a lossy
   router still forwards, so its subtree keeps being checked. Only a fully-down ancestor suppresses.
 - Each object has a **single** parent today (one `dep` edge). Listing more than one `dep` warns
-  and keeps the first; true multi-parent (DAG) dependencies are planned
-  ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)).
+  and keeps the first; true multi-parent (DAG) dependencies are planned.
 
 See the dependency model in [Configuration](04-configuration.md) and the
 [feature tour](06-feature-tour.md).
@@ -188,7 +187,7 @@ unsupported, so the rest of the config still comes up. Check syslog (raise verbo
 - A **dropped check type** (`imap`, `nntp`, `pop2`, `umichx500`, `radius`, `bootp`, `snmp`) warns
   and skips — these aren't in scope for the rewrite.
 - **IPv6 ping** types (`ping6` / `pingv6` / `icmp6`) warn and skip; IPv6 is deferred
-  ([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)). An IPv6 `source` is likewise
+  ([tracked on GitHub](https://github.com/IjonTichy1970/Psysmon/issues/24)). An IPv6 `source` is likewise
   rejected at load.
 - An **unknown `dep` target**, a **dependency cycle**, or a **duplicate object name** each warn
   and degrade gracefully (the object becomes a root, or the duplicate is skipped).

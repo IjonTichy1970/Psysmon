@@ -5,7 +5,7 @@ PSYSMON reads a single configuration file (default `/etc/psysmon.conf`, overrida
 
 - **Legacy positional** — the original `sysmon.conf` grammar. This is the **default**: an
   existing `sysmon.conf` keeps working unchanged.
-- **Modern `object{}`** — an opt-in, named-block grammar adopted in issue #3, more readable and
+- **Modern `object{}`** — an opt-in, named-block grammar that is more readable and
   order-independent.
 
 The format is **auto-detected per file**, and the two are never mixed in one file. A file is read
@@ -262,7 +262,7 @@ named graph:
 Recoverable problems warn and degrade gracefully rather than failing the load:
 
 - **One parent only** (single-`dep` MVP). Listing more than one `dep` warns and keeps the first.
-  True named multi-parent (DAG) dependencies are **planned (#62)** and not yet implemented.
+  True named multi-parent (DAG) dependencies are **planned** and not yet implemented.
 - An **unknown `dep` target** warns and the object becomes a root.
 - A **cycle** warns and the object becomes a root (the forest is kept acyclic).
 
@@ -278,7 +278,7 @@ a value — a string or a bareword, including as a substring (`"$noc and a note"
 undefined variable is left literal with a warning. Variables must be defined before use.
 
 > **`include` is reserved, not yet supported.** A config that uses `include` is **rejected at load**
-> with an error (it's a planned follow-up under #3). Do not rely on it working today.
+> with an error — it's a planned feature, not yet implemented. Do not rely on it working today.
 
 ### Per-object overrides
 
@@ -321,7 +321,7 @@ per-type default differs by check type, and this is a common source of confusion
 Set `source` to:
 
 - an **IPv4 address** (`source "203.0.113.5";`) — bind this object's probes to that local address.
-  Works for ping too. (IPv6 source binding is rejected at load; that's planned under #24.)
+  Works for ping too. (IPv6 source binding is rejected at load; that's planned.)
 - **`auto`** (`source auto;`) — keep this object **unbound** (route by destination) even when a
   group default or `config source_ip` would otherwise bind it. This is the explicit opt-out.
 

@@ -175,9 +175,17 @@ Recoverable problems warn and degrade gracefully rather than failing the load:
 A converter turns an existing positional `sysmon.conf` into the equivalent modern config:
 
 ```
-python -m psysmon.config.convert /etc/psysmon.conf -o psysmon.conf.new
+psysmon-convert /etc/psysmon.conf -o psysmon.conf.new
 # or, to stdout:
-python -m psysmon.config.convert /etc/psysmon.conf
+psysmon-convert /etc/psysmon.conf
+```
+
+`psysmon-convert` installs alongside the `psysmon` daemon command. If it isn't on your `PATH` —
+e.g. you installed into a virtualenv you haven't activated — use the module form with the **same**
+Python that has psysmon installed (the venv's interpreter, not the system one):
+
+```
+/path/to/venv/bin/python -m psysmon.config.convert /etc/psysmon.conf -o psysmon.conf.new
 ```
 
 It parses the legacy file through psysmon's own parser and re-emits it, so the output reflects

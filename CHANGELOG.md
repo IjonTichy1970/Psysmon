@@ -34,6 +34,11 @@ All notable changes to this project are documented here. The format is based on
   (persisted with the saved state). Requires the control channel above
   ([#68](https://github.com/IjonTichy1970/Psysmon/issues/68)).
 
+### Fixed
+- The source distribution (sdist) now bundles the `docs/` guides (`modern-config.md`,
+  `control-channel.md`); `MANIFEST.in` previously shipped only the top-level docs, so
+  `docs/modern-config.md` was missing from the 0.2.x sdist despite the README linking to it.
+
 ## [0.2.1] — 2026-06-24 — psysmon-convert command + config-format docs + BOM fix
 
 ### Added

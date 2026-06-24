@@ -192,7 +192,7 @@ object web {
 
 ### Lexical rules
 
-- **Statements end with `;`.** Object and group bodies are delimited by `{ ... }`.
+- **Statements end with `;`.** Object and [group](#group-scopes) bodies are delimited by `{ ... }`.
 - **Strings are double-quoted** (`"a value"`) with **no escape sequences** — a string cannot
   contain a `"` or span a newline.
 - **Barewords** are unquoted runs used for keywords, hostnames, and numbers (`ping`, `192.0.2.1`,
@@ -290,7 +290,7 @@ object still loads with the global default).
 | `queuetime` | seconds (> 0) | Per-object check interval — poll a critical host faster than the tail |
 | `numfailures` | integer (≥ 1) | Per-object page threshold |
 | `send_pings` / `min_pings` | integers (≥ 1, `min ≤ send`) | Per-object loss-tolerant ping; an invalid pair falls back to the globals |
-| `group` | `"name"` | Operator grouping label (status-page headings + a JSON field); a matching `group "name" { … }` block can give the group default settings |
+| `group` | `"name"` | Operator grouping label (status-page headings + a JSON field); a matching `group "name" { … }` block can give the group default settings — see [Group scopes](#group-scopes) |
 | `contact_on` | `down`\|`up`\|`both`\|`none` | Which transitions page this object (overrides global) |
 | `source` | `"ip"` \| `auto` | Outbound bind source for this object's check (see below) |
 
@@ -328,7 +328,7 @@ Set `source` to:
 > **HTTP/HTTPS exception:** `source` is not applied to http/https checks (the HTTP client offers no
 > per-request source bind).
 
-### Group scopes — `group "NAME" { ... }`
+### Group scopes — `group "NAME" { ... }` {#group-scopes}
 
 A top-level `group "NAME" { … }` block gives every object that joins the group (via the
 `group "NAME"` attribute) shared default settings. Today it carries `source`; it's a scope, so

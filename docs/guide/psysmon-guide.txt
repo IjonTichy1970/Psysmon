@@ -563,8 +563,8 @@ change get the new value.
     is a plain global default and you set per-object thresholds with a numfailures attribute -- the
     converter relies on this distinction (see migration).
 
-config directives (legacy) {#config-directives-legacy}
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+config directives (legacy)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The legacy parser's config line is config <directive> <value...>. The directive is
 prefix-matched. The complete set the legacy parser accepts:
@@ -726,7 +726,7 @@ ignored (the object still loads with the global default).
 | queuetime | seconds (> 0) | Per-object check interval -- poll a critical host faster than the tail |
 | numfailures | integer (>= 1) | Per-object page threshold |
 | send_pings / min_pings | integers (>= 1, min <= send) | Per-object loss-tolerant ping; an invalid pair falls back to the globals |
-| group | "name" | Operator grouping label (status-page headings + a JSON field); a matching group "name" { ... } block can give the group default settings |
+| group | "name" | Operator grouping label (status-page headings + a JSON field); a matching group "name" { ... } block can give the group default settings -- see Group scopes |
 | contact_on | down\|up\|both\|none | Which transitions page this object (overrides global) |
 | source | "ip" \| auto | Outbound bind source for this object's check (see below) |
 
@@ -1601,7 +1601,8 @@ Grouping -- group and the group { } scope (modern config only)
 -------------------------------------------------------------
 
 A group "name" attribute labels an object; the status views then list objects under per-
-group headings (with an "Ungrouped" bucket) and add a group field to the JSON.
+group headings (with an "Ungrouped" bucket) and add a group field to the JSON. The full
+grammar and precedence are in Configuration -> Group scopes.
 
 A top-level group "NAME" { ... } block additionally gives every member shared default
 settings. Today it carries source (below); it is a scope, so future per-group defaults
@@ -1840,10 +1841,10 @@ and children suppressed behind a down parent are omitted (so a router outage doe
 fill the page with everything behind it). Pass --show-up to list up hosts too. The HTML
 page auto-refreshes on an interval (--status-refresh, default 30s).
 
-If any objects carry a group label (set in the modern config -- see Configuration), the
-page lists them under per-group headings, with an "Ungrouped" bucket for the rest; the
-JSON view (below) carries a group field per host so a dashboard can filter on it. With
-no groups in use the page renders flat.
+If any objects carry a group label (set in the modern config -- see Configuration -> Group
+scopes), the page lists them under per-group headings, with an "Ungrouped" bucket for
+the rest; the JSON view (below) carries a group field per host so a dashboard can filter
+on it. With no groups in use the page renders flat.
 
 The columns
 ~~~~~~~~~~~
@@ -2390,7 +2391,7 @@ attribute, or a group "NAME" { ... } scope block that applies a default to every
 inside it). Groups drive the status views: the HTML "Bad Hosts" page lists objects under
 per-group headings (with an "Ungrouped" bucket), and the JSON carries a group field per
 host for dashboards to filter on. Groups are presentational; they do not affect
-dependency suppression.
+dependency suppression. See Group scopes in the configuration reference for the grammar.
 
 reachable vs up : Two different bars. *Up* means a check fully succeeded (status up).
 *Reachable* means the host answered well enough to forward traffic to its dependents --

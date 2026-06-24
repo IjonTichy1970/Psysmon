@@ -120,8 +120,9 @@ config statusfile html "/var/www/psysmon/status.html";
 - **Text table** — a flat variant (`--status-format text`).
 - **JSON** — all nodes, each with a `suppressed` flag, for dashboards and automation.
 
-When objects have a `group` set (modern format), the HTML page lists them under per-group headings
-(with an "Ungrouped" bucket) and the JSON carries a `group` field per host. See
+When objects have a [`group`](04-configuration.md#group-scopes) set (modern format), the HTML page
+lists them under per-group headings (with an "Ungrouped" bucket) and the JSON carries a `group`
+field per host. See
 [Operating](07-operating.md) for how to publish and serve the status file.
 
 ---
@@ -259,7 +260,8 @@ Values are `down`, `up`, `both`, `none`. An object with no `contact` never pages
 ## Grouping — `group` and the `group { }` scope **(modern config only)**
 
 A `group "name"` attribute labels an object; the status views then list objects under per-group
-headings (with an "Ungrouped" bucket) and add a `group` field to the JSON.
+headings (with an "Ungrouped" bucket) and add a `group` field to the JSON. The full grammar and
+precedence are in [Configuration → Group scopes](04-configuration.md#group-scopes).
 
 A top-level `group "NAME" { … }` block additionally gives every member shared default settings.
 Today it carries `source` (below); it is a scope, so future per-group defaults slot in the same

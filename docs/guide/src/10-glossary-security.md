@@ -40,7 +40,8 @@ parent. Everything else hangs off a `root` via `dep` edges. See
 `group "NAME" { … }` scope block that applies a default to everything inside it). Groups drive the
 status views: the HTML "Bad Hosts" page lists objects under per-group headings (with an
 "Ungrouped" bucket), and the JSON carries a `group` field per host for dashboards to filter on.
-Groups are presentational; they do **not** affect dependency suppression.
+Groups are presentational; they do **not** affect dependency suppression. See
+[Group scopes](04-configuration.md#group-scopes) in the configuration reference for the grammar.
 
 **reachable vs up**
 : Two different bars. *Up* means a check fully succeeded (status `up`). *Reachable* means the host

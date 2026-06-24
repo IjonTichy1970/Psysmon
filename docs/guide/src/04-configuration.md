@@ -504,12 +504,12 @@ modern parser.
 Each check type below is written in **both formats** — the legacy positional line and the modern
 `object{}` block for the same check.
 
-> **The host field takes a hostname _or_ an IP** in either format; psysmon resolves a hostname via
-> DNS **at check time** (when the check runs), never at parse or conversion time. The pairs below
-> show both forms — a hostname in the legacy line, a literal IP in the modern block — and both are
-> valid. They are hand-written equivalents, **not** literal converter output: `psysmon-convert`
-> copies the host string **verbatim** into `ip`, so `router.example.net  ping …` converts to
-> `ip "router.example.net"`, not a resolved address.
+> **The host field takes a hostname _or_ an IP** in either format — psysmon resolves a hostname via
+> DNS **at check time** (when the check runs), never at parse or conversion time. The pairs below use
+> a hostname; an IP literal works identically. `psysmon-convert` copies the host string **and** the
+> label **verbatim**: converting `router.example.net  ping  edge-router …` yields
+> `ip "router.example.net"; … desc "edge-router";` — not a resolved address or a re-spaced label.
+> (The modern format *additionally* allows spaces in `desc`, which a legacy label can't.)
 
 ### ping
 
@@ -521,9 +521,9 @@ router.example.net  ping  edge-router  noc@example.net
 ```
 # modern
 object router {
-    ip      "192.0.2.1";
+    ip      "router.example.net";
     type    ping;
-    desc    "edge router";
+    desc    "edge-router";
     contact "noc@example.net";
 };
 ```
@@ -538,7 +538,7 @@ db.example.net  tcp  5432  postgres  dba@example.net
 ```
 # modern
 object db {
-    ip      "192.0.2.20";
+    ip      "db.example.net";
     type    tcp;
     port    5432;
     desc    "postgres";
@@ -556,7 +556,7 @@ ntp.example.net  udp  123  ntp  noc@example.net
 ```
 # modern
 object ntp {
-    ip      "192.0.2.21";
+    ip      "ntp.example.net";
     type    udp;
     port    123;
     desc    "ntp";
@@ -574,9 +574,9 @@ mx.example.net  smtp  mail-relay  noc@example.net
 ```
 # modern
 object mx {
-    ip      "192.0.2.25";
+    ip      "mx.example.net";
     type    smtp;
-    desc    "mail relay";
+    desc    "mail-relay";
     contact "noc@example.net";
 };
 ```
@@ -591,11 +591,11 @@ pop.example.net  pop3  probeuser  probepass  pop3-login  noc@example.net
 ```
 # modern
 object pop {
-    ip       "192.0.2.26";
+    ip       "pop.example.net";
     type     pop3;
     username "probeuser";
     password "probepass";
-    desc     "pop3 login";
+    desc     "pop3-login";
     contact  "noc@example.net";
 };
 ```
@@ -610,7 +610,7 @@ ns1.example.net  authdns  example.net  noc@example.net
 ```
 # modern  — dns requires both dns-query AND contact
 object ns1 {
-    ip        "192.0.2.53";
+    ip        "ns1.example.net";
     type      dns;
     dns-query "example.net";
     contact   "noc@example.net";
@@ -627,11 +627,11 @@ api.example.net  https  /health  OK  api-health  noc@example.net
 ```
 # modern  — url + urltext required for http/https
 object api {
-    ip      "192.0.2.10";
+    ip      "api.example.net";
     type    https;
     url     "/health";
     urltext "OK";
-    desc    "api health";
+    desc    "api-health";
     contact "noc@example.net";
 };
 ```
@@ -651,15 +651,15 @@ router.example.net  ping  edge-router  noc@example.net  {
 set noc = "noc@example.net";
 
 object router {
-    ip "192.0.2.1"; type ping; desc "edge router"; contact $noc;
+    ip "router.example.net"; type ping; desc "edge-router"; contact $noc;
 };
 object web {
-    ip "192.0.2.10"; type https; url "/health"; urltext "OK";
-    desc "web health"; contact $noc;
+    ip "web.example.net"; type https; url "/health"; urltext "OK";
+    desc "web-health"; contact $noc;
     dep "router";
 };
 object db {
-    ip "192.0.2.20"; type tcp; port 5432; desc "postgres";
+    ip "db.example.net"; type tcp; port 5432; desc "postgres";
     contact "dba@example.net";
     dep "router";
 };
@@ -678,12 +678,12 @@ mail.example.net  pop3  probeuser probepass  mail-retrieve  noc@example.net
 ```
 # modern  — two objects, same host, distinct names
 object mail-smtp {
-    ip "198.51.100.2"; type smtp; desc "mail submit"; contact "noc@example.net";
+    ip "mail.example.net"; type smtp; desc "mail-submit"; contact "noc@example.net";
 };
 object mail-pop3 {
-    ip "198.51.100.2"; type pop3;
+    ip "mail.example.net"; type pop3;
     username "probeuser"; password "probepass";
-    desc "mail retrieve"; contact "noc@example.net";
+    desc "mail-retrieve"; contact "noc@example.net";
 };
 ```
 

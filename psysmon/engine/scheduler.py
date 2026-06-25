@@ -13,12 +13,15 @@ Design:
   delays its own next slot and an in-flight node can't busy-spin the wake timer.
   :meth:`Scheduler.run` ticks, then sleeps until the heap head's due time (or a stop). This is
   O(k log n) in the number actually due per wakeup, vs. the old O(n) scan.
-* **Dependency suppression** is an explicit eligibility gate: a node is eligible iff every
-  ping ancestor is currently *reachable* (up, or — with loss-tolerant ping — degraded; a lossy
-  router still forwards, so its subtree is not masked). An ineligible node is re-queued *without*
-  being checked, so its state freezes — matching the C tree-walk that never visits a subtree
-  behind a down parent. A node whose ancestor chain contains a *non-ping* is unreachable by the
-  original's rules and is dropped from scheduling with a warning.
+* **Dependency suppression** is an explicit eligibility gate: a node is eligible iff it is
+  *reachable* through its dependency parents — a node is reachable if it is a forest root, or
+  **any** of its direct ping parents is itself reachable and currently up-or-degraded (transitive,
+  any-path / OR over the dep graph — the basis for multi-parent DAGs, #62). With today's
+  single-parent configs each node has exactly one parent, so this reduces to "every ping ancestor
+  up," the original's chain rule. A lossy-but-answering router counts as reachable (degraded), so
+  its subtree is not masked. An ineligible node is re-queued *without* being checked, so its state
+  freezes — matching the C tree-walk that never visits a subtree behind a down parent. A node
+  reachable only behind a *non-ping* parent is dropped from scheduling with a warning.
 * A check result is **discarded** if the node's gate fell while the check was in flight
   (re-checked at completion), so a parent going down mid-check can't produce a stale alarm.
 * **Ping** runs on the shared :class:`~psysmon.checks.ping.PingService` (a source-keyed pool of
@@ -139,7 +142,7 @@ class _Scheduled:
 
     node: Node
     state: NodeState
-    gate: list[_Scheduled]  # ancestor ping nodes; all must be checked-and-up to run
+    gate: list[_Scheduled]  # direct ping parents; reachable if ANY is checked-and-reachable (#62)
     interval: float
     source: str | None = None  # resolved outbound bind source (#70); None = unbound
     next_due: float = 0.0
@@ -195,7 +198,7 @@ class Scheduler:
         self._stagger_due(stagger)
         self._build_heap()
 
-    # --- tree flattening + gate computation -------------------------------------------
+    # --- forest flattening + gate computation -----------------------------------------
 
     def _collect_ping_sources(self) -> set[str]:
         """Distinct bound sources among scheduled ping nodes — the bound sockets the ping pool
@@ -204,32 +207,46 @@ class Scheduler:
                 if s.node.check_type is CheckType.PING and s.source}
 
     def _flatten(self, roots: list[Node]) -> list[_Scheduled]:
-        scheduled: list[_Scheduled] = []
+        """Build the scheduled set, recording each node's *direct* ping parents in ``gate``.
 
-        def walk(node: Node, gate: list[_Scheduled], reachable: bool) -> None:
+        A node is reached top-down through its parents; each ``Node`` is scheduled **exactly once**
+        (de-duped by identity) and accumulates every ping parent that reaches it — so a shared node
+        in a multi-parent DAG (#62) gets all its gate edges, not a duplicate ``_Scheduled``. Today's
+        single-parent configs give every non-root node one gate entry, structurally identical to the
+        old ancestor-chain walk. ``_eligible`` turns ``gate`` into the any-path reachability test.
+        """
+        sched_of: dict[int, _Scheduled] = {}
+        order: list[_Scheduled] = []
+
+        def walk(node: Node, parent: _Scheduled | None, reachable: bool) -> None:
             if not reachable:
                 self.warnings.append(
                     f"{node.hostname} ({node.check_type}) sits behind a non-ping parent and "
                     "can never be reached; not scheduling it"
                 )
                 return
-            state = NodeState(max_down=node.max_down, last_up=self._clock.wall())
-            sched = _Scheduled(
-                node=node,
-                state=state,
-                gate=list(gate),
-                interval=max(node.interval or self._default_interval, _MIN_INTERVAL_S),
-                source=self._effective_source(node),
-            )
-            scheduled.append(sched)
-            is_ping = node.check_type is CheckType.PING
-            child_gate = [*gate, sched] if is_ping else gate
-            for child in node.children:
-                walk(child, child_gate, is_ping)  # children reachable only behind a ping
+            sched = sched_of.get(id(node))
+            fresh = sched is None
+            if fresh:
+                sched = _Scheduled(
+                    node=node,
+                    state=NodeState(max_down=node.max_down, last_up=self._clock.wall()),
+                    gate=[],
+                    interval=max(node.interval or self._default_interval, _MIN_INTERVAL_S),
+                    source=self._effective_source(node),
+                )
+                sched_of[id(node)] = sched
+                order.append(sched)
+            if parent is not None and not any(p is parent for p in sched.gate):
+                sched.gate.append(parent)  # accumulate direct ping parents (identity, not value)
+            if fresh:  # walk each subtree once; a shared node accumulates parents, no re-walk
+                is_ping = node.check_type is CheckType.PING
+                for child in node.children:
+                    walk(child, sched if is_ping else None, is_ping)  # gated only behind a ping
 
         for root in roots:
-            walk(root, [], True)
-        return scheduled
+            walk(root, None, True)
+        return order
 
     def _stagger_due(self, stagger: bool) -> None:
         now = self._clock.monotonic()
@@ -258,15 +275,38 @@ class Scheduler:
     # --- eligibility ------------------------------------------------------------------
 
     def _eligible(self, sched: _Scheduled) -> bool:
-        """True iff every ping ancestor has been checked and is currently reachable.
+        """True iff the node is *reachable* through its dependency parents (any-path / OR, #62).
 
-        Requiring ``checked`` (not just the initial ``lastcheck == 0``) means a child isn't
-        probed until its parent ping has a real result — so a node behind a down parent is
-        never checked, matching the C sweep instead of leaking one check at startup. Reachable is
-        up *or* degraded (:func:`is_reachable`): a lossy-but-answering router still forwards, so
-        gating its children off would hide genuine outages behind it (#22).
+        A node is reachable if it is a forest root, or **any** of its direct ping parents is itself
+        reachable *and* checked-and-reachable — evaluated transitively over the (acyclic) dep graph,
+        memoized per call. ``checked`` lives *inside* the ``any``: a node opens as soon as one
+        parent has a real up result, while an as-yet-unchecked parent neither opens it nor vetoes it
+        — so a node still waits at startup rather than leaking a probe, matching the C sweep.
+        Reachable is up *or* degraded (:func:`is_reachable`): a lossy-but-answering router still
+        forwards, so gating its children off would hide genuine outages behind it (#22).
+
+        For a single-parent chain this is exactly the old "every ping ancestor checked-and-up" rule.
         """
-        return all(a.checked and is_reachable(a.state.lastcheck) for a in sched.gate)
+        return self._reachable(sched, {}, set())
+
+    def _reachable(self, sched: _Scheduled, memo: dict[int, bool], on_path: set[int]) -> bool:
+        sid = id(sched)
+        cached = memo.get(sid)
+        if cached is not None:
+            return cached
+        if not sched.gate:  # a forest root is always reachable
+            memo[sid] = True
+            return True
+        if sid in on_path:  # cycle guard (defence-in-depth; the parser already breaks dep cycles)
+            return False
+        on_path.add(sid)
+        ok = any(
+            p.checked and is_reachable(p.state.lastcheck) and self._reachable(p, memo, on_path)
+            for p in sched.gate
+        )
+        on_path.discard(sid)
+        memo[sid] = ok
+        return ok
 
     # --- the loop ---------------------------------------------------------------------
 

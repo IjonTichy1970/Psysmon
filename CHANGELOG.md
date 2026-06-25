@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-06-24 — reload warning parity
+
 ### Fixed
 - On a SIGHUP reload, the daemon now logs scheduler-level warnings (a node left behind a non-ping
   parent so it can never be reached; a duplicate node in the new config) the same way it does at
@@ -300,7 +302,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/IjonTichy1970/Psysmon/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.3.0...v0.4.0

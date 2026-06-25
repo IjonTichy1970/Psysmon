@@ -295,6 +295,34 @@ async def test_reload_loop_keeps_old_config_on_parse_failure(tmp_path):
         await asyncio.gather(task, return_exceptions=True)
 
 
+async def test_reload_loop_surfaces_schedule_warnings(tmp_path, caplog):
+    # A schedule-level problem introduced by an edit (here a ping node depending on a non-ping
+    # parent, so it can never be reached) must be logged on reload — build() surfaces
+    # scheduler.warnings at startup, and the reload path must too (#78), not drop them silently.
+    cfg = tmp_path / "psysmon.conf"
+    cfg.write_text("p ping p noc@x\n", encoding="utf-8")
+    settings = Settings()
+    settings.config_path = str(cfg)
+    sched = Scheduler([Node("p", CheckType.PING)], settings, clock=ManualClock(), stagger=False)
+
+    flag = asyncio.Event()
+    task = asyncio.create_task(daemon._reload_loop(sched, settings, flag))
+    try:
+        cfg.write_text(
+            'object gw { host "gw"; type tcp; port 80; contact "noc@x"; };\n'
+            'object c { host "c"; type ping; contact "noc@x"; dep "gw"; };\n',
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.WARNING, logger="psysmon"):
+            flag.set()
+            await asyncio.sleep(0.05)
+        assert any("reload:" in r.getMessage() and "non-ping parent" in r.getMessage()
+                   for r in caplog.records)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 def test_main_missing_config_returns_clean_error(capsys):
     rc = main(["-f", "/no/such/psysmon.conf", "-d"])
     assert rc == 1  # not a traceback

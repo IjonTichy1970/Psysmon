@@ -119,7 +119,7 @@ Inside the block, attributes are `key value;` pairs.
 | `url` + `urltext` | `"path"`, `"substring"` | http/https (**required**) | Path to GET, and a substring the body must contain |
 | `username` + `password` | `"u"`, `"p"` | pop3 (**required**) | POP3 credentials |
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
-| `dep` | `"object-name"` | optional | Parent object for dependency suppression |
+| `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (OR / any-path) |
 
 **Check types** (the `type` keyword): `ping`, `tcp`, `udp`, `smtp`, `pop3`, `dns`, `http`, `https`.
 For legacy familiarity, `authdns` is accepted as an alias for `dns` and `www` for `http`. Default
@@ -222,24 +222,40 @@ object mail {
 }
 ```
 
-## Dependencies and the monitored forest
+## Dependencies and the monitored graph
 
-The config builds a **forest** of objects linked by `dep` edges, reproducing the legacy `{ }`
-nesting as a named graph:
+The config builds a directed acyclic **graph** of objects linked by `dep` edges — it reproduces the
+legacy `{ }` nesting as a named graph and generalizes it to multiple parents:
 
 - An object with **no `dep`** is a top-level **root**.
-- `dep "parent"` makes the object a **child** of `parent`: it is checked only while every ancestor
-  ping is up (**dependency suppression** — an upstream outage raises one alert, not a flood).
-- `root = "name";` is an **optional, informational** hint. It does not change the structure (roots
-  are determined purely by the absence of `dep`); naming an object that doesn't exist just warns.
+- `dep "parent"` makes the object a **child** of `parent`: it is checked only while it is *reachable*
+  through that parent (**dependency suppression** — an upstream outage raises one alert, not a flood).
+- An object may list **multiple `dep` edges**, sitting behind several parents at once. Suppression is
+  **OR / any-path**: the object keeps being checked while *any* of its parent paths is up, and is
+  suppressed only when *every* path is down. This models a host reachable through redundant upstreams
+  (e.g. dual-homed behind two routers) — it stays monitored until both uplinks fail.
+- Reachability is transitive and counts a degraded-but-answering parent as a live path; a parent that
+  is not a `ping` provides no reachability path of its own.
+- `root = "name";` is an **optional, informational** hint. It does not change the structure (roots are
+  determined purely by the absence of a resolved `dep`); naming an object that doesn't exist just warns.
+
+A server dual-homed behind two upstream routers — suppressed only if *both* uplinks are down:
+
+```
+object rtr-a  { host "rtr-a.example.net"; type ping; };
+object rtr-b  { host "rtr-b.example.net"; type ping; };
+object server {
+    host "server.example.net"; type tcp; port 443;
+    dep  "rtr-a";
+    dep  "rtr-b";                # reachable via either uplink
+};
+```
 
 Recoverable problems warn and degrade gracefully rather than failing the load:
 
-- **One parent only** (single-`dep` MVP). Listing more than one `dep` warns and keeps the first;
-  true multi-parent (DAG) dependencies are tracked in
-  [#62](https://github.com/IjonTichy1970/Psysmon/issues/62).
-- An **unknown `dep` target** warns and the object becomes a root.
-- A **cycle** warns and the object becomes a root (the forest is kept acyclic).
+- An **unknown `dep` target** warns and that edge is dropped; an object left with no surviving edge
+  becomes a root.
+- A **cycle** (including a self-`dep`) warns and the offending edge is dropped, keeping the graph acyclic.
 - A **duplicate object name** warns and the duplicate is skipped.
 
 ## Migrating from the legacy format
@@ -284,8 +300,6 @@ clean warning or a clear refusal, never a silent surprise):
 
 - **`include`** — not yet supported; a config using it is **rejected at load**. (A follow-up,
   M2b, will add it with proper `$var`-across-include scoping.)
-- **Multiple `dep` edges (DAG)** — single parent only; extra edges warn and the first is kept
-  ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)).
 - **IPv6 ping** (`ping6` / `pingv6` / `icmp6`) — deferred ([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)); these `type`s warn and skip.
 - **Dropped check types** — `imap`, `nntp`, `pop2`, `umichx500`, `radius`, `bootp`, `snmp` warn and
   skip (they were unused in practice and are out of scope for the rewrite).

@@ -663,7 +663,7 @@ Inside an object body, attributes are key value; pairs:
 | url + urltext | "path", "substring" | http/https (required) | Path to GET, and a substring the body must contain |
 | username + password | "u", "p" | pop3 (required) | POP3 credentials |
 | dns-query | "name" | dns (required) | The DNS name to look up |
-| dep | "object-name" | optional | Parent object for dependency suppression |
+| dep | "object-name" | optional | Parent for dependency suppression; repeatable for multiple parents (any-path) |
 
 This table covers the structural attributes. An object body can also carry per-object
 override attributes -- queuetime, numfailures, send_pings / min_pings, group, contact_on,
@@ -685,21 +685,33 @@ rest of the config still loads:
 | pop3 | host, type, username, password |
 | dns | host, type, dns-query, contact |
 
-Dependencies and the forest
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Dependencies and the graph
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The config builds a forest linked by dep edges, reproducing the legacy { } nesting as a
-named graph:
+The config builds a graph of objects linked by dep edges -- it reproduces the legacy { }
+nesting as a named graph, and generalizes it to multiple parents:
 
 - An object with no dep is a top-level root. - dep "parent" makes the object a child of
-parent: it is checked only while every ancestor ping is up.
+parent: it is checked only while it is reachable through that parent. - An object may
+list several dep edges at once, putting it behind multiple parents. Suppression is then
+any-path: the object keeps being checked while *any* of its parent paths is up, and is
+suppressed only when *every* path is down -- so a server reachable through two upstream
+routers stays monitored until both uplinks fail:
+
+    object rtr-a  { host "rtr-a.example.net"; type ping; };
+    object rtr-b  { host "rtr-b.example.net"; type ping; };
+    object server {
+        host "server.example.net"; type tcp; port 443;
+        dep  "rtr-a";
+        dep  "rtr-b";                # reachable via either uplink
+    };
 
 Recoverable problems warn and degrade gracefully rather than failing the load:
 
-- One parent only (single-dep MVP). Listing more than one dep warns and keeps the first.
-True named multi-parent (DAG) dependencies are planned and not yet implemented. - An
-unknown dep target warns and the object becomes a root. - A cycle warns and the object
-becomes a root (the forest is kept acyclic).
+- An unknown dep target warns and that edge is dropped; an object with no surviving edge
+  is a root.
+- A cycle (including a self-dep) warns and the offending edge is dropped, keeping the
+  graph acyclic.
 
 Variables -- set / $var
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -1403,13 +1415,16 @@ In the modern format, the same structure is named dep edges:
         dep "edge-rtr";          # only checked while edge-rtr is up
     };
 
-Each object has one parent today (single dep). Listing more than one dep warns and keeps
-the first; true multi-parent (DAG) dependencies are planned and not yet implemented. An
-unknown dep target, or a cycle, warns and the object becomes a root.
+An object can list several dep edges to sit behind multiple parents at once. Suppression
+is then any-path: it keeps being checked while *any* parent path is up, and is
+suppressed only when *every* path is down -- so a server reachable through two upstream
+routers stays monitored until both uplinks fail. An unknown dep target or a cycle
+(including a self-dep) warns and that edge is dropped; an object left with no surviving
+edge is a root.
 
-A *degraded* (lossy-but-answering) parent does not suppress its subtree -- a router that
-still forwards packets shouldn't mask real outages behind it. Only a fully-down ancestor
-suppresses.
+A *degraded* (lossy-but-answering) parent still counts as a live path and does not
+suppress its dependents -- a router that still forwards packets shouldn't mask real
+outages behind it. A node is suppressed only when every one of its paths is fully down.
 
 ---
 
@@ -1687,16 +1702,6 @@ request source bind); those remain unbound.
 
 ---
 
-Named multi-dependency -- planned
---------------------------------
-
-Today every object has exactly one parent (a single dep). Listing more than one dep
-warns and keeps the first. True multi-parent (DAG) dependencies -- an object suppressed
-only when *all* of several parents are down -- are planned (tracked on GitHub
-(https://github.com/IjonTichy1970/Psysmon/issues/62)) and not yet implemented.
-
----
-
 The control / query channel -- psysmonctl / psysmon-token (opt-in)
 -----------------------------------------------------------------
 
@@ -1741,8 +1746,8 @@ Availability matrix
 
 | Feature | Legacy | Modern | CLI |
 |---|---|---|---|
-| Dependency suppression (single parent) | Yes ({ } nesting) | Yes (dep) | -- (structure is config-only) |
-| Named multi-dependency (DAG) | Planned | Planned | Planned |
+| Dependency suppression | Yes ({ } nesting) | Yes (dep) | -- (structure is config-only) |
+| Multi-parent dependencies (any-path) | -- (single parent) | Yes (multiple dep) | -- (structure is config-only) |
 | Threshold alerting (numfailures) | Yes | Yes | --numfailures |
 | Re-page interval (pageinterval) | Yes | Yes | --pageinterval |
 | Recovery notices | Yes | Yes | -- |
@@ -2240,19 +2245,18 @@ Details and examples are in Configuration; the alert lifecycle is in Operating.
 A host behind a down parent isn't being checked at all
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-This is dependency suppression working as designed, not a bug. An object with dep
-"parent" is checked only while every ancestor ping is reachable; when the parent goes
-down, psysmon stops checking the children and freezes their state, so an upstream outage
-raises one alert instead of a flood. When the parent recovers, checking of the subtree
-resumes automatically.
+This is dependency suppression working as designed, not a bug. An object with a dep is
+checked only while it stays reachable through one of its parents; when *all* of its
+parents go down, psysmon stops checking it and freezes its state, so an upstream outage
+raises one alert instead of a flood. When a parent recovers, checking resumes
+automatically.
 
 Notes:
 
-- Suppression is gated on the ancestor being *reachable*, which includes Degraded -- a
-lossy router still forwards, so its subtree keeps being checked. Only a fully-down
-ancestor suppresses. - Each object has a single parent today (one dep edge). Listing
-more than one dep warns and keeps the first; true multi-parent (DAG) dependencies are
-planned.
+- Suppression is gated on a parent being *reachable*, which includes Degraded -- a lossy
+router still forwards, so it keeps the subtree alive. Only when every path is fully down
+is a node suppressed. - An object can have multiple parents (several dep edges); with
+any-path semantics it is suppressed only when *all* of its parent paths are down.
 
 See the dependency model in Configuration and the feature tour.
 
@@ -2381,9 +2385,9 @@ uses port 0.
 dep : A *dependency edge* in the modern object{} config -- a named link from a child
 object to the parent it sits behind. In the legacy config the same relationship is
 expressed by { } nesting. A dep is the mechanism that drives dependency suppression
-(below). Each object currently has at most a single dep edge (one parent). Named multi-
-parent dependencies (an object behind two upstreams) are *planned*; they are not yet
-implemented. See Configuration.
+(below). An object may have several dep edges (multiple parents); it is then suppressed
+only when *every* parent path is down (any-path) -- modelling a host reachable through
+redundant upstreams. See Configuration.
 
 Dependency suppression : Monitored objects form a tree. A child is only checked while
 its parent (a ping target, typically the upstream router) is reachable. When the parent

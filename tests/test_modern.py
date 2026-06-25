@@ -411,16 +411,58 @@ def test_unknown_object_attribute_warns_but_keeps_object():
     assert not any("queuetime" in w for w in res.warnings)
 
 
-def test_multi_dep_keeps_first_and_warns():
-    # Single-dep MVP: a repeated `dep` keeps the first; the DAG is #62.
+def test_multi_dep_builds_a_dag():
+    # Multiple `dep`s put the child under EVERY named parent — a multi-parent DAG (#62), no warning.
     res = parse(
         'object a { ip "192.0.2.1"; type ping; };\n'
         'object b { ip "192.0.2.2"; type ping; };\n'
         'object c { ip "192.0.2.3"; type tcp; port 22; dep "a"; dep "b"; };\n'
     )
     a = next(n for n in res.roots if n.hostname == "192.0.2.1")
-    assert [ch.hostname for ch in a.children] == ["192.0.2.3"]  # c under the FIRST dep (a)
-    assert any("duplicate 'dep'" in w for w in res.warnings)
+    b = next(n for n in res.roots if n.hostname == "192.0.2.2")
+    assert [ch.hostname for ch in a.children] == ["192.0.2.3"]  # c under a ...
+    assert [ch.hostname for ch in b.children] == ["192.0.2.3"]  # ... AND under b
+    assert a.children[0] is b.children[0]  # the SAME shared Node, not a copy
+    assert res.warnings == []  # no "duplicate 'dep'" warning anymore
+
+
+def test_multi_dep_diamond_is_not_a_cycle():
+    # a->b, a->c, b->d, c->d: d has two parents (b, c). A diamond is reached twice, but is acyclic.
+    res = parse(
+        'object a { ip "192.0.2.1"; type ping; };\n'
+        'object b { ip "192.0.2.2"; type ping; dep "a"; };\n'
+        'object c { ip "192.0.2.3"; type ping; dep "a"; };\n'
+        'object d { ip "192.0.2.4"; type tcp; port 22; dep "b"; dep "c"; };\n'
+    )
+    assert not any("cycle" in w for w in res.warnings)  # a diamond is NOT a cycle
+    assert [n.hostname for n in res.roots] == ["192.0.2.1"]  # only a is a root
+    b, c = res.roots[0].children
+    assert b.children[0] is c.children[0]  # d is the same node under both b and c
+
+
+def test_multi_dep_unknown_edge_dropped_others_kept():
+    # c dep a (known) + ghost (unknown): the ghost edge warns + drops; c stays under a (not a root).
+    res = parse(
+        'object a { ip "192.0.2.1"; type ping; };\n'
+        'object c { ip "192.0.2.3"; type tcp; port 22; dep "a"; dep "ghost"; };\n'
+    )
+    a = next(n for n in res.roots if n.hostname == "192.0.2.1")
+    assert [ch.hostname for ch in a.children] == ["192.0.2.3"]  # c under a
+    assert all(n.hostname != "192.0.2.3" for n in res.roots)  # c is NOT a root
+    assert any("ghost" in w and "names no object" in w for w in res.warnings)
+
+
+def test_self_dep_is_a_cycle_and_becomes_root():
+    res = parse('object a { ip "192.0.2.1"; type ping; dep "a"; };\n')
+    assert [n.hostname for n in res.roots] == ["192.0.2.1"]  # self-dep dropped -> a is a root
+    assert any("cycle" in w for w in res.warnings)
+
+
+def test_duplicate_non_dep_attr_still_keeps_first():
+    # The multi-dep special case must NOT leak: a repeated *non-dep* attr still warns + keeps first.
+    res = parse('object a { ip "192.0.2.1"; type tcp; port 22; port 23; };\n')
+    assert any("duplicate 'port'" in w for w in res.warnings)
+    assert res.roots[0].port == 22  # the first value kept
 
 
 def test_dependency_cycle_is_broken():

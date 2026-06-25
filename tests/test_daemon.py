@@ -245,6 +245,77 @@ def test_reload_duplicate_keys_carry_state_to_both():
     assert any("duplicate node" in w for w in sched.warnings)
 
 
+def test_reload_relinks_multi_parent_child_and_carries_state():
+    # A multi-parent child (deps a AND b) keeps its carried state across reload and is re-linked to
+    # BOTH parents, so OR / any-path gating survives a SIGHUP (#62).
+    c = Node("c", CheckType.TCP, port=22)
+    a = Node("a", CheckType.PING, children=[c])
+    b = Node("b", CheckType.PING, children=[c])  # the SAME c -> two parents
+    sched = Scheduler([a, b], Settings(), clock=ManualClock(), stagger=False)
+
+    cbefore = next(s for s in sched._scheduled if s.node.hostname == "c")
+    cbefore.state.downct = 3
+    cbefore.state.lastcheck = Status.UNPINGABLE
+    assert {p.node.hostname for p in cbefore.gate} == {"a", "b"}
+
+    c2 = Node("c", CheckType.TCP, port=22)
+    sched.reload([Node("a", CheckType.PING, children=[c2]),
+                  Node("b", CheckType.PING, children=[c2])])
+
+    cafter = next(s for s in sched._scheduled if s.node.hostname == "c")
+    assert sum(1 for nd, _ in sched.node_states() if nd.hostname == "c") == 1  # still de-duped
+    assert {p.node.hostname for p in cafter.gate} == {"a", "b"}  # re-linked to BOTH parents
+    assert cafter.state.downct == 3 and cafter.state.lastcheck == Status.UNPINGABLE  # carried
+
+
+def test_reload_preserves_or_gating_for_multi_parent_child():
+    # After reload, a multi-parent child stays eligible if ANY carried-up parent is checked-and-up.
+    c = Node("c", CheckType.TCP, port=22)
+    sched = Scheduler([Node("a", CheckType.PING, children=[c]),
+                       Node("b", CheckType.PING, children=[c])],
+                      Settings(), clock=ManualClock(), stagger=False)
+    for s in sched._scheduled:
+        if s.node.hostname == "a":
+            s.checked, s.state.lastcheck = True, Status.UNPINGABLE  # one path down
+        if s.node.hostname == "b":
+            s.checked, s.state.lastcheck = True, Status.OK          # the other up
+
+    c2 = Node("c", CheckType.TCP, port=22)
+    sched.reload([Node("a", CheckType.PING, children=[c2]),
+                  Node("b", CheckType.PING, children=[c2])])
+
+    cafter = next(s for s in sched._scheduled if s.node.hostname == "c")
+    assert sched._eligible(cafter) is True  # reachable via the carried-up b despite a down
+
+
+def test_import_state_regates_multi_parent_child_until_a_parent_checks():
+    # On restore, parents come back checked=False, so a multi-parent child waits (OR over unchecked
+    # parents is False) until at least one parent's first post-restart check reports up.
+    c = Node("c", CheckType.TCP, port=22)
+    prev = Scheduler([Node("a", CheckType.PING, children=[c]),
+                      Node("b", CheckType.PING, children=[c])],
+                     Settings(), clock=ManualClock(), stagger=False)
+    for s in prev._scheduled:
+        if s.node.hostname in ("a", "b"):
+            s.checked, s.state.lastcheck = True, Status.OK
+        if s.node.hostname == "c":
+            s.state.downct = 2
+    records = prev.export_state()
+
+    c2 = Node("c", CheckType.TCP, port=22)
+    fresh = Scheduler([Node("a", CheckType.PING, children=[c2]),
+                       Node("b", CheckType.PING, children=[c2])],
+                      Settings(), clock=ManualClock(), stagger=False)
+    fresh.import_state(records)
+
+    cstate = next(s for s in fresh._scheduled if s.node.hostname == "c")
+    assert cstate.state.downct == 2  # carried state restored
+    assert fresh._eligible(cstate) is False  # both parents checked=False on import -> c waits
+    a_after = next(s for s in fresh._scheduled if s.node.hostname == "a")
+    a_after.checked, a_after.state.lastcheck = True, Status.OK  # a parent's first check reports up
+    assert fresh._eligible(cstate) is True  # now reachable via a (OR)
+
+
 async def test_reload_loop_applies_a_good_config(tmp_path):
     # End-to-end SIGHUP path: _reload_loop waits on the flag, re-reads + reparses the file, and
     # calls scheduler.reload, carrying live state for surviving nodes (#45) — not just a direct

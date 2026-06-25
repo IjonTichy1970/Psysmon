@@ -228,7 +228,7 @@ Inside an object body, attributes are `key value;` pairs:
 | `url` + `urltext` | `"path"`, `"substring"` | http/https (**required**) | Path to GET, and a substring the body must contain |
 | `username` + `password` | `"u"`, `"p"` | pop3 (**required**) | POP3 credentials |
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
-| `dep` | `"object-name"` | optional | Parent object for dependency suppression |
+| `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (any-path) |
 
 This table covers the **structural** attributes. An object body can also carry **per-object
 override** attributes — `queuetime`, `numfailures`, `send_pings` / `min_pings`, `group`,
@@ -250,21 +250,33 @@ of the config still loads:
 | `pop3` | `host`, `type`, `username`, `password` |
 | `dns` | `host`, `type`, `dns-query`, `contact` |
 
-### Dependencies and the forest
+### Dependencies and the graph
 
-The config builds a **forest** linked by `dep` edges, reproducing the legacy `{ }` nesting as a
-named graph:
+The config builds a graph of objects linked by `dep` edges — it reproduces the legacy `{ }` nesting
+as a named graph, and generalizes it to multiple parents:
 
 - An object with **no `dep`** is a top-level **root**.
-- `dep "parent"` makes the object a **child** of `parent`: it is checked only while every ancestor
-  ping is up.
+- `dep "parent"` makes the object a **child** of `parent`: it is checked only while it is reachable
+  through that parent.
+- An object may list **several `dep` edges** at once, putting it behind multiple parents. Suppression
+  is then **any-path**: the object keeps being checked while *any* of its parent paths is up, and is
+  suppressed only when *every* path is down — so a server reachable through two upstream routers stays
+  monitored until both uplinks fail:
+
+```
+object rtr-a  { host "rtr-a.example.net"; type ping; };
+object rtr-b  { host "rtr-b.example.net"; type ping; };
+object server {
+    host "server.example.net"; type tcp; port 443;
+    dep  "rtr-a";
+    dep  "rtr-b";                # reachable via either uplink
+};
+```
 
 Recoverable problems warn and degrade gracefully rather than failing the load:
 
-- **One parent only** (single-`dep` MVP). Listing more than one `dep` warns and keeps the first.
-  True named multi-parent (DAG) dependencies are **planned** and not yet implemented.
-- An **unknown `dep` target** warns and the object becomes a root.
-- A **cycle** warns and the object becomes a root (the forest is kept acyclic).
+- An **unknown `dep` target** warns and that edge is dropped; an object with no surviving edge is a root.
+- A **cycle** (including a self-`dep`) warns and the offending edge is dropped, keeping the graph acyclic.
 
 ### Variables — `set` / `$var`
 

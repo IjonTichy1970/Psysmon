@@ -211,20 +211,28 @@ class Scheduler:
 
         A node is reached top-down through its parents; each ``Node`` is scheduled **exactly once**
         (de-duped by identity) and accumulates every ping parent that reaches it — so a shared node
-        in a multi-parent DAG (#62) gets all its gate edges, not a duplicate ``_Scheduled``. Today's
-        single-parent configs give every non-root node one gate entry, structurally identical to the
+        in a multi-parent DAG (#62) gets all its gate edges, not a duplicate ``_Scheduled``. A
+        non-ping parent yields no path, so a node is dropped (with a warning) only when *every* path
+        to it runs behind a non-ping parent — a node reachable via at least one ping parent is kept.
+        Single-parent configs give every non-root node one gate entry, structurally identical to the
         old ancestor-chain walk. ``_eligible`` turns ``gate`` into the any-path reachability test.
         """
         sched_of: dict[int, _Scheduled] = {}
         order: list[_Scheduled] = []
+        behind_non_ping: dict[int, Node] = {}  # reached via non-ping; warn iff no ping path
 
-        def walk(node: Node, parent: _Scheduled | None, reachable: bool) -> None:
+        # Iterative pre-order DFS (explicit stack) so a very deep dep chain can't overflow the
+        # recursion limit. Siblings are pushed reversed so they pop in declaration order.
+        stack: list[tuple[Node, _Scheduled | None, bool]] = [
+            (root, None, True) for root in reversed(roots)
+        ]
+        while stack:
+            node, parent, reachable = stack.pop()
             if not reachable:
-                self.warnings.append(
-                    f"{node.hostname} ({node.check_type}) sits behind a non-ping parent and "
-                    "can never be reached; not scheduling it"
-                )
-                return
+                # A non-ping parent yields no reachability path. Don't warn/drop yet — the node may
+                # be reachable via another (ping) parent; resolved after the whole walk.
+                behind_non_ping[id(node)] = node
+                continue
             sched = sched_of.get(id(node))
             fresh = sched is None
             if fresh:
@@ -239,13 +247,17 @@ class Scheduler:
                 order.append(sched)
             if parent is not None and not any(p is parent for p in sched.gate):
                 sched.gate.append(parent)  # accumulate direct ping parents (identity, not value)
-            if fresh:  # walk each subtree once; a shared node accumulates parents, no re-walk
+            if fresh:  # expand a subtree once; a shared node accumulates parents, no re-expand
                 is_ping = node.check_type is CheckType.PING
-                for child in node.children:
-                    walk(child, sched if is_ping else None, is_ping)  # gated only behind a ping
-
-        for root in roots:
-            walk(root, None, True)
+                child_parent = sched if is_ping else None
+                for child in reversed(node.children):
+                    stack.append((child, child_parent, is_ping))  # gated only behind a ping
+        for nid, node in behind_non_ping.items():
+            if nid not in sched_of:  # no ping path reached it -> genuinely unreachable; warn + drop
+                self.warnings.append(
+                    f"{node.hostname} ({node.check_type}) sits behind a non-ping parent and "
+                    "can never be reached; not scheduling it"
+                )
         return order
 
     def _stagger_due(self, stagger: bool) -> None:
@@ -287,26 +299,34 @@ class Scheduler:
 
         For a single-parent chain this is exactly the old "every ping ancestor checked-and-up" rule.
         """
-        return self._reachable(sched, {}, set())
+        return self._reachable(sched)
 
-    def _reachable(self, sched: _Scheduled, memo: dict[int, bool], on_path: set[int]) -> bool:
-        sid = id(sched)
-        cached = memo.get(sid)
-        if cached is not None:
-            return cached
+    def _reachable(self, sched: _Scheduled) -> bool:
+        """Any-path reachability: a node is reachable iff it is a forest root, or some chain of
+        gate edges leads from it to a root through parents that are each checked-and-reachable.
+
+        A graph search up the gate edges from the node's parents (explicit stack + a ``seen`` set):
+        iterative, so a long dep chain can't overflow the recursion limit, and correct *and*
+        terminating even if a cycle reaches the gate graph — a node entangled with a cycle but with
+        a real path to a root is reachable; a purely cyclic path with no root exit is not.
+        ``is_reachable`` keeps a degraded-but-forwarding parent as a usable hop (#22). For a
+        single-parent chain this is exactly the old "every ping ancestor checked-and-up" rule.
+        """
         if not sched.gate:  # a forest root is always reachable
-            memo[sid] = True
             return True
-        if sid in on_path:  # cycle guard (defence-in-depth; the parser already breaks dep cycles)
-            return False
-        on_path.add(sid)
-        ok = any(
-            p.checked and is_reachable(p.state.lastcheck) and self._reachable(p, memo, on_path)
-            for p in sched.gate
-        )
-        on_path.discard(sid)
-        memo[sid] = ok
-        return ok
+        seen: set[int] = set()
+        stack: list[_Scheduled] = list(sched.gate)
+        while stack:
+            p = stack.pop()
+            if id(p) in seen:
+                continue
+            seen.add(id(p))
+            if not (p.checked and is_reachable(p.state.lastcheck)):
+                continue  # a down / not-yet-checked parent is not a usable hop
+            if not p.gate:  # reached a checked-and-reachable root -> a live path exists
+                return True
+            stack.extend(p.gate)  # hop on up through this parent's own parents
+        return False
 
     # --- the loop ---------------------------------------------------------------------
 
@@ -607,13 +627,21 @@ class Scheduler:
         previous = {
             (s.node.hostname, s.node.check_type, s.node.port): s for s in self._scheduled
         }
-        # Orphan the outgoing scheduled objects: any check still in flight against one of them
-        # completes into _run_check's ``not sched.alive`` guard and is discarded rather than
-        # paging or mutating state that has already been carried onto the new objects.
+        # Build the new scheduled set FIRST. If `_flatten` raises (a malformed tree, an unforeseen
+        # error), the running config is left fully intact — old objects keep monitoring rather than
+        # being half-retired into a silent blind spot.
+        prev_warnings = self.warnings
+        self.warnings = []
+        try:
+            new_scheduled = self._flatten(roots)
+        except Exception:
+            self.warnings = prev_warnings  # reload aborted: restore + keep the live config
+            raise
+        # Success — orphan the outgoing objects (a check still in flight completes into _run_check's
+        # ``not sched.alive`` guard and is discarded) and swap in the new set.
         for old in self._scheduled:
             old.alive = False
-        self.warnings = []
-        self._scheduled = self._flatten(roots)
+        self._scheduled = new_scheduled
         # Refresh the configured ping-source set for the new tree, and close pooled sockets for
         # sources the new config dropped. (New sources aren't opened — prepare() already ran
         # pre-privilege-drop; a brand-new source falls back to unbound at check time.)

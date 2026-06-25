@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Multi-parent dependencies** — a modern-config `object{}` may now declare **multiple `dep`
+  edges**, forming a dependency DAG. Suppression is **OR / any-path**: a node stays reachable (and
+  keeps being checked) as long as *any* of its parent paths is up, and is suppressed only when
+  *all* of them are down — so a host dual-homed behind two routers keeps being monitored when one
+  uplink fails. Cycles (including a self-`dep`) and unknown edges warn and are dropped; a non-ping
+  parent contributes no path ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)).
+
+### Fixed
+- A failed config reload (a malformed tree, or any unforeseen error while rebuilding the monitored
+  set) now leaves the running configuration **fully intact** — the daemon keeps monitoring on the
+  old config instead of half-retiring it into a silent blind spot. Relatedly, a very deep
+  dependency chain no longer risks a recursion-limit overflow: the forest flattener and the
+  reachability check are both iterative ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)).
+
 ## [0.6.1] — 2026-06-24 — reload warning parity
 
 ### Fixed

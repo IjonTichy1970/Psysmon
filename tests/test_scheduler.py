@@ -398,6 +398,209 @@ async def test_degraded_parent_does_not_suppress_children():
     assert state_of(sched, "c").suppressed is False
 
 
+# --- multi-parent OR / any-path dependencies (#62) ------------------------------------
+
+def _sched_of(sched, host):
+    return next(s for s in sched._scheduled if s.node.hostname == host)
+
+
+def _dag_two_parents(runner, clock):
+    """c (tcp) depends on BOTH a and b (pings) — a shared child of two ping roots."""
+    c = node("c", CheckType.TCP)
+    a = node("a", CheckType.PING, children=[c], max_down=1)
+    b = node("b", CheckType.PING, children=[c], max_down=1)
+    return make([a, b], runner, clock)
+
+
+def test_multi_parent_child_scheduled_exactly_once():
+    sched, _ = _dag_two_parents(ScriptedRunner({}), ManualClock())
+    assert sum(1 for nd, _ in sched.node_states() if nd.hostname == "c") == 1  # de-duped
+    assert {s.node.hostname for s in _sched_of(sched, "c").gate} == {"a", "b"}  # both parents
+
+
+async def test_multi_parent_or_one_path_up_keeps_child_checked():
+    clock = ManualClock()
+    runner = ScriptedRunner({"a": Status.UNPINGABLE, "b": Status.OK})  # a down, b up
+    sched, _ = _dag_two_parents(runner, clock)
+    for _ in range(4):
+        await tick_drain(sched)
+        clock.advance(10)
+    assert runner.calls["c"] >= 1  # reachable via b despite a down
+    assert state_of(sched, "c").suppressed is False
+
+
+async def test_multi_parent_or_all_paths_down_suppresses_child():
+    clock = ManualClock()
+    runner = ScriptedRunner({"a": Status.UNPINGABLE, "b": Status.UNPINGABLE})
+    sched, _ = _dag_two_parents(runner, clock)
+    for _ in range(4):
+        await tick_drain(sched)
+        clock.advance(10)
+    assert runner.calls["c"] == 0  # both paths down -> suppressed
+    assert state_of(sched, "c").suppressed is True
+
+
+async def test_multi_parent_resumes_when_either_path_recovers():
+    clock = ManualClock()
+    runner = ScriptedRunner({"a": Status.UNPINGABLE, "b": Status.UNPINGABLE})
+    sched, _ = _dag_two_parents(runner, clock)
+    for _ in range(3):
+        await tick_drain(sched)
+        clock.advance(10)
+    assert runner.calls["c"] == 0
+    runner.codes["b"] = Status.OK  # only b recovers
+    for _ in range(3):
+        await tick_drain(sched)
+        clock.advance(10)
+    assert runner.calls["c"] >= 1  # reachable via b alone
+
+
+async def test_multi_parent_degraded_path_counts_as_reachable():
+    clock = ManualClock()
+    runner = ScriptedRunner({"a": Status.UNPINGABLE, "b": Status.DEGRADED})  # a down, b lossy
+    sched, _ = _dag_two_parents(runner, clock)
+    for _ in range(4):
+        await tick_drain(sched)
+        clock.advance(10)
+    assert runner.calls["c"] >= 1  # a degraded-but-forwarding path keeps c reachable
+    assert state_of(sched, "c").suppressed is False
+
+
+def test_multi_parent_waits_when_only_checked_path_is_down():
+    # OR with `checked` INSIDE the any(): a down+checked parent must not freeze a child whose other
+    # parent is still unchecked — the child WAITS until some parent is checked-and-reachable.
+    sched, _ = _dag_two_parents(ScriptedRunner({}), ManualClock())
+    a_s, b_s, c_s = _sched_of(sched, "a"), _sched_of(sched, "b"), _sched_of(sched, "c")
+    a_s.checked, a_s.state.lastcheck = True, Status.UNPINGABLE  # a checked + down
+    b_s.checked = False                                         # b not yet checked
+    assert sched._eligible(c_s) is False                       # waits, doesn't leak a probe
+    b_s.checked, b_s.state.lastcheck = True, Status.OK          # b reports up
+    assert sched._eligible(c_s) is True                        # now reachable via b
+
+
+async def test_multi_parent_transitive_or_through_grandparents():
+    clock = ManualClock()
+    c = node("c", CheckType.TCP)
+    a = node("a", CheckType.PING, children=[c], max_down=1)
+    b = node("b", CheckType.PING, children=[c], max_down=1)
+    g1 = node("g1", CheckType.PING, children=[a], max_down=1)
+    g2 = node("g2", CheckType.PING, children=[b], max_down=1)
+    runner = ScriptedRunner({"g1": Status.UNPINGABLE, "g2": Status.OK})  # a-path dead, b-path lives
+    sched, _ = make([g1, g2], runner, clock)
+    for _ in range(6):
+        await tick_drain(sched)
+        clock.advance(10)
+    assert runner.calls["c"] >= 1  # OR composes transitively: c reachable via g2 -> b
+
+
+def test_multi_parent_mixed_ping_and_non_ping_uses_the_ping_path():
+    # c deps a (ping) and x (tcp). The non-ping x contributes no path, but a does -> c is scheduled
+    # gated only by a, with NO spurious "behind a non-ping parent" warning.
+    c = node("c", CheckType.TCP)
+    a = node("a", CheckType.PING, children=[c])
+    x = node("x", CheckType.TCP, children=[c])
+    sched, _ = make([a, x], ScriptedRunner({}), ManualClock())
+    assert sum(1 for nd, _ in sched.node_states() if nd.hostname == "c") == 1
+    assert {s.node.hostname for s in _sched_of(sched, "c").gate} == {"a"}  # only the ping gates
+    assert not any("non-ping parent" in w for w in sched.warnings)  # no spurious warning
+
+
+def test_all_non_ping_parents_drops_with_warning():
+    # c deps only x (tcp): no ping path at all -> dropped + warned (path-relative non-ping rule).
+    c = node("c", CheckType.TCP)
+    x = node("x", CheckType.TCP, children=[c])
+    sched, _ = make([x], ScriptedRunner({}), ManualClock())
+    assert all(nd.hostname != "c" for nd, _ in sched.node_states())  # c not scheduled
+    assert any("non-ping parent" in w for w in sched.warnings)
+
+
+def test_multi_parent_transitive_diamond_flattens_once():
+    # a->b, a->c, b->d, c->d: d is reached via two intermediate ping parents. It must flatten to one
+    # _Scheduled whose gate accumulates BOTH b and c (de-dup + gate merge across a diamond).
+    d = node("d", CheckType.TCP)
+    b = node("b", CheckType.PING, children=[d])
+    c = node("c", CheckType.PING, children=[d])
+    a = node("a", CheckType.PING, children=[b, c])
+    sched, _ = make([a], ScriptedRunner({}), ManualClock())
+    assert sum(1 for nd, _ in sched.node_states() if nd.hostname == "d") == 1  # de-duped
+    assert {s.node.hostname for s in _sched_of(sched, "d").gate} == {"b", "c"}  # both parents
+
+
+def test_multi_parent_open_path_not_vetoed_by_unchecked_parent():
+    # Symmetric to the WAIT test: one parent checked+UP keeps the child eligible even while the
+    # other parent is still unchecked — an unchecked parent neither opens a path nor VETOES one.
+    sched, _ = _dag_two_parents(ScriptedRunner({}), ManualClock())
+    a_s, b_s, c_s = _sched_of(sched, "a"), _sched_of(sched, "b"), _sched_of(sched, "c")
+    a_s.checked, a_s.state.lastcheck = True, Status.OK  # a checked + up
+    b_s.checked = False                                 # b not yet checked
+    assert sched._eligible(c_s) is True  # reachable via a; an unchecked b is no veto
+
+
+async def test_multi_parent_non_ping_provides_no_phantom_path():
+    # c deps a (ping) and x (tcp), with the non-ping parent FIRST in the forest. When the ping path
+    # a goes DOWN, c must be suppressed — the non-ping x must not provide a phantom open path (#62).
+    clock = ManualClock()
+    c = node("c", CheckType.TCP)
+    a = node("a", CheckType.PING, children=[c], max_down=1)
+    x = node("x", CheckType.TCP, children=[c])
+    runner = ScriptedRunner({"a": Status.UNPINGABLE})  # the only real (ping) path is down
+    sched, _ = make([x, a], runner, clock)  # non-ping parent first (behind_non_ping path)
+    for _ in range(4):
+        await tick_drain(sched)
+        clock.advance(10)
+    assert runner.calls["c"] == 0  # no phantom path via x
+    assert state_of(sched, "c").suppressed is True
+
+
+def test_reachable_on_cyclic_gate_terminates_and_is_correct():
+    # Defence-in-depth: the parser breaks dep cycles, but if one ever reached the gate graph,
+    # `_reachable` must TERMINATE and still return the true any-path result (not a wrong False).
+    r = node("r", CheckType.PING)
+    x = node("x", CheckType.PING)
+    y = node("y", CheckType.PING)
+    sched, _ = make([r, x, y], ScriptedRunner({}), ManualClock())
+    r_s, x_s, y_s = _sched_of(sched, "r"), _sched_of(sched, "x"), _sched_of(sched, "y")
+    for s in (r_s, x_s, y_s):
+        s.checked, s.state.lastcheck = True, Status.OK  # all up + checked
+    x_s.gate, y_s.gate = [y_s], [x_s]                    # a pure x<->y cycle, no exit to a root
+    assert sched._reachable(x_s) is False               # unreachable -- and must not hang
+    y_s.gate = [x_s, r_s]                               # give the cycle a real exit via the up root
+    assert sched._reachable(x_s) is True                # live path x <- y <- r despite the cycle
+
+
+def test_flatten_and_eligible_handle_a_very_deep_dep_chain():
+    # `_flatten` and `_reachable` are both iterative, so a dependency chain far deeper than Python's
+    # recursion limit builds and evaluates without overflowing (the old recursive walk raised
+    # RecursionError around depth 1000).
+    depth = 2000
+    cur = node("leaf", CheckType.TCP)
+    for i in range(depth):
+        cur = node(f"p{i}", CheckType.PING, children=[cur])  # each node parents the previous one
+    sched, _ = make([cur], ScriptedRunner({}), ManualClock())  # cur is the chain root
+    assert sum(1 for _ in sched.node_states()) == depth + 1  # whole chain built, no RecursionError
+    assert sched._eligible(_sched_of(sched, "leaf")) is False  # nothing checked yet -> waits
+
+
+def test_reload_keeps_live_config_when_flatten_fails():
+    # reload() builds the new set BEFORE retiring the old, so a failing _flatten leaves the running
+    # config fully intact — no half-mutation that would silently stop monitoring.
+    sched, _ = make([node("p", CheckType.PING)], ScriptedRunner({}), ManualClock())
+    old_scheduled = sched._scheduled
+
+    def boom(_roots):
+        raise RuntimeError("flatten failed")
+
+    sched._flatten = boom
+    raised = False
+    try:
+        sched.reload([node("q", CheckType.PING)])
+    except RuntimeError:
+        raised = True
+    assert raised
+    assert sched._scheduled is old_scheduled       # the live set is unchanged
+    assert all(s.alive for s in sched._scheduled)  # old objects were NOT retired into a blind spot
+
+
 async def test_degraded_does_not_page_by_default_through_scheduler():
     clock = ManualClock()
     runner = ScriptedRunner({"r": Status.DEGRADED})

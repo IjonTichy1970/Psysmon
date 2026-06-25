@@ -11,7 +11,8 @@ directives**, and the **``object{}`` monitored graph**. :func:`parse` interprets
 ``config <directive> ...;`` lines into a settings-``overrides`` dict (keyed by
 :class:`~psysmon.config.settings.Settings` field names, exactly like the legacy parser),
 ``set NAME = "..."`` / ``$NAME`` substitution, and ``object NAME { ... };`` blocks into a
-``Node`` forest (single ``dep`` edges resolved into ``Node.children``). Per-object *override*
+``Node`` forest (one or more ``dep`` edges per object resolved into a ``Node.children`` DAG —
+multi-parent / any-path, #62). Per-object *override*
 attributes (``queuetime``/``send_pings``/``numfailures``/...) are M4; ``include`` is a follow-up
 that still raises rather than silently dropping coverage. An empty / comment-only / globals-only
 file yields a normal (objectless) result.
@@ -210,7 +211,7 @@ class _Parser:
 
     Statements end at a ``;`` (or a ``{ ... }`` object body). ``config``/``set`` populate the
     overrides + variables; ``object NAME { ... };`` and ``root = "..."`` build the monitored
-    ``Node`` forest (resolved from single ``dep`` edges); ``include`` raises (a follow-up).
+    ``Node`` forest (resolved from one or more ``dep`` edges per object); ``include`` raises.
     Unknown directives, malformed values, and objects that fail required-field validation warn
     and skip — matching the legacy parser's never-hard-fail-a-recoverable-config stance.
     """
@@ -498,8 +499,13 @@ class _Parser:
                 values = values[1:]  # tolerate `key = value` (block attrs are `key value`)
             if len(values) > 1:
                 self._warn(tok.line, f"'{tok.value}' takes one value (missing ';'?)")
-            if tok.value in attrs:
-                # Keep the first (matches the single-dep MVP decision for a repeated `dep`).
+            if tok.value == "dep" and kind == "object":
+                # `dep` may repeat — accumulate every edge for the multi-parent DAG (#62). Stored as
+                # (line, [value-tokens, ...]); `_build_node` reads this list specially.
+                prior = attrs.get("dep")
+                attrs["dep"] = (prior[0] if prior else tok.line,
+                                [*prior[1], values] if prior else [values])
+            elif tok.value in attrs:
                 self._warn(tok.line, f"duplicate '{tok.value}' in '{name}'; keeping the first")
             else:
                 attrs[tok.value] = (tok.line, values)
@@ -578,14 +584,14 @@ class _Parser:
                 depth -= 1
 
     def _add_object(self, line: int, name: str, attrs: dict[str, tuple[int, list[Token]]]) -> None:
-        node, dep_name = self._build_node(line, name, attrs)
+        node, dep_names = self._build_node(line, name, attrs)
         if node is None:
             return  # required-field validation failed; the object was warned + skipped
         if name in self._object_index:
             self._warn(line, f"duplicate object name '{name}'; skipping the duplicate")
             return
         self._object_index[name] = node
-        self._objects.append((name, node, dep_name, line))
+        self._objects.append((name, node, dep_names, line))
 
     def _add_group(self, line: int, name: str, attrs: dict[str, tuple[int, list[Token]]]) -> None:
         """Record a ``group "NAME" { ... }`` block's default settings (#70)."""
@@ -630,11 +636,14 @@ class _Parser:
 
     def _build_node(
         self, line: int, name: str, attrs: dict[str, tuple[int, list[Token]]]
-    ) -> tuple[Node | None, str | None]:
-        """Build a :class:`Node` from an object's attributes, or ``(None, None)`` if it fails the
-        per-type required-field validation (mirroring the legacy parser, for converter parity)."""
+    ) -> tuple[Node | None, list[str]]:
+        """Build a :class:`Node` from an object's attributes, or ``(None, [])`` if it fails the
+        per-type required-field validation (mirroring the legacy parser, for converter parity).
+        Returns the node and its resolved ``dep`` names (0+; multiple = a multi-parent DAG, #62)."""
+        # `dep` is multi-valued (a list of value-token-lists), handled below — exclude it from the
+        # scalar ``resolved`` map, whose values are a single token's substituted value.
         resolved = {key: self._subst(kl, toks[0].value) if toks else "" for key, (kl, toks) in
-                    attrs.items()}
+                    attrs.items() if key != "dep"}
 
         # `host` is the preferred attribute; `ip` is a back-compat synonym (both -> Node.hostname,
         # which takes a hostname or an IP). If both are given and disagree, prefer `host` + warn.
@@ -643,12 +652,12 @@ class _Parser:
             self._warn(line, f"object '{name}': 'host' and 'ip' both set and differ; using 'host'")
         if not host:
             self._warn(line, f"object '{name}' has no 'host'; skipping")
-            return None, None
+            return None, []
         type_kw = resolved.get("type")
         ctype = _TYPE_KEYWORDS.get(type_kw) if type_kw is not None else None
         if ctype is None:
             self._warn(line, self._type_error(name, type_kw))
-            return None, None
+            return None, []
 
         node = Node(hostname=host, check_type=ctype, max_down=self.numfailures)
         default_port = DEFAULT_PORT.get(ctype)
@@ -658,24 +667,24 @@ class _Parser:
         if ctype in (CheckType.TCP, CheckType.UDP):
             port = self._port(line, name, resolved.get("port"))
             if port is None:
-                return None, None
+                return None, []
             node.port = port
         elif ctype in (CheckType.HTTP, CheckType.HTTPS):
             if not resolved.get("url") or not resolved.get("urltext"):
                 self._warn(line, f"object '{name}': {type_kw} needs 'url' and 'urltext'; skipping")
-                return None, None
+                return None, []
             node.url, node.url_text = resolved["url"], resolved["urltext"]
         elif ctype is CheckType.POP3:
             if not resolved.get("username") or not resolved.get("password"):
                 self._warn(line, f"object '{name}': pop3 needs 'username' and 'password'; skipping")
-                return None, None
+                return None, []
             node.username, node.password = resolved["username"], resolved["password"]
         elif ctype is CheckType.DNS:
             # Legacy authdns requires a name AND a contact (a DNS check that pages nobody is what
             # the legacy parser rejected at load) — keep parity.
             if not resolved.get("dns-query") or not resolved.get("contact"):
                 self._warn(line, f"object '{name}': dns needs 'dns-query' and 'contact'; skipping")
-                return None, None
+                return None, []
             node.username = resolved["dns-query"]  # the name to look up (legacy convention)
         else:  # ping-like (ping, smtp): a port may still override the default
             if "port" in resolved:
@@ -697,8 +706,14 @@ class _Parser:
             if key not in _OBJECT_ATTRS:
                 self._warn(kl, f"object '{name}': attribute '{key}' isn't supported yet; ignoring")
 
-        dep_name = resolved.get("dep") or None
-        return node, dep_name
+        dep_names: list[str] = []
+        if "dep" in attrs:
+            kl, edges = attrs["dep"]
+            for ev in edges:  # each `ev` is one `dep`'s value tokens
+                dep = self._subst(kl, ev[0].value) if ev else ""
+                if dep and dep not in dep_names:  # de-dup repeated names, preserve declared order
+                    dep_names.append(dep)
+        return node, dep_names
 
     def _apply_overrides(self, line: int, name: str, node: Node, resolved: dict[str, str]) -> None:
         """Apply the per-object override attributes (#3 M4) onto ``node``; bad values warn + ignore.
@@ -810,23 +825,29 @@ class _Parser:
                     node.source = grp["source"]
 
     def _build_forest(self) -> list[Node]:
-        """Resolve single ``dep`` edges into the ``Node.children`` forest (multi-dep is #62)."""
+        """Resolve each object's ``dep`` edges into the ``Node.children`` DAG (multi-parent, #62).
+
+        An object with multiple ``dep``s sits behind **every** named parent — the engine suppresses
+        it only when *all* paths are down (OR / any-path). An unknown or cycle-forming edge (incl. a
+        self-dep) is warned and dropped; an object with no surviving edge becomes a root. Edges
+        resolve in declaration order, so which edge a cycle breaks is deterministic across runs.
+        """
         if self.root_name is not None and self.root_name not in self._object_index:
             self._warn(self.root_line, f"root '{self.root_name}' names no object")
         roots: list[Node] = []
-        for name, node, dep_name, line in self._objects:
-            if dep_name is None:
+        for name, node, dep_names, line in self._objects:
+            linked = False
+            for dep_name in dep_names:
+                parent = self._object_index.get(dep_name)
+                if parent is None:
+                    self._warn(line, f"'{name}': dep '{dep_name}' names no object; ignoring it")
+                elif self._reaches(node, parent):  # parent in node's subtree (or is node) -> cycle
+                    self._warn(line, f"'{name}': dep '{dep_name}' forms a cycle; ignoring it")
+                else:
+                    parent.children.append(node)
+                    linked = True
+            if not linked:
                 roots.append(node)
-                continue
-            parent = self._object_index.get(dep_name)
-            if parent is None:
-                self._warn(line, f"'{name}': dep '{dep_name}' names no object; making it a root")
-                roots.append(node)
-            elif self._reaches(node, parent):
-                self._warn(line, f"'{name}': dep '{dep_name}' forms a cycle; making it a root")
-                roots.append(node)
-            else:
-                parent.children.append(node)
         return roots
 
     @staticmethod
@@ -849,7 +870,7 @@ def parse(text: str, *, numfailures: int = 2) -> ParseResult:
 
     Interprets global ``config <directive> ...;`` lines into a settings-``overrides`` dict, ``set``
     / ``$var`` substitution, and ``object NAME { ... };`` blocks into a monitored ``Node`` forest
-    (``dep`` edges resolved into ``Node.children``; single-dep MVP, the multi-parent DAG is #62).
+    (one or more ``dep`` edges per object resolve into a ``Node.children`` DAG — multi-parent, #62).
     Per-object *override* attributes (``queuetime``/``send_pings``/``numfailures``/...) are M4, and
     ``include`` is a follow-up — both warn/raise rather than silently dropping coverage.
 

@@ -26,12 +26,12 @@ NOW = 1781827570.0
 
 def ns(host, ctype=CheckType.PING, lastcheck=Status.OK, *, port=0, downct=0, contacted=False,
        suppressed=False, deathtime=0.0, last_up=0.0, label="", contact="", group="",
-       acked=False, note=None):
+       acked=False, note=None, down_parents=None):
     node = Node(hostname=host, check_type=ctype, port=port, label=label, contact=contact,
                 group=group)
     state = NodeState(lastcheck=lastcheck, downct=downct, contacted=contacted,
                       suppressed=suppressed, deathtime=deathtime, last_up=last_up,
-                      acked=acked, note=note)
+                      acked=acked, note=note, down_parents=down_parents or [])
     return (node, state)
 
 
@@ -457,6 +457,18 @@ def test_json_includes_all_nodes_with_suppressed_flag():
     assert hosts["hidden.example.net"]["suppressed"] is True  # full blast radius queryable in JSON
     assert hosts["up.example.net"]["up"] is True
     assert hosts["down.example.net"]["status_text"] == "Unpingable"
+
+
+def test_json_includes_down_parents():
+    # A partially-degraded node (up, but a dep-parent down) reports which parents are down (#81).
+    states = [
+        ns("server.example.net", CheckType.TCP, Status.OK, port=443,
+           down_parents=["rtr-a.example.net"]),
+        ns("healthy.example.net", CheckType.PING, Status.OK),  # all parents up -> empty
+    ]
+    hosts = {h["hostname"]: h for h in json.loads(to_json(states, now_wall=NOW))["hosts"]}
+    assert hosts["server.example.net"]["down_parents"] == ["rtr-a.example.net"]
+    assert hosts["healthy.example.net"]["down_parents"] == []
 
 
 def test_json_includes_group_field():

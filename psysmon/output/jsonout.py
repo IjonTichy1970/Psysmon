@@ -34,6 +34,7 @@ def _host(node: Node, state: NodeState) -> dict:
         "acked": state.acked,  # operator-acknowledged outage (#68)
         "note": state.note,  # operator free-text note (#68); null when unset
         "suppressed": state.suppressed,
+        "down_parents": state.down_parents,  # dep-parents currently down (#81); [] if healthy
         "deathtime": state.deathtime or None,
         "last_up": state.last_up or None,
     }

@@ -126,3 +126,5 @@ class NodeState:
     suppressed: bool = False  # currently gated off by a down ancestor ping
     acked: bool = False  # operator acked this outage (#68): suppress paging while down
     note: str | None = None  # operator free-text note (#68); shown on the status page (escaped)
+    down_parents: list[str] = field(default_factory=list)  # direct dep-parents currently down
+    # (#81): derived for display, refreshed at each status snapshot — NOT persisted/carried.

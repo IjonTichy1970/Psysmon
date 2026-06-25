@@ -13,6 +13,10 @@ All notable changes to this project are documented here. The format is based on
   *all* of them are down — so a host dual-homed behind two routers keeps being monitored when one
   uplink fails. Cycles (including a self-`dep`) and unknown edges warn and are dropped; a non-ping
   parent contributes no path ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)).
+- **`down_parents` in the JSON status** — each node's JSON entry now lists which of its dependency
+  parents are currently down (`"down_parents": [...]`), so a *partially-degraded* node (up via one
+  path but with a down parent — now possible with multiple `dep`s) is visible instead of looking
+  fully healthy. Derived for display, empty when healthy ([#81](https://github.com/IjonTichy1970/Psysmon/issues/81)).
 
 ### Fixed
 - A failed config reload (a malformed tree, or any unforeseen error while rebuilding the monitored

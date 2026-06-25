@@ -503,6 +503,12 @@ class Scheduler:
     # --- introspection (for output / tests) -------------------------------------------
 
     def node_states(self) -> list[tuple[Node, NodeState]]:
+        # Refresh each node's down-parent list (#81): its direct ping parents that are currently
+        # checked-and-down. Derived for display only — recomputed here so any consumer sees current
+        # state, and never persisted.
+        for s in self._scheduled:
+            s.state.down_parents = [p.node.hostname for p in s.gate
+                                    if p.checked and not is_reachable(p.state.lastcheck)]
         return [(s.node, s.state) for s in self._scheduled]
 
     # --- runtime control (#68 ack/notes; driven by the control plane #69) -------------

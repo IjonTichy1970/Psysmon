@@ -601,6 +601,38 @@ def test_reload_keeps_live_config_when_flatten_fails():
     assert all(s.alive for s in sched._scheduled)  # old objects were NOT retired into a blind spot
 
 
+def test_down_parents_reports_a_down_parent_of_a_reachable_child():
+    # A multi-parent child up via one path, with the other parent down, is "partially degraded":
+    # still reachable (#62), but node_states() reports the down parent (#81).
+    sched, _ = _dag_two_parents(ScriptedRunner({}), ManualClock())
+    a_s, b_s, c_s = _sched_of(sched, "a"), _sched_of(sched, "b"), _sched_of(sched, "c")
+    a_s.checked, a_s.state.lastcheck = True, Status.UNPINGABLE  # a down
+    b_s.checked, b_s.state.lastcheck = True, Status.OK          # b up
+    states = {nd.hostname: st for nd, st in sched.node_states()}
+    assert states["c"].down_parents == ["a"]  # the one down parent is reported
+    assert sched._eligible(c_s) is True        # c is still reachable via b
+    assert states["a"].down_parents == []      # a root has no parents
+
+
+def test_down_parents_excludes_up_and_unchecked_parents():
+    sched, _ = _dag_two_parents(ScriptedRunner({}), ManualClock())
+    a_s, b_s = _sched_of(sched, "a"), _sched_of(sched, "b")
+    a_s.checked, a_s.state.lastcheck = True, Status.OK
+    b_s.checked, b_s.state.lastcheck = True, Status.OK
+    assert {nd.hostname: st for nd, st in sched.node_states()}["c"].down_parents == []  # both up
+    a_s.checked = False  # an UNCHECKED parent is unknown, not "down"
+    assert {nd.hostname: st for nd, st in sched.node_states()}["c"].down_parents == []
+
+
+def test_down_parents_is_not_persisted():
+    # down_parents is derived/display-only and must never reach the savestate carry.
+    sched, _ = _dag_two_parents(ScriptedRunner({}), ManualClock())
+    a_s = _sched_of(sched, "a")
+    a_s.checked, a_s.state.lastcheck = True, Status.UNPINGABLE
+    sched.node_states()  # populate the field
+    assert all("down_parents" not in rec for rec in sched.export_state())
+
+
 async def test_degraded_does_not_page_by_default_through_scheduler():
     clock = ManualClock()
     runner = ScriptedRunner({"r": Status.DEGRADED})

@@ -23,14 +23,14 @@ set noc = "noc@example.net";     # reuse a value with $noc below
 
 # An edge router and the services that depend on it
 object edge-rtr {
-    ip      "192.0.2.1";
+    host    "192.0.2.1";
     type    ping;
     desc    "edge router";
     contact $noc;
 };
 
 object web {
-    ip      "192.0.2.10";
+    host    "192.0.2.10";
     type    https;
     url     "/health";
     urltext "OK";
@@ -51,7 +51,7 @@ object web {
 - **Comments**: `#` starts a comment to end-of-line anywhere outside a string. A `;` at the start
   of a statement (file start, or right after a `{` or `;`) also starts a comment, matching the
   legacy `;`/`#` convention.
-- `=` is **optional** in object attributes — `ip "h";` and `ip = "h";` are equivalent — but
+- `=` is **optional** in object attributes — `host "h";` and `host = "h";` are equivalent — but
   **required** in `set NAME = "...";` and `root = "...";`.
 
 ## Globals — `config` directives
@@ -111,7 +111,7 @@ Inside the block, attributes are `key value;` pairs.
 
 | Attribute | Value | Applies to | Notes |
 |---|---|---|---|
-| `ip` | `"host"` | all (**required**) | Hostname or IP to check |
+| `host` | `"host"` | all (**required**) | Hostname or IP to check (`ip` is an accepted synonym) |
 | `type` | keyword | all (**required**) | One of the check types below |
 | `port` | integer | tcp/udp (**required**); others optional | 1–65535; omitted ⇒ the type default |
 | `desc` | `"text"` | optional | Display label |
@@ -131,11 +131,11 @@ of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `smtp` | `ip`, `type` |
-| `tcp`, `udp` | `ip`, `type`, `port` |
-| `http`, `https` | `ip`, `type`, `url`, `urltext` |
-| `pop3` | `ip`, `type`, `username`, `password` |
-| `dns` | `ip`, `type`, `dns-query`, `contact` |
+| `ping`, `smtp` | `host`, `type` |
+| `tcp`, `udp` | `host`, `type`, `port` |
+| `http`, `https` | `host`, `type`, `url`, `urltext` |
+| `pop3` | `host`, `type`, `username`, `password` |
+| `dns` | `host`, `type`, `dns-query`, `contact` |
 
 ### Per-object overrides (psysmon extensions)
 
@@ -212,11 +212,11 @@ group "dmz" {
 }
 
 object gw {
-    ip "198.51.100.1"; type ping;
+    host "198.51.100.1"; type ping;
     group "vpn-sites";       # inherits: source auto
 }
 object mail {
-    ip "198.51.100.2"; type smtp; port 25;
+    host "198.51.100.2"; type smtp; port 25;
     group "dmz";
     source "203.0.113.5";    # per-object source WINS over the dmz default
 }

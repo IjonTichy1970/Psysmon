@@ -172,7 +172,7 @@ class _Serializer:
 
     def _emit_object(self, node: Node, name: str, parent_name: str | None) -> None:
         self._line(f"object {name} {{")
-        self._attr("ip", node.hostname)
+        self._attr("host", node.hostname)  # `host` is the preferred modern attr (`ip` is an alias)
         self._line(f"  type {_TYPE_KW[node.check_type]};")
         if node.port and node.port != DEFAULT_PORT.get(node.check_type):
             if node.check_type in (CheckType.TCP, CheckType.UDP) and not 1 <= node.port <= 65535:

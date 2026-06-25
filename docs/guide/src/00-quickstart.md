@@ -21,8 +21,8 @@ Save this as `/etc/psysmon.conf` (the modern `object{}` format):
 config statusfile html "/var/www/html/status.html";
 root = "gw";
 
-object gw  { ip "192.0.2.1";  type ping; desc "edge router"; contact "noc@example.net"; }
-object web { ip "192.0.2.10"; type tcp; port 443; dep "gw"; contact "noc@example.net"; }
+object gw  { host "192.0.2.1";  type ping; desc "edge router"; contact "noc@example.net"; }
+object web { host "192.0.2.10"; type tcp; port 443; dep "gw"; contact "noc@example.net"; }
 ```
 
 `web` depends on `gw`, so it is only checked while `gw` is up — **one alert for the router, not a

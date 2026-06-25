@@ -45,8 +45,8 @@ Save this as /etc/psysmon.conf (the modern object{} format):
     config statusfile html "/var/www/html/status.html";
     root = "gw";
 
-    object gw  { ip "192.0.2.1";  type ping; desc "edge router"; contact "noc@example.net"; }
-    object web { ip "192.0.2.10"; type tcp; port 443; dep "gw"; contact "noc@example.net"; }
+    object gw  { host "192.0.2.1";  type ping; desc "edge router"; contact "noc@example.net"; }
+    object web { host "192.0.2.10"; type tcp; port 443; dep "gw"; contact "noc@example.net"; }
 
 web depends on gw, so it is only checked while gw is up -- one alert for the router, not
 a flood for everything behind it. That dependency suppression is the whole idea; see the
@@ -609,14 +609,14 @@ A minimal example:
     set noc = "noc@example.net";         # reuse a value with $noc below
 
     object edge-rtr {
-        ip      "192.0.2.1";
+        host    "192.0.2.1";
         type    ping;
         desc    "edge router";
         contact $noc;
     };
 
     object web {
-        ip      "192.0.2.10";
+        host    "192.0.2.10";
         type    https;
         url     "/health";
         urltext "OK";
@@ -636,9 +636,9 @@ value is always safe; quote it whenever it might contain one of those characters
 Comments: # starts a comment to end-of-line anywhere outside a string. A ; at the start
 of a statement (file start, or right after a { or another ;) also begins a comment,
 matching the legacy ;/# convention -- so ;, ;;, and ; like this are comment lines. - = is
-optional in object attributes -- ip "h"; and ip = "h"; are equivalent -- but required in
-set NAME = "..."; and root = "...";. - An unterminated string is the one lexical error
-that aborts the load with a clear message; a missing ; only warns.
+optional in object attributes -- host "h"; and host = "h"; are equivalent -- but required
+in set NAME = "..."; and root = "...";. - An unterminated string is the one lexical
+error that aborts the load with a clear message; a missing ; only warns.
 
 root and the object graph
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -655,7 +655,7 @@ Inside an object body, attributes are key value; pairs:
 
 | Attribute | Value | Applies to | Notes |
 |---|---|---|---|
-| ip | "host" | all (required) | Hostname or IP to check |
+| host | "host" | all (required) | Hostname or IP to check (ip is an accepted synonym) |
 | type | keyword | all (required) | A check type (below) |
 | port | integer | tcp/udp (required); others optional | 1-65535; omitted => the type default |
 | desc | "text" | optional | Display label (the legacy label) |
@@ -679,11 +679,11 @@ rest of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| ping, smtp | ip, type |
-| tcp, udp | ip, type, port |
-| http, https | ip, type, url, urltext |
-| pop3 | ip, type, username, password |
-| dns | ip, type, dns-query, contact |
+| ping, smtp | host, type |
+| tcp, udp | host, type, port |
+| http, https | host, type, url, urltext |
+| pop3 | host, type, username, password |
+| dns | host, type, dns-query, contact |
 
 Dependencies and the forest
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -784,11 +784,11 @@ matter.
     };
 
     object gw {
-        ip "198.51.100.1"; type ping;
+        host "198.51.100.1"; type ping;
         group "vpn-sites";      # inherits: source auto
     };
     object mail {
-        ip "198.51.100.2"; type smtp; port 25;
+        host "198.51.100.2"; type smtp; port 25;
         group "dmz";
         source "203.0.113.5";   # per-object source WINS over the dmz default
     };
@@ -888,7 +888,7 @@ This is the canonical mapping table (Appendix C points here).
 
 | Legacy positional field | Modern attribute | Notes |
 |---|---|---|
-| hostname (field 1) | ip "host"; | |
+| hostname (field 1) | host "host"; | |
 | type keyword (field 2) | type keyword; | www -> http, authdns -> dns (aliases accepted either way) |
 | port (tcp/udp) | port N; | Default ports omitted in modern; kept only for tcp/udp |
 | label / "message" | desc "text"; | |
@@ -942,12 +942,12 @@ object or force the modern parser.
 Each check type below is written in both formats -- the legacy positional line and the
 modern object{} block for the same check.
 
-    The host field takes a hostname _or_ an IP in either format; psysmon resolves a hostname via
-    DNS at check time (when the check runs), never at parse or conversion time. The pairs below
-    show both forms -- a hostname in the legacy line, a literal IP in the modern block -- and both are
-    valid. They are hand-written equivalents, not literal converter output: psysmon-convert
-    copies the host string verbatim into ip, so router.example.net  ping ... converts to
-    ip "router.example.net", not a resolved address.
+    The host field takes a hostname _or_ an IP in either format -- psysmon resolves a hostname via
+    DNS at check time (when the check runs), never at parse or conversion time. The pairs below use
+    a hostname; an IP literal works identically. psysmon-convert copies the host string and the
+    label verbatim: converting router.example.net  ping  edge-router ... yields
+    host "router.example.net"; ... desc "edge-router"; -- not a resolved address or a re-spaced label.
+    (The modern format *additionally* allows spaces in desc, which a legacy label can't.)
 
 ping
 ~~~~
@@ -957,9 +957,9 @@ ping
 
     # modern
     object router {
-        ip      "192.0.2.1";
+        host    "router.example.net";
         type    ping;
-        desc    "edge router";
+        desc    "edge-router";
         contact "noc@example.net";
     };
 
@@ -971,7 +971,7 @@ tcp
 
     # modern
     object db {
-        ip      "192.0.2.20";
+        host    "db.example.net";
         type    tcp;
         port    5432;
         desc    "postgres";
@@ -986,7 +986,7 @@ udp
 
     # modern
     object ntp {
-        ip      "192.0.2.21";
+        host    "ntp.example.net";
         type    udp;
         port    123;
         desc    "ntp";
@@ -1001,9 +1001,9 @@ smtp
 
     # modern
     object mx {
-        ip      "192.0.2.25";
+        host    "mx.example.net";
         type    smtp;
-        desc    "mail relay";
+        desc    "mail-relay";
         contact "noc@example.net";
     };
 
@@ -1015,11 +1015,11 @@ pop3
 
     # modern
     object pop {
-        ip       "192.0.2.26";
+        host     "pop.example.net";
         type     pop3;
         username "probeuser";
         password "probepass";
-        desc     "pop3 login";
+        desc     "pop3-login";
         contact  "noc@example.net";
     };
 
@@ -1031,7 +1031,7 @@ authdns / dns
 
     # modern  -- dns requires both dns-query AND contact
     object ns1 {
-        ip        "192.0.2.53";
+        host      "ns1.example.net";
         type      dns;
         dns-query "example.net";
         contact   "noc@example.net";
@@ -1045,11 +1045,11 @@ www / http and https
 
     # modern  -- url + urltext required for http/https
     object api {
-        ip      "192.0.2.10";
+        host    "api.example.net";
         type    https;
         url     "/health";
         urltext "OK";
-        desc    "api health";
+        desc    "api-health";
         contact "noc@example.net";
     };
 
@@ -1066,15 +1066,15 @@ Topology: a router with dependents
     set noc = "noc@example.net";
 
     object router {
-        ip "192.0.2.1"; type ping; desc "edge router"; contact $noc;
+        host "router.example.net"; type ping; desc "edge-router"; contact $noc;
     };
     object web {
-        ip "192.0.2.10"; type https; url "/health"; urltext "OK";
-        desc "web health"; contact $noc;
+        host "web.example.net"; type https; url "/health"; urltext "OK";
+        desc "web-health"; contact $noc;
         dep "router";
     };
     object db {
-        ip "192.0.2.20"; type tcp; port 5432; desc "postgres";
+        host "db.example.net"; type tcp; port 5432; desc "postgres";
         contact "dba@example.net";
         dep "router";
     };
@@ -1090,12 +1090,12 @@ Topology: a mail server with SMTP + POP3
 
     # modern  -- two objects, same host, distinct names
     object mail-smtp {
-        ip "198.51.100.2"; type smtp; desc "mail submit"; contact "noc@example.net";
+        host "mail.example.net"; type smtp; desc "mail-submit"; contact "noc@example.net";
     };
     object mail-pop3 {
-        ip "198.51.100.2"; type pop3;
+        host "mail.example.net"; type pop3;
         username "probeuser"; password "probepass";
-        desc "mail retrieve"; contact "noc@example.net";
+        desc "mail-retrieve"; contact "noc@example.net";
     };
 
 Topology: an HTTP health check with url + urltext
@@ -1105,7 +1105,7 @@ A health endpoint that must return a known marker string, polled faster than the
 and not re-paged too often:
 
     object health {
-        ip        "203.0.113.10";
+        host      "203.0.113.10";
         type      https;
         url       "/healthz";
         urltext   "ready";       # this substring must appear in the response body
@@ -1395,10 +1395,10 @@ In the legacy format, nesting with { } encodes the dependency:
 In the modern format, the same structure is named dep edges:
 
     object edge-rtr {
-        ip "192.0.2.1"; type ping; contact "noc@example.net";
+        host "192.0.2.1"; type ping; contact "noc@example.net";
     };
     object web {
-        ip "192.0.2.10"; type https; url "/health"; urltext "OK";
+        host "192.0.2.10"; type https; url "/health"; urltext "OK";
         contact "noc@example.net";
         dep "edge-rtr";          # only checked while edge-rtr is up
     };
@@ -1568,7 +1568,7 @@ The modern format adds a per-object queuetime so a critical router can be polled
 than the long tail:
 
     object edge-rtr {
-        ip "192.0.2.1"; type ping; contact "noc@example.net";
+        host "192.0.2.1"; type ping; contact "noc@example.net";
         queuetime 10;            # poll this object every 10s
     };
 
@@ -1583,7 +1583,7 @@ Beyond the global ping tolerance shown earlier, the modern format lets you tune 
 object:
 
     object edge-rtr {
-        ip "192.0.2.1"; type ping; contact "noc@example.net";
+        host "192.0.2.1"; type ping; contact "noc@example.net";
         send_pings 5;
         min_pings  3;            # this host alone: 5 echoes, 3 replies = up
     };
@@ -1600,7 +1600,7 @@ The contact_on setting exists globally in all formats (above). The modern format
 per-object override that wins over the global value:
 
     object noisy-link {
-        ip "192.0.2.50"; type ping; contact "noc@example.net";
+        host "192.0.2.50"; type ping; contact "noc@example.net";
         contact_on down;         # page on outages only for this object
     };
 
@@ -1627,7 +1627,7 @@ whole file is read.
     }
 
     object mail {
-        ip "198.51.100.2"; type smtp; port 25;
+        host "198.51.100.2"; type smtp; port 25;
         group "dmz";             # inherits source "192.0.2.9"
     };
 
@@ -1641,7 +1641,7 @@ format the name to query is the dns-query attribute (a required field for dns, a
 with a non-empty contact):
 
     object auth-ns {
-        ip "192.0.2.53"; type dns;
+        host "192.0.2.53"; type dns;
         dns-query "www.example.net";
         contact "noc@example.net";
     };
@@ -1674,11 +1674,11 @@ destination) even when a group default or config source_ip would otherwise bind 
 is the explicit opt-out.
 
     object vpn-gw {
-        ip "198.51.100.1"; type ping;
+        host "198.51.100.1"; type ping;
         source auto;             # route freely (unbound) even if a group default would bind
     };
     object dmz-mail {
-        ip "198.51.100.2"; type smtp; port 25;
+        host "198.51.100.2"; type smtp; port 25;
         source "203.0.113.5";    # bind this connection check to a fixed egress address
     };
 
@@ -2173,7 +2173,7 @@ If pings to a VPN host were succeeding before only because source_ip pinned them
 right local address, set that address explicitly on the object (or its group):
 
     object vpn-gw {
-        ip      "198.51.100.1";
+        host    "198.51.100.1";
         type    ping;
         source  "203.0.113.5";    # pin ping to this local (VPN) address
     }

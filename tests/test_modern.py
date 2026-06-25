@@ -351,7 +351,7 @@ def test_dep_can_reference_a_later_object():
 
 
 def test_object_missing_required_field_skipped():
-    assert any("no 'ip'" in w for w in parse('object x { type ping; };\n').warnings)
+    assert any("no 'host'" in w for w in parse('object x { type ping; };\n').warnings)
     assert any("needs a 'port'" in w for w in parse('object x { ip "h"; type tcp; };\n').warnings)
     assert any("'url' and 'urltext'" in w
                for w in parse('object x { ip "h"; type https; };\n').warnings)
@@ -360,6 +360,39 @@ def test_object_missing_required_field_skipped():
     # all of the above produced no node
     for cfg in ('object x { type ping; };\n', 'object x { ip "h"; type tcp; };\n'):
         assert parse(cfg).roots == []
+
+
+# --- #76: `host` is the preferred synonym for `ip` -------------------------------------
+
+def test_host_is_the_preferred_attribute():
+    res = parse('object x { host "router.example.net"; type ping; };\n')
+    assert res.roots[0].hostname == "router.example.net" and res.warnings == []
+
+
+def test_ip_is_still_an_accepted_synonym():
+    res = parse('object x { ip "192.0.2.1"; type ping; };\n')
+    assert res.roots[0].hostname == "192.0.2.1" and res.warnings == []
+
+
+def test_host_and_ip_both_set_same_is_fine():
+    res = parse('object x { host "h"; ip "h"; type ping; };\n')
+    assert res.roots[0].hostname == "h" and res.warnings == []
+
+
+def test_host_and_ip_both_set_differ_warns_and_prefers_host():
+    res = parse('object x { host "wins"; ip "loses"; type ping; };\n')
+    assert res.roots[0].hostname == "wins"
+    assert any("'host' and 'ip' both set" in w for w in res.warnings)
+
+
+def test_neither_host_nor_ip_skips():
+    res = parse('object x { type ping; };\n')
+    assert res.roots == [] and any("no 'host'" in w for w in res.warnings)
+
+
+def test_host_attr_not_unknown():
+    res = parse('object x { host "h"; type ping; };\n')
+    assert not any("isn't supported yet" in w for w in res.warnings)
 
 
 def test_dropped_and_deferred_types_skip():

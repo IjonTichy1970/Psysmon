@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **`host` is now the preferred modern-config attribute** for the host to check; **`ip` is a
+  back-compat synonym** (both accept a hostname or an IP — psysmon resolves a name at check time).
+  The old name `ip` was misleading; `host "router.example.net";` reads naturally. Existing
+  `object{}` configs that use `ip` keep working unchanged, and `psysmon-convert` now emits `host`
+  ([#76](https://github.com/IjonTichy1970/Psysmon/issues/76)).
+
 ### Fixed
 - Corrected the `sysmon` heritage attribution across the README, package metadata, and the user
   guide. The original `sysmon` is by **Jared Mauch**, developed from **1996** to its final release

@@ -38,7 +38,7 @@ local address, set that address explicitly on the object (or its group):
 
 ```
 object vpn-gw {
-    ip      "198.51.100.1";
+    host    "198.51.100.1";
     type    ping;
     source  "203.0.113.5";    # pin ping to this local (VPN) address
 }

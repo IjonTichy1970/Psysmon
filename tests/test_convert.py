@@ -241,4 +241,12 @@ def test_cli_handles_utf8_bom_input(tmp_path):
     out = tmp_path / "new.conf"
     assert main([str(src), "-o", str(out)]) == 0
     text = out.read_text(encoding="utf-8")
-    assert 'ip "host.example.net";' in text  # hostname clean, no leading BOM
+    assert 'host "host.example.net";' in text  # hostname clean, no leading BOM
+
+
+def test_converter_emits_host_not_ip():
+    # The converter writes the preferred `host` attribute (#76); the legacy `ip` keyword (still an
+    # accepted synonym on input) is no longer emitted.
+    text, _ = convert("router.example.net ping edge noc@example.net\n")
+    assert 'host "router.example.net";' in text
+    assert '  ip "' not in text

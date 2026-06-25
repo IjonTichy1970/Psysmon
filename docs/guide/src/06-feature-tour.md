@@ -37,10 +37,10 @@ In the **modern** format, the same structure is named `dep` edges:
 
 ```
 object edge-rtr {
-    ip "192.0.2.1"; type ping; contact "noc@example.net";
+    host "192.0.2.1"; type ping; contact "noc@example.net";
 };
 object web {
-    ip "192.0.2.10"; type https; url "/health"; urltext "OK";
+    host "192.0.2.10"; type https; url "/health"; urltext "OK";
     contact "noc@example.net";
     dep "edge-rtr";          # only checked while edge-rtr is up
 };
@@ -215,7 +215,7 @@ long tail:
 
 ```
 object edge-rtr {
-    ip "192.0.2.1"; type ping; contact "noc@example.net";
+    host "192.0.2.1"; type ping; contact "noc@example.net";
     queuetime 10;            # poll this object every 10s
 };
 ```
@@ -230,7 +230,7 @@ Beyond the global ping tolerance shown earlier, the modern format lets you tune 
 
 ```
 object edge-rtr {
-    ip "192.0.2.1"; type ping; contact "noc@example.net";
+    host "192.0.2.1"; type ping; contact "noc@example.net";
     send_pings 5;
     min_pings  3;            # this host alone: 5 echoes, 3 replies = up
 };
@@ -248,7 +248,7 @@ per-object override that wins over the global value:
 
 ```
 object noisy-link {
-    ip "192.0.2.50"; type ping; contact "noc@example.net";
+    host "192.0.2.50"; type ping; contact "noc@example.net";
     contact_on down;         # page on outages only for this object
 };
 ```
@@ -275,7 +275,7 @@ group "dmz" {
 }
 
 object mail {
-    ip "198.51.100.2"; type smtp; port 25;
+    host "198.51.100.2"; type smtp; port 25;
     group "dmz";             # inherits source "192.0.2.9"
 };
 ```
@@ -290,7 +290,7 @@ name to query is the `dns-query` attribute (a required field for `dns`, along wi
 
 ```
 object auth-ns {
-    ip "192.0.2.53"; type dns;
+    host "192.0.2.53"; type dns;
     dns-query "www.example.net";
     contact "noc@example.net";
 };
@@ -323,11 +323,11 @@ Set `source` to:
 
 ```
 object vpn-gw {
-    ip "198.51.100.1"; type ping;
+    host "198.51.100.1"; type ping;
     source auto;             # route freely (unbound) even if a group default would bind
 };
 object dmz-mail {
-    ip "198.51.100.2"; type smtp; port 25;
+    host "198.51.100.2"; type smtp; port 25;
     source "203.0.113.5";    # bind this connection check to a fixed egress address
 };
 ```

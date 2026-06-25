@@ -195,8 +195,8 @@ _DEFERRED_TYPES = frozenset({"ping6", "pingv6", "icmp6"})  # IPv6 ping -> #24
 # Object attributes the parser understands; anything else (a typo, or a not-yet-supported key)
 # warns and is ignored. Structural fields (M3) + per-object overrides (M4) + contact_on + source.
 _OBJECT_ATTRS = frozenset({
-    "ip", "type", "port", "desc", "contact", "url", "urltext", "username", "password",
-    "dns-query", "dep",                                          # structural (M3)
+    "host", "ip", "type", "port", "desc", "contact", "url", "urltext", "username", "password",
+    "dns-query", "dep",                              # structural (M3); `host` preferred, `ip` alias
     "queuetime", "send_pings", "min_pings", "numfailures", "group", "contact_on",  # overrides
     "source",                                                    # outbound bind source (#70)
 })
@@ -636,9 +636,13 @@ class _Parser:
         resolved = {key: self._subst(kl, toks[0].value) if toks else "" for key, (kl, toks) in
                     attrs.items()}
 
-        host = resolved.get("ip")
+        # `host` is the preferred attribute; `ip` is a back-compat synonym (both -> Node.hostname,
+        # which takes a hostname or an IP). If both are given and disagree, prefer `host` + warn.
+        host = resolved.get("host") or resolved.get("ip")
+        if "host" in resolved and "ip" in resolved and resolved["host"] != resolved["ip"]:
+            self._warn(line, f"object '{name}': 'host' and 'ip' both set and differ; using 'host'")
         if not host:
-            self._warn(line, f"object '{name}' has no 'ip'; skipping")
+            self._warn(line, f"object '{name}' has no 'host'; skipping")
             return None, None
         type_kw = resolved.get("type")
         ctype = _TYPE_KEYWORDS.get(type_kw) if type_kw is not None else None

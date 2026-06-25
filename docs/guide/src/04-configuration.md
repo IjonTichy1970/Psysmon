@@ -173,14 +173,14 @@ config pageinterval 18;              # minutes between re-pages while down
 set noc = "noc@example.net";         # reuse a value with $noc below
 
 object edge-rtr {
-    ip      "192.0.2.1";
+    host    "192.0.2.1";
     type    ping;
     desc    "edge router";
     contact $noc;
 };
 
 object web {
-    ip      "192.0.2.10";
+    host    "192.0.2.10";
     type    https;
     url     "/health";
     urltext "OK";
@@ -201,7 +201,7 @@ object web {
 - **Comments:** `#` starts a comment to end-of-line anywhere outside a string. A `;` at the start
   of a statement (file start, or right after a `{` or another `;`) also begins a comment, matching
   the legacy `;`/`#` convention — so `;`, `;;`, and `; like this` are comment lines.
-- `=` is **optional** in object attributes — `ip "h";` and `ip = "h";` are equivalent — but
+- `=` is **optional** in object attributes — `host "h";` and `host = "h";` are equivalent — but
   **required** in `set NAME = "...";` and `root = "...";`.
 - An **unterminated string** is the one lexical error that aborts the load with a clear message; a
   missing `;` only warns.
@@ -220,7 +220,7 @@ Inside an object body, attributes are `key value;` pairs:
 
 | Attribute | Value | Applies to | Notes |
 |---|---|---|---|
-| `ip` | `"host"` | all (**required**) | Hostname or IP to check |
+| `host` | `"host"` | all (**required**) | Hostname or IP to check (`ip` is an accepted synonym) |
 | `type` | keyword | all (**required**) | A check type (below) |
 | `port` | integer | tcp/udp (**required**); others optional | 1–65535; omitted ⇒ the type default |
 | `desc` | `"text"` | optional | Display label (the legacy `label`) |
@@ -244,11 +244,11 @@ of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `smtp` | `ip`, `type` |
-| `tcp`, `udp` | `ip`, `type`, `port` |
-| `http`, `https` | `ip`, `type`, `url`, `urltext` |
-| `pop3` | `ip`, `type`, `username`, `password` |
-| `dns` | `ip`, `type`, `dns-query`, `contact` |
+| `ping`, `smtp` | `host`, `type` |
+| `tcp`, `udp` | `host`, `type`, `port` |
+| `http`, `https` | `host`, `type`, `url`, `urltext` |
+| `pop3` | `host`, `type`, `username`, `password` |
+| `dns` | `host`, `type`, `dns-query`, `contact` |
 
 ### Dependencies and the forest
 
@@ -345,11 +345,11 @@ group "dmz" {
 };
 
 object gw {
-    ip "198.51.100.1"; type ping;
+    host "198.51.100.1"; type ping;
     group "vpn-sites";      # inherits: source auto
 };
 object mail {
-    ip "198.51.100.2"; type smtp; port 25;
+    host "198.51.100.2"; type smtp; port 25;
     group "dmz";
     source "203.0.113.5";   # per-object source WINS over the dmz default
 };
@@ -447,7 +447,7 @@ This is the canonical mapping table ([Appendix C](90-appendices.md) points here)
 
 | Legacy positional field | Modern attribute | Notes |
 |---|---|---|
-| `hostname` (field 1) | `ip "host";` | |
+| `hostname` (field 1) | `host "host";` | |
 | `type` keyword (field 2) | `type keyword;` | `www` → `http`, `authdns` → `dns` (aliases accepted either way) |
 | `port` (tcp/udp) | `port N;` | Default ports omitted in modern; kept only for tcp/udp |
 | `label` / "message" | `desc "text";` | |
@@ -508,7 +508,7 @@ Each check type below is written in **both formats** — the legacy positional l
 > DNS **at check time** (when the check runs), never at parse or conversion time. The pairs below use
 > a hostname; an IP literal works identically. `psysmon-convert` copies the host string **and** the
 > label **verbatim**: converting `router.example.net  ping  edge-router …` yields
-> `ip "router.example.net"; … desc "edge-router";` — not a resolved address or a re-spaced label.
+> `host "router.example.net"; … desc "edge-router";` — not a resolved address or a re-spaced label.
 > (The modern format *additionally* allows spaces in `desc`, which a legacy label can't.)
 
 ### ping
@@ -521,7 +521,7 @@ router.example.net  ping  edge-router  noc@example.net
 ```
 # modern
 object router {
-    ip      "router.example.net";
+    host    "router.example.net";
     type    ping;
     desc    "edge-router";
     contact "noc@example.net";
@@ -538,7 +538,7 @@ db.example.net  tcp  5432  postgres  dba@example.net
 ```
 # modern
 object db {
-    ip      "db.example.net";
+    host    "db.example.net";
     type    tcp;
     port    5432;
     desc    "postgres";
@@ -556,7 +556,7 @@ ntp.example.net  udp  123  ntp  noc@example.net
 ```
 # modern
 object ntp {
-    ip      "ntp.example.net";
+    host    "ntp.example.net";
     type    udp;
     port    123;
     desc    "ntp";
@@ -574,7 +574,7 @@ mx.example.net  smtp  mail-relay  noc@example.net
 ```
 # modern
 object mx {
-    ip      "mx.example.net";
+    host    "mx.example.net";
     type    smtp;
     desc    "mail-relay";
     contact "noc@example.net";
@@ -591,7 +591,7 @@ pop.example.net  pop3  probeuser  probepass  pop3-login  noc@example.net
 ```
 # modern
 object pop {
-    ip       "pop.example.net";
+    host     "pop.example.net";
     type     pop3;
     username "probeuser";
     password "probepass";
@@ -610,7 +610,7 @@ ns1.example.net  authdns  example.net  noc@example.net
 ```
 # modern  — dns requires both dns-query AND contact
 object ns1 {
-    ip        "ns1.example.net";
+    host      "ns1.example.net";
     type      dns;
     dns-query "example.net";
     contact   "noc@example.net";
@@ -627,7 +627,7 @@ api.example.net  https  /health  OK  api-health  noc@example.net
 ```
 # modern  — url + urltext required for http/https
 object api {
-    ip      "api.example.net";
+    host    "api.example.net";
     type    https;
     url     "/health";
     urltext "OK";
@@ -651,15 +651,15 @@ router.example.net  ping  edge-router  noc@example.net  {
 set noc = "noc@example.net";
 
 object router {
-    ip "router.example.net"; type ping; desc "edge-router"; contact $noc;
+    host "router.example.net"; type ping; desc "edge-router"; contact $noc;
 };
 object web {
-    ip "web.example.net"; type https; url "/health"; urltext "OK";
+    host "web.example.net"; type https; url "/health"; urltext "OK";
     desc "web-health"; contact $noc;
     dep "router";
 };
 object db {
-    ip "db.example.net"; type tcp; port 5432; desc "postgres";
+    host "db.example.net"; type tcp; port 5432; desc "postgres";
     contact "dba@example.net";
     dep "router";
 };
@@ -678,10 +678,10 @@ mail.example.net  pop3  probeuser probepass  mail-retrieve  noc@example.net
 ```
 # modern  — two objects, same host, distinct names
 object mail-smtp {
-    ip "mail.example.net"; type smtp; desc "mail-submit"; contact "noc@example.net";
+    host "mail.example.net"; type smtp; desc "mail-submit"; contact "noc@example.net";
 };
 object mail-pop3 {
-    ip "mail.example.net"; type pop3;
+    host "mail.example.net"; type pop3;
     username "probeuser"; password "probepass";
     desc "mail-retrieve"; contact "noc@example.net";
 };
@@ -694,7 +694,7 @@ re-paged too often:
 
 ```
 object health {
-    ip        "203.0.113.10";
+    host      "203.0.113.10";
     type      https;
     url       "/healthz";
     urltext   "ready";       # this substring must appear in the response body

@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- On a SIGHUP reload, the daemon now logs scheduler-level warnings (a node left behind a non-ping
+  parent so it can never be reached; a duplicate node in the new config) the same way it does at
+  startup — previously the reload path logged only config-parser warnings and dropped these
+  silently ([#78](https://github.com/IjonTichy1970/Psysmon/issues/78)).
+
 ## [0.6.0] — 2026-06-24 — host config attribute
 
 ### Added

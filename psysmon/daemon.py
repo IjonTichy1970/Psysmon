@@ -134,6 +134,10 @@ async def _reload_loop(
             for warning in warnings:
                 logger.warning("reload: %s", warning)
             scheduler.reload(roots)
+            # Surface the scheduler's own warnings too (nodes behind a non-ping parent, duplicate
+            # keys) — build() logs these at startup, so the reload path must as well (#78).
+            for warning in scheduler.warnings:
+                logger.warning("reload: %s", warning)
             logger.info("configuration reloaded (%d nodes)", len(scheduler.node_states()))
         except Exception:
             logger.exception("config reload failed; keeping the current configuration")

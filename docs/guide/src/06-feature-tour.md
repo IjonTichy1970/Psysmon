@@ -46,12 +46,15 @@ object web {
 };
 ```
 
-Each object has **one** parent today (single `dep`). Listing more than one `dep` warns and keeps
-the first; true multi-parent (DAG) dependencies are **planned**
-and not yet implemented. An unknown `dep` target, or a cycle, warns and the object becomes a root.
+An object can list **several `dep` edges** to sit behind multiple parents at once. Suppression is
+then **any-path**: it keeps being checked while *any* parent path is up, and is suppressed only when
+*every* path is down — so a server reachable through two upstream routers stays monitored until both
+uplinks fail. An unknown `dep` target or a cycle (including a self-`dep`) warns and that edge is
+dropped; an object left with no surviving edge is a root.
 
-A *degraded* (lossy-but-answering) parent does **not** suppress its subtree — a router that still
-forwards packets shouldn't mask real outages behind it. Only a fully-down ancestor suppresses.
+A *degraded* (lossy-but-answering) parent still counts as a live path and does **not** suppress its
+dependents — a router that still forwards packets shouldn't mask real outages behind it. A node is
+suppressed only when every one of its paths is fully down.
 
 ---
 
@@ -337,15 +340,6 @@ source bind); those remain unbound.
 
 ---
 
-## Named multi-dependency — **planned**
-
-Today every object has exactly one parent (a single `dep`). Listing more than one `dep` warns and
-keeps the first. True multi-parent (DAG) dependencies — an object suppressed only when *all* of
-several parents are down — are planned ([tracked on GitHub](https://github.com/IjonTichy1970/Psysmon/issues/62))
-and not yet implemented.
-
----
-
 ## The control / query channel — `psysmonctl` / `psysmon-token` **(opt-in)**
 
 psysmon can expose an **opt-in** TCP channel for querying live status and performing runtime
@@ -393,8 +387,8 @@ control-channel documentation.
 
 | Feature | Legacy | Modern | CLI |
 |---|---|---|---|
-| Dependency suppression (single parent) | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
-| Named multi-dependency (DAG) | Planned | Planned | Planned |
+| Dependency suppression | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
+| Multi-parent dependencies (any-path) | — (single parent) | Yes (multiple `dep`) | — (structure is config-only) |
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |

@@ -103,17 +103,17 @@ Details and examples are in [Configuration](04-configuration.md); the alert life
 
 ### A host behind a down parent isn't being checked at all
 
-This is **dependency suppression working as designed**, not a bug. An object with `dep "parent"`
-is checked only while every ancestor ping is reachable; when the parent goes down, psysmon stops
-checking the children and freezes their state, so an upstream outage raises **one** alert instead
-of a flood. When the parent recovers, checking of the subtree **resumes automatically**.
+This is **dependency suppression working as designed**, not a bug. An object with a `dep` is checked
+only while it stays reachable through one of its parents; when *all* of its parents go down, psysmon
+stops checking it and freezes its state, so an upstream outage raises **one** alert instead of a
+flood. When a parent recovers, checking **resumes automatically**.
 
 Notes:
 
-- Suppression is gated on the ancestor being *reachable*, which includes `Degraded` — a lossy
-  router still forwards, so its subtree keeps being checked. Only a fully-down ancestor suppresses.
-- Each object has a **single** parent today (one `dep` edge). Listing more than one `dep` warns
-  and keeps the first; true multi-parent (DAG) dependencies are planned.
+- Suppression is gated on a parent being *reachable*, which includes `Degraded` — a lossy router
+  still forwards, so it keeps the subtree alive. Only when every path is fully down is a node suppressed.
+- An object can have **multiple** parents (several `dep` edges); with any-path semantics it is
+  suppressed only when *all* of its parent paths are down.
 
 See the dependency model in [Configuration](04-configuration.md) and the
 [feature tour](06-feature-tour.md).

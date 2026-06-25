@@ -16,9 +16,10 @@ daemon that pings hosts, checks services, and alerts you when things break — w
 
 - **Pings** hosts (ICMP) and checks **TCP**, **UDP/DNS**, **SMTP**, and **POP3** services, plus
   clean **DNS** (authoritative) and **HTTP/HTTPS-content** checks.
-- **Dependency suppression:** monitored objects form a tree. A child host/service is only checked
-  while its parent (a ping target — typically the upstream router) is up. When the parent goes
-  down you get *one* alert for the parent, not a storm for everything behind it.
+- **Dependency suppression:** monitored objects form a dependency graph. A child host/service is
+  only checked while it's reachable through a parent (a ping target — typically the upstream
+  router); give it **several parents** and it stays monitored while *any* path is up. When the
+  upstream goes down you get *one* alert for it, not a storm for everything behind it.
 - **Threshold alerting:** after *N* consecutive failures a host is reported; you're paged once,
   re-paged on an interval while it stays down, and notified again when it recovers.
 - **Pluggable notifications:** email (SMTP) out of the box; the notifier interface makes

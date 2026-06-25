@@ -17,9 +17,9 @@ and in `psysmonctl ack` / `note` commands. A bare host being pinged uses port `0
 **dep**
 : A *dependency edge* in the modern `object{}` config — a named link from a child object to the
 parent it sits behind. In the legacy config the same relationship is expressed by `{ }` nesting.
-A `dep` is the mechanism that drives dependency suppression (below). Each object currently has at
-most a **single** `dep` edge (one parent). Named multi-parent dependencies (an object behind two
-upstreams) are *planned*; they are not yet implemented. See
+A `dep` is the mechanism that drives dependency suppression (below). An object may have **several**
+`dep` edges (multiple parents); it is then suppressed only when *every* parent path is down
+(any-path) — modelling a host reachable through redundant upstreams. See
 [Configuration](04-configuration.md).
 
 **Dependency suppression**

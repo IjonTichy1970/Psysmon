@@ -32,7 +32,7 @@ Install
 -------
 
     python3 -m venv /opt/psysmon-venv
-    /opt/psysmon-venv/bin/pip install ./psysmon-0.4.0-py3-none-any.whl
+    /opt/psysmon-venv/bin/pip install ./psysmon-<version>-py3-none-any.whl
 
 Python 3.11+ is required. See Getting it and Installation for wheels vs. source,
 dependencies, and a systemd unit.
@@ -267,7 +267,7 @@ Download the wheel (.whl) from the Releases page
 venv, and install into it:
 
     python3 -m venv /opt/psysmon-venv
-    /opt/psysmon-venv/bin/pip install ./psysmon-0.4.0-py3-none-any.whl
+    /opt/psysmon-venv/bin/pip install ./psysmon-<version>-py3-none-any.whl
 
 The psysmon command then lives at /opt/psysmon-venv/bin/psysmon. To put it on PATH,
 symlink it:
@@ -283,7 +283,7 @@ You can install the same way from a source tarball (.tar.gz) downloaded from the
 Releases page:
 
     python3 -m venv /opt/psysmon-venv
-    /opt/psysmon-venv/bin/pip install ./psysmon-0.4.0.tar.gz
+    /opt/psysmon-venv/bin/pip install ./psysmon-<version>.tar.gz
 
 Or from a Git checkout of the repository:
 
@@ -309,7 +309,7 @@ first:
 
     python3 -m venv /opt/psysmon-venv
     source /opt/psysmon-venv/bin/activate     # prepends the venv's bin/ to PATH
-    pip install ./psysmon-0.4.0-py3-none-any.whl
+    pip install ./psysmon-<version>-py3-none-any.whl
     psysmon --version                         # now resolves inside the active venv
     deactivate                                # leave the venv when done
 
@@ -473,10 +473,10 @@ line is split into up to seven fields. The first token of a line decides what it
 - A line that is just } closes the current dependency block (see dependency nesting).
 
 Check-type keywords are prefix-matched (as in the original C strncmp), so tcpfoo still
-matches tcp. The historical legacy types that PSYSMON dropped (imap, nntp, radius,
-umichx500, ...) produce a warning and are skipped -- they never abort the load. In general
-the legacy parser warns and skips a bad stanza rather than failing; check the daemon log
-on startup for line N: ... warnings.
+matches tcp. The historical legacy types that PSYSMON dropped (nntp, pop2, umichx500,
+radius, bootp, snmp) produce a warning and are skipped -- they never abort the load. In
+general the legacy parser warns and skips a bad stanza rather than failing; check the
+daemon log on startup for line N: ... warnings.
 
 Field-by-field reference per check type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -488,12 +488,16 @@ notification address; an absent contact means syslog only, no page.
 | Type | Positional fields after hostname |
 |---|---|
 | ping | ping  label  [contact] |
+| ping6 | ping6  label  [contact] |
 | smtp | smtp  label  [contact] |
 | tcp | tcp  port  label  [contact] |
 | udp | udp  port  label  [contact] |
 | www (HTTP) | www  url  url_text  label  [contact] |
 | https | https  url  url_text  label  [contact] |
 | pop3 | pop3  username  password  label  [contact] |
+| pop3s | pop3s  username  password  label  [contact] |
+| imap | imap  [username  password]  label  [contact] |
+| imaps | imaps  [username  password]  label  [contact] |
 | authdns (DNS) | authdns  name  contact |
 | ssh | ssh  [port]  label  [contact] |
 | mysql | mysql  [port]  label  [contact] |
@@ -504,14 +508,16 @@ Notes confirmed from the parser:
 require a numeric port (a non-numeric or non-positive port skips the stanza). -
 www/https take a url (the path to GET) and url_text (a substring that must appear in the
 response body), then the label. - pop3 takes a username and password, then the label. -
-authdns is special: it takes the DNS name to look up and then a required contact -- a
-legacy authdns stanza with no contact is rejected. It has no label field. - ssh/mysql
-take an optional leading numeric port: a field after the type that parses as a port
-(1-65535) is the port, otherwise it's the label (so a purely-numeric label isn't
+pop3s mirrors pop3 (credentials required); imap/imaps take an optional username/password
+pair -- a plain reachability/banner check when omitted, a LOGIN when supplied -- then the
+label. - authdns is special: it takes the DNS name to look up and then a required
+contact -- a legacy authdns stanza with no contact is rejected. It has no label field. -
+ssh/mysql take an optional leading numeric port: a field after the type that parses as a
+port (1-65535) is the port, otherwise it's the label (so a purely-numeric label isn't
 expressible here -- use a descriptive one, or set the port in the modern format). -
-Default ports are applied automatically where they exist (smtp 25, pop3 110, authdns/DNS
-53, www/http 80, https 443, ssh 22, mysql 3306); ping has none, and tcp/udp require an
-explicit port.
+Default ports are applied automatically where they exist (smtp 25, pop3 110, pop3s 995,
+imap 143, imaps 993, authdns/DNS 53, www/http 80, https 443, ssh 22, mysql 3306);
+ping/ping6 have none, and tcp/udp require an explicit port.
 
 A trailing { opens a dependency block (next section).
 
@@ -533,8 +539,8 @@ only while the parent is up. This is dependency suppression -- when an upstream 
 goes down, you get one alert for the router, not a flood for everything behind it. A
 line that is just } closes the block.
 
-In the legacy grammar only ping-like parents (ping and smtp) may open a { block -- that
-matches the original parser. A { on any other type is warned about and its block
+In the legacy grammar only ping-like parents (ping, ping6, and smtp) may open a { block
+-- that matches the original parser. A { on any other type is warned about and its block
 discarded. Nesting deeper than 64 levels is rejected with a clean config error.
 
     router.example.net  ping  edge-router  noc@example.net  {
@@ -929,8 +935,9 @@ Generate the bearer token with psysmon-token; reads (status, version) need no to
 mutations (ack, note, reload) do, and with no token file configured all mutations are
 disabled. See the CLI reference for psysmonctl and psysmon-token.
 
-    Legacy configs have no control directives -- enable the channel via the CLI flags
-    (--control, --control-token-file, ...) instead.
+    Legacy configs accept the same config control* directives (they share the modern
+    directive table); you can also enable the channel via the CLI flags (--control,
+    --control-token-file, ...).
 
 Reloading (SIGHUP)
 ~~~~~~~~~~~~~~~~~~
@@ -955,7 +962,7 @@ Side-by-side
 | Default? | Yes (and auto-detected) | Opt-in (auto-detected by object/root/set) |
 | Structure | Position; { } nesting | Named objects + dep edges |
 | Spaces in values | No (whitespace-split) | Yes (quoted strings) |
-| Dependency parents | ping/smtp only | any type via dep |
+| Dependency parents | ping/ping6/smtp only | any type via dep |
 | numfailures | Position-dependent | Global default + per-object attribute |
 | Per-object interval / ping counts / source / contact_on | Range-scoped (sticky config, see above) | Per-object attributes |
 | Variables / reuse | No | set / $var |
@@ -1275,10 +1282,11 @@ Identity and network
 How PSYSMON identifies itself and sources its outbound traffic.
 
 - --source-ip IP -- outbound bind source for connection checks (the address your firewall
-ACLs see). This is IPv4 and applies to TCP/UDP/SMTP/POP3/DNS/HTTP checks; ping is
-unbound by default and ignores it. The source can also be set per object or group in the
-modern config (source); see Configuration. - --hostname NAME -- the hostname shown in
-alert emails and the status-page title.
+ACLs see). This is IPv4 and applies to TCP/UDP/SMTP/POP3/DNS checks; HTTP/HTTPS are not
+bound (httpx has no per-request source bind) and ping is unbound by default -- both
+ignore it. The source can also be set per object or group in the modern config (source);
+see Configuration. - --hostname NAME -- the hostname shown in alert emails and the
+status-page title.
 
     psysmon --source-ip 203.0.113.10 --hostname monitor.example.net
 
@@ -1535,12 +1543,12 @@ settings:
       --smtp-host mail.example.net --smtp-port 25 \
       --mail-from noc@example.net --hostname noc.example.net
 
-In the modern format these can also come from the config file (config sender / config
-from for the From: address, config hostname for the org hostname); a legacy config sets
-them only via the CLI flags above (it has no such directives). The SMTP host/port have
-no config directive in either format -- they are CLI-only. An object with an absent or
-empty contact logs to syslog only -- it does not page. Use -n / --no-notify to suppress
-paging entirely (results still show on the status page).
+In both formats these can also come from the config file (config sender / config from
+for the From: address, config hostname for the org hostname), overridden by the CLI
+flags above. The SMTP host/port, by contrast, have no config directive in either format
+-- they are CLI-only. An object with an absent or empty contact logs to syslog only -- it
+does not page. Use -n / --no-notify to suppress paging entirely (results still show on
+the status page).
 
 ---
 
@@ -2257,13 +2265,13 @@ matches the running code.
 | 4 | Conn Timed Out | The connection attempt timed out with no response. |
 | 5 | No dns entry | The hostname did not resolve (no DNS record / lookup failed). |
 | 6 | Unpingable | No ICMP echo reply within the retry budget (ping only). |
-| 7 | Thrttl | Rate-limited / throttled by the service. |
-| 8 | No Auth | Authentication was required but not provided. |
+| 7 | Thrttl | Rate-limited / throttled by the service. (Legacy code; not emitted by current checks.) |
+| 8 | No Auth | Authentication was required but not provided. (Legacy code; not emitted by current checks.) |
 | 9 | No Srvr Resp | Connected, but the server sent no (valid) response. |
-| 10 | Conn in prog | A connection is still in progress (transient). |
+| 10 | Conn in prog | A connection is still in progress (transient). (Legacy code; not emitted by current checks.) |
 | 11 | Bad Auth | Authentication was attempted and rejected (bad credentials). |
 | 12 | Bad Resp | The server responded, but not as expected (e.g. a DNS reply that is malformed or from the wrong source; an HTTP body missing the expected text). |
-| 13 | Wedged | The service is wedged / stuck (legacy X.500 condition). |
+| 13 | Wedged | The service is wedged / stuck (legacy X.500 condition). (Legacy code; not emitted by current checks.) |
 | 14 | Degraded | Loss-tolerant ping got some replies but fewer than min_pings -- reachable but lossy. Does not reset an outage; pages only with --page-on-degraded. (psysmon addition.) |
 
 Up, degraded, and reachable
@@ -2306,9 +2314,10 @@ Every ping fails / a host reads "Unpingable" / I get a permission error at start
 
 Raw ICMP (and ICMPv6, for ping6) needs privilege. psysmon opens its raw sockets at
 startup, which requires root or the CAP_NET_RAW capability on Linux; without it the
-daemon can't open the unbound ping/ping6 socket and surfaces a clean startup error.
-(Ping is a Linux feature -- raw ICMP/ICMPv6 demux relies on the event loop's add_reader,
-which isn't available on the Windows event loop.)
+daemon logs a warning that it isn't running as root and ICMP ping will fail -- it keeps
+running, and the affected hosts then read Unpingable. (Ping is a Linux feature -- raw
+ICMP/ICMPv6 demux relies on the event loop's add_reader, which isn't available on the
+Windows event loop.)
 
 Fixes:
 

@@ -30,8 +30,8 @@ Download the wheel (`.whl`) or source tarball (`.tar.gz`) from the
 
 ```bash
 python3 -m venv /opt/psysmon-venv
-/opt/psysmon-venv/bin/pip install ./psysmon-0.1.0-py3-none-any.whl
-# (or the sdist:)  /opt/psysmon-venv/bin/pip install ./psysmon-0.1.0.tar.gz
+/opt/psysmon-venv/bin/pip install ./psysmon-<version>-py3-none-any.whl
+# (or the sdist:)  /opt/psysmon-venv/bin/pip install ./psysmon-<version>.tar.gz
 ```
 
 The `psysmon` command lands at `/opt/psysmon-venv/bin/psysmon`. Symlink it onto `PATH` if you

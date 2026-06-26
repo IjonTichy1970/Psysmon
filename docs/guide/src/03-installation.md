@@ -35,7 +35,7 @@ Download the wheel (`.whl`) from the [Releases page](https://github.com/IjonTich
 
 ```bash
 python3 -m venv /opt/psysmon-venv
-/opt/psysmon-venv/bin/pip install ./psysmon-0.4.0-py3-none-any.whl
+/opt/psysmon-venv/bin/pip install ./psysmon-<version>-py3-none-any.whl
 ```
 
 The `psysmon` command then lives at `/opt/psysmon-venv/bin/psysmon`. To put it on `PATH`, symlink it:
@@ -52,7 +52,7 @@ You can install the same way from a source tarball (`.tar.gz`) downloaded from t
 
 ```bash
 python3 -m venv /opt/psysmon-venv
-/opt/psysmon-venv/bin/pip install ./psysmon-0.4.0.tar.gz
+/opt/psysmon-venv/bin/pip install ./psysmon-<version>.tar.gz
 ```
 
 Or from a Git checkout of the repository:
@@ -79,7 +79,7 @@ If you prefer to manage the environment by hand — for example to activate it i
 ```bash
 python3 -m venv /opt/psysmon-venv
 source /opt/psysmon-venv/bin/activate     # prepends the venv's bin/ to PATH
-pip install ./psysmon-0.4.0-py3-none-any.whl
+pip install ./psysmon-<version>-py3-none-any.whl
 psysmon --version                         # now resolves inside the active venv
 deactivate                                # leave the venv when done
 ```

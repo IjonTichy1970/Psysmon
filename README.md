@@ -21,8 +21,9 @@ daemon that pings hosts, checks services, and alerts you when things break — w
 ## What it does
 
 - **Pings** hosts (ICMP, and IPv6 via **ICMPv6**) and checks **TCP**, **UDP/DNS**, **SMTP**,
-  **POP3**/**IMAP** and their **TLS** variants (`pop3s`/`imaps`), plus clean **DNS** (authoritative)
-  and **HTTP/HTTPS-content** checks.
+  **POP3**/**IMAP** and their **TLS** variants (`pop3s`/`imaps`), clean **DNS** (authoritative)
+  and **HTTP/HTTPS-content** checks, plus protocol-aware **SSH** (identification banner) and
+  **MySQL/MariaDB** (server handshake) checks.
 - **Dependency suppression:** monitored objects form a dependency graph. A child host/service is
   only checked while it's reachable through a parent (a ping target — typically the upstream
   router); give it **several parents** and it stays monitored while *any* path is up. When the
@@ -40,7 +41,7 @@ daemon that pings hosts, checks services, and alerts you when things break — w
 | ---------------------------------------- | ------------------------------ | ------------------------------------------------------------ |
 | Concurrency                              | single-threaded serial sweep   | **asyncio**, concurrent per-host scheduling                  |
 | ICMP privilege                           | whole daemon suid root         | raw socket opened as root; runs as a root process (no setuid binary) |
-| Config                                   | legacy `sysmon.conf` only      | **legacy `sysmon.conf` (drop-in)** + auto-detect; opt-in modern `object{}` format + converter |
+| Config                                   | legacy `sysmon.conf` only      | **legacy `sysmon.conf`** (drop-in, now also accepting global `config` directives, the `ping6`/`pop3s`/`imap`/`imaps` types, and per-host sticky `config` settings) + auto-detect; opt-in modern `object{}` format + converter |
 | Hardcoded source IP / hostnames / paths  | compiled in                    | **config file + CLI** (CLI wins)                             |
 | Status page                              | malformed legacy HTML          | **HTML5 + CSS**, plus JSON                                   |
 | Known bugs                               | fd leaks, silent host drops    | fixed                                                         |
@@ -125,7 +126,10 @@ format with a legacy→modern converter has landed
 ([#69](https://github.com/IjonTichy1970/Psysmon/issues/69)), operator acknowledgements & grouping
 ([#20](https://github.com/IjonTichy1970/Psysmon/issues/20)), multi-parent dependencies
 ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)), and IPv6 ping (`ping6`)
-([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)).
+([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)). More recently, a **legacy-config
+backport** (global `config` directives, the `ping6`/`pop3s`/`imap`/`imaps` check types, and
+per-host sticky `config` settings) and protocol-aware **SSH** and **MySQL/MariaDB** service checks
+have landed.
 
 ## Heritage
 

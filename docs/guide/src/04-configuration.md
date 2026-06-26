@@ -35,8 +35,8 @@ is split into up to seven fields. The first token of a line decides what it is:
 - A line that is just `}` closes the current dependency block (see [dependency nesting](#dependency-nesting--)).
 
 Check-type keywords are **prefix-matched** (as in the original C `strncmp`), so `tcpfoo` still
-matches `tcp`. The historical legacy types that PSYSMON dropped (`imap`, `nntp`, `radius`,
-`umichx500`, …) produce a warning and are skipped — they never abort the load. In general the
+matches `tcp`. The historical legacy types that PSYSMON dropped (`nntp`, `pop2`, `umichx500`,
+`radius`, `bootp`, `snmp`) produce a warning and are skipped — they never abort the load. In general the
 legacy parser **warns and skips** a bad stanza rather than failing; check the daemon log on startup
 for `line N: ...` warnings.
 
@@ -49,12 +49,16 @@ address; an absent contact means **syslog only, no page**.
 | Type | Positional fields after `hostname` |
 |---|---|
 | `ping` | `ping  label  [contact]` |
+| `ping6` | `ping6  label  [contact]` |
 | `smtp` | `smtp  label  [contact]` |
 | `tcp` | `tcp  port  label  [contact]` |
 | `udp` | `udp  port  label  [contact]` |
 | `www` (HTTP) | `www  url  url_text  label  [contact]` |
 | `https` | `https  url  url_text  label  [contact]` |
 | `pop3` | `pop3  username  password  label  [contact]` |
+| `pop3s` | `pop3s  username  password  label  [contact]` |
+| `imap` | `imap  [username  password]  label  [contact]` |
+| `imaps` | `imaps  [username  password]  label  [contact]` |
 | `authdns` (DNS) | `authdns  name  contact` |
 | `ssh` | `ssh  [port]  label  [contact]` |
 | `mysql` | `mysql  [port]  label  [contact]` |
@@ -66,14 +70,17 @@ Notes confirmed from the parser:
 - **`www`/`https`** take a `url` (the path to GET) and `url_text` (a substring that must appear in
   the response body), then the `label`.
 - **`pop3`** takes a `username` and `password`, then the `label`.
+- **`pop3s`** mirrors `pop3` (credentials required); **`imap`/`imaps`** take an **optional**
+  `username`/`password` pair — a plain reachability/banner check when omitted, a `LOGIN` when
+  supplied — then the `label`.
 - **`authdns`** is special: it takes the DNS `name` to look up and then a **required** `contact` —
   a legacy authdns stanza with no contact is rejected. It has **no** `label` field.
 - **`ssh`/`mysql`** take an **optional** leading numeric port: a field after the type that parses as
   a port (1–65535) is the port, otherwise it's the `label` (so a purely-numeric label isn't
   expressible here — use a descriptive one, or set the port in the modern format).
-- Default ports are applied automatically where they exist (smtp `25`, pop3 `110`, authdns/DNS
-  `53`, www/http `80`, https `443`, ssh `22`, mysql `3306`); ping has none, and tcp/udp require an
-  explicit port.
+- Default ports are applied automatically where they exist (smtp `25`, pop3 `110`, pop3s `995`,
+  imap `143`, imaps `993`, authdns/DNS `53`, www/http `80`, https `443`, ssh `22`, mysql `3306`);
+  ping/ping6 have none, and tcp/udp require an explicit port.
 
 A trailing `{` opens a dependency block (next section).
 
@@ -96,7 +103,7 @@ while the parent is up. This is **dependency suppression** — when an upstream 
 get one alert for the router, not a flood for everything behind it. A line that is just `}` closes
 the block.
 
-In the legacy grammar **only ping-like parents** (`ping` and `smtp`) may open a `{` block — that
+In the legacy grammar **only ping-like parents** (`ping`, `ping6`, and `smtp`) may open a `{` block — that
 matches the original parser. A `{` on any other type is warned about and its block discarded.
 Nesting deeper than 64 levels is rejected with a clean config error.
 
@@ -490,8 +497,9 @@ Generate the bearer token with `psysmon-token`; reads (`status`, `version`) need
 mutations (`ack`, `note`, `reload`) do, and with no token file configured all mutations are
 disabled. See the [CLI reference](05-cli-reference.md) for `psysmonctl` and `psysmon-token`.
 
-> **Legacy configs** have no control directives — enable the channel via the CLI flags
-> (`--control`, `--control-token-file`, …) instead.
+> **Legacy configs** accept the same `config control*` directives (they share the modern
+> directive table); you can also enable the channel via the CLI flags (`--control`,
+> `--control-token-file`, …).
 
 ### Reloading (SIGHUP)
 
@@ -513,7 +521,7 @@ effect only at startup. To change a global, restart the daemon. See
 | Default? | **Yes** (and auto-detected) | Opt-in (auto-detected by `object`/`root`/`set`) |
 | Structure | Position; `{ }` nesting | Named objects + `dep` edges |
 | Spaces in values | No (whitespace-split) | Yes (quoted strings) |
-| Dependency parents | ping/smtp only | any type via `dep` |
+| Dependency parents | ping/ping6/smtp only | any type via `dep` |
 | `numfailures` | Position-dependent | Global default + per-object attribute |
 | Per-object interval / ping counts / `source` / `contact_on` | Range-scoped (sticky `config`, see above) | Per-object attributes |
 | Variables / reuse | No | `set` / `$var` |

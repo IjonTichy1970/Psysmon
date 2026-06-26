@@ -7,7 +7,7 @@ guide explains everything in depth; this is the shortest path to a running monit
 
 ```bash
 python3 -m venv /opt/psysmon-venv
-/opt/psysmon-venv/bin/pip install ./psysmon-0.4.0-py3-none-any.whl
+/opt/psysmon-venv/bin/pip install ./psysmon-<version>-py3-none-any.whl
 ```
 
 Python 3.11+ is required. See [Getting it](02-getting-it.md) and [Installation](03-installation.md)

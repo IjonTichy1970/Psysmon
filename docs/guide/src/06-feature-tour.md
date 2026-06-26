@@ -98,10 +98,9 @@ sudo psysmon --config /etc/psysmon.conf \
   --mail-from noc@example.net --hostname noc.example.net
 ```
 
-In the **modern** format these can also come from the config file (`config sender` / `config from`
-for the `From:` address, `config hostname` for the org hostname); a **legacy** config sets them only
-via the CLI flags above (it has no such directives). The SMTP host/port have no config directive in
-either format — they are CLI-only. An object with an absent or empty
+In **both** formats these can also come from the config file (`config sender` / `config from`
+for the `From:` address, `config hostname` for the org hostname), overridden by the CLI flags above.
+The SMTP host/port, by contrast, have no config directive in either format — they are CLI-only. An object with an absent or empty
 contact logs to syslog only — it does not page. Use `-n` / `--no-notify` to suppress paging
 entirely (results still show on the status page).
 

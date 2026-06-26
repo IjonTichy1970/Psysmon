@@ -19,15 +19,17 @@ import socket
 import time
 from collections.abc import Awaitable, Callable
 
-ResolveFn = Callable[[str], Awaitable[str | None]]
+ResolveFn = Callable[[str, socket.AddressFamily], Awaitable[str | None]]
 
 
-async def _system_resolve(hostname: str) -> str | None:
-    """Resolve via the event loop's getaddrinfo (first IPv4 address), or None on failure."""
+async def _system_resolve(
+    hostname: str, family: socket.AddressFamily = socket.AF_INET
+) -> str | None:
+    """Resolve via the loop's getaddrinfo (first address of ``family``), or None on failure."""
     loop = asyncio.get_running_loop()
     try:
         infos = await loop.getaddrinfo(
-            hostname, None, family=socket.AF_INET, type=socket.SOCK_STREAM
+            hostname, None, family=family, type=socket.SOCK_STREAM
         )
     except socket.gaierror:
         return None
@@ -49,40 +51,47 @@ class DnsCache:
         self._log_s = log_s
         self._resolve_fn = resolve_fn or _system_resolve
         self._monotonic = monotonic
-        self._cache: dict[str, tuple[str, float]] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
+        self._cache: dict[tuple[str, socket.AddressFamily], tuple[str, float]] = {}
+        self._locks: dict[tuple[str, socket.AddressFamily], asyncio.Lock] = {}
         self._hits = 0
         self._misses = 0
         self._expired = 0
 
-    def _fresh(self, hostname: str, now: float) -> str | None:
-        entry = self._cache.get(hostname)
+    def _fresh(self, key: tuple[str, socket.AddressFamily], now: float) -> str | None:
+        entry = self._cache.get(key)
         if entry is not None and (now - entry[1]) < self._expire_s:
             return entry[0]
         return None
 
-    async def resolve(self, hostname: str) -> str | None:
-        """Return a cached or freshly-resolved IP for ``hostname`` (or None on failure)."""
-        cached = self._fresh(hostname, self._monotonic())
+    async def resolve(
+        self, hostname: str, family: socket.AddressFamily = socket.AF_INET
+    ) -> str | None:
+        """Return a cached or freshly-resolved IP for ``hostname`` (or None on failure).
+
+        The cache and single-flight lock are keyed by ``(hostname, family)`` so an A and an AAAA
+        lookup of the same host resolve and cache independently instead of clobbering each other.
+        """
+        key = (hostname, family)
+        cached = self._fresh(key, self._monotonic())
         if cached is not None:
             self._hits += 1
             return cached
 
-        lock = self._locks.setdefault(hostname, asyncio.Lock())
+        lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
             # Another waiter may have populated the cache while we waited for the lock.
-            cached = self._fresh(hostname, self._monotonic())
+            cached = self._fresh(key, self._monotonic())
             if cached is not None:
                 self._hits += 1
                 return cached
             self._misses += 1
-            if self._cache.pop(hostname, None) is not None:
+            if self._cache.pop(key, None) is not None:
                 # A previously-cached entry aged out: count one expiration and evict it, so a host
                 # that now fails to resolve isn't re-counted as "expired" on every retry.
                 self._expired += 1
-            ip = await self._resolve_fn(hostname)
+            ip = await self._resolve_fn(hostname, family)
             if ip is not None:
-                self._cache[hostname] = (ip, self._monotonic())
+                self._cache[key] = (ip, self._monotonic())
             return ip
 
     @property

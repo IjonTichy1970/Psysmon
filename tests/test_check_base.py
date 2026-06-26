@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import socket
 
 import pytest
 
@@ -34,6 +35,21 @@ async def test_resolve_raises_on_failure():
     ctx = base.CheckContext(resolver=FakeResolver(default=None))
     with pytest.raises(base.NoDnsError):
         await base.resolve(node(), ctx)
+
+
+async def test_resolve_passes_family_to_resolver():
+    # Default resolves AF_INET (every existing caller); the v6 ping path passes AF_INET6.
+    seen = []
+
+    class SpyResolver:
+        async def resolve(self, hostname, family=socket.AF_INET):
+            seen.append(family)
+            return "203.0.113.9"
+
+    ctx = base.CheckContext(resolver=SpyResolver())
+    assert await base.resolve(node(), ctx) == "203.0.113.9"
+    assert await base.resolve(node(), ctx, family=socket.AF_INET6) == "203.0.113.9"
+    assert seen == [socket.AF_INET, socket.AF_INET6]
 
 
 async def test_perform_success_passthrough(check_ctx):

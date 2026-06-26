@@ -286,6 +286,30 @@ aliases for the type keyword.
 
 ---
 
+## Mail-service checks — `imap`, `pop3s`, `imaps` **(modern config only)**
+
+Beyond plaintext `pop3` and `smtp`, the modern format adds an IMAP greeting check and the
+implicit-TLS variants of POP3 and IMAP:
+
+- **`imap`** reads the server's IMAP greeting and is *up* on a ready `* OK` (or an
+  already-authenticated `* PREAUTH`). Add `username`/`password` and it also performs a `LOGIN`,
+  reporting a rejected credential as `Bad Auth`. Credentials are optional for `imap`/`imaps`
+  (a banner check without them); `pop3`/`pop3s` require them.
+- **`pop3s`** and **`imaps`** speak their protocol over **implicit TLS** (TLS from connect). These
+  are *reachability* checks — the TLS handshake must succeed, but the certificate is **not**
+  verified, so a self-signed or near-expiry cert still reads up.
+
+```
+object mail-imaps {
+    host "198.51.100.2"; type imaps; contact "noc@example.net";
+    # username/password optional — add them to also LOGIN
+};
+```
+
+Default ports: `pop3s` 995, `imap` 143, `imaps` 993.
+
+---
+
 ## Grouping — `group` and the `group { }` scope **(modern config only)**
 
 A `group "name"` attribute labels an object; the status views then list objects under per-group
@@ -421,6 +445,7 @@ control-channel documentation.
 |---|---|---|---|
 | Dependency suppression | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
 | Multi-parent dependencies (any-path) | — (single parent) | Yes (multiple `dep`) | — (structure is config-only) |
+| Modern-only check types (`ping6`, `imap`, `pop3s`, `imaps`) | No (legacy is plaintext + IPv4) | Yes | No |
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |

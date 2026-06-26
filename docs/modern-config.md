@@ -320,8 +320,10 @@ clean warning or a clear refusal, never a silent surprise):
 
 - **`include`** — not yet supported; a config using it is **rejected at load**. (A follow-up,
   M2b, will add it with proper `$var`-across-include scoping.)
-- **Dropped check types** — `imap`, `nntp`, `pop2`, `umichx500`, `radius`, `bootp`, `snmp` warn and
-  skip (they were unused in practice and are out of scope for the rewrite).
+- **Dropped check types** — `nntp`, `pop2`, `umichx500`, `radius`, `bootp`, `snmp` warn and skip
+  (they were unused in practice and are out of scope for the rewrite). (`imap`/`imaps`/`pop3s` are
+  *supported* in the modern format — see the check types above; they warn-and-skip only in the
+  legacy positional grammar, which stays plaintext + IPv4.)
 - **The 0.93 control/query protocol, client tooling interop, and the phone-home heartbeat** — these
   were removed from psysmon entirely (the original's unauthenticated control server dumped stored
   credentials in cleartext), and the modern grammar carries no keywords for them.

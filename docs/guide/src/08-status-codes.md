@@ -23,8 +23,9 @@ Two distinctions matter for how a code affects the rest of your monitoring:
   its subtree. See [Feature tour → dependency suppression](06-feature-tour.md) and
   [Troubleshooting](09-troubleshooting.md).
 
-Which codes a given check can produce depends on the check type — e.g. `Unpingable` comes only
-from a ping check (`ping` or `ping6`), `Bad Auth` only from POP3, and `Bad Resp` from DNS
-(malformed/wrong-source reply) or
-HTTP (body missing the expected text). See the [Feature tour](06-feature-tour.md) for what each
-check verifies.
+Which codes a given check can produce depends on the check type — e.g. `Unpingable` comes only from
+a ping check (`ping` or `ping6`); `Bad Auth` from the authenticated mail checks (`pop3`/`pop3s`, and
+`imap`/`imaps` when credentials are set) on a rejected login; and `Bad Resp` from a server that
+answers but not as expected — DNS (malformed/wrong-source reply), HTTP (body missing the expected
+text), or a mail check (a bad greeting or reply). See the [Feature tour](06-feature-tour.md) for
+what each check verifies.

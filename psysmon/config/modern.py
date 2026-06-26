@@ -463,7 +463,7 @@ class _Parser:
     def _group(self, line: int) -> None:
         """Parse a top-level ``group "NAME" { attr value; ... };`` scope (#70).
 
-        Defines per-group default settings (currently just ``source``) inherited by objects that
+        Defines the per-group default settings (see ``_GROUP_ATTRS``) inherited by objects that
         join the group via the ``group "NAME"`` attribute. The per-object value always wins; group
         defaults are applied after all statements parse, so group/object declaration order is free.
         """

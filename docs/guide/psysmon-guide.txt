@@ -542,33 +542,56 @@ discarded. Nesting deeper than 64 levels is rejected with a clean config error.
 Here web, db, and sw are suppressed when router is down; host1 is additionally
 suppressed when sw is down.
 
-config numfailures is position-dependent
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Position-dependent ("sticky") config directives
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-config numfailures N sets how many consecutive failed checks a host must accumulate
-before it pages. In the legacy format this directive is position-dependent: its current
-value is snapshotted into every stanza parsed after it. It is a running value, not last-
-wins -- change it again partway down the file and only the stanzas below the second
-change get the new value.
+A family of config directives is position-dependent in the legacy format: the current
+value is snapshotted into every host parsed after it (a running value, not last-wins).
+This is how the legacy grammar -- which has no per-object attribute syntax -- gives you
+per-host control. The family:
+
+| Directive | Sets, per host | Value |
+|---|---|---|
+| config numfailures | consecutive-failure page threshold | integer |
+| config queuetime | check interval | seconds |
+| config send_pings / config min_pings | loss-tolerant ping echo / required-reply counts | integer |
+| config contact_on | paging-transition policy | down\|up\|both\|none |
+| config source | outbound bind address | an IP, or auto (stay unbound) |
+
+Each applies to the hosts below it until the next change; a host parsed *before* any of
+them inherits the global default (the built-in default or the matching CLI flag).
+Example:
 
     config numfailures 2
 
     router.example.net  ping  edge-router  noc@example.net        # threshold 2
 
     config numfailures 5
+    config contact_on   down
 
-    flaky.example.net   ping  flaky-link    noc@example.net        # threshold 5
-    host2.example.net   ping  host-2        noc@example.net        # threshold 5 (still)
+    flaky.example.net   ping  flaky-link    noc@example.net        # threshold 5, pages on down only
+    host2.example.net   ping  host-2        noc@example.net        # threshold 5 (still), down only
 
-    This positional behavior is unique to the legacy format. In the modern format config numfailures
-    is a plain global default and you set per-object thresholds with a numfailures attribute -- the
-    converter relies on this distinction (see migration).
+Nesting rule: the running value is file-position sticky, not block-scoped. It flows down
+into nested { } children, and a value set *inside* a block is not restored when the
+block closes -- it keeps applying to the hosts after the block. (config source is
+additionally family-checked at each host: a v4 source binds the IPv4 checks but leaves a
+ping6 host unbound, with a warning; auto always passes.)
+
+    This positional behavior is specific to the legacy format. In the modern object{} format these
+    are per-object attributes on each object (and most also have a global config form) -- the
+    converter relies on the distinction (see migration). To set
+    one of these as a file-wide default in legacy, put the directive at the top of the file (every
+    host below inherits it); the true Settings global stays settable via the matching CLI flag.
 
 config directives (legacy)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The legacy parser's config line is config <directive> <value...>. The directive is
-prefix-matched. The complete set the legacy parser accepts:
+The legacy parser's config line is config <directive> <value...>. The original
+directives are prefix-matched (like the C strncmp); the later, post-rewrite globals are
+matched exactly.
+
+Original directives:
 
 | Directive | Value | Effect |
 |---|---|---|
@@ -583,15 +606,37 @@ prefix-matched. The complete set the legacy parser accepts:
 | config statusfile | html\|text path | Status-output format and path |
 | config sleeptime | -- | Obsolete; ignored with a warning (use --interval) |
 
-Valid syslog facilities are the usual set (kern, user, mail, daemon, auth, syslog, lpr,
-news, uucp, cron, authpriv, local0-local7); an unknown one warns and falls back to
-daemon. An unknown loglevel falls back to info. config statusfile needs exactly the two
-arguments <html|text> <path>.
+Post-rewrite globals -- the legacy format also accepts the global config directives the
+modern format does, so a drop-in sysmon.conf can set them in the file too (previously
+CLI-only). contact_on, queuetime, send_pings/min_pings, and source are not here --
+they're the position-dependent per-host directives above (Sticky directives):
 
-Anything the legacy format can't express on a line (source-IP binding, per-object
-intervals, loss-tolerant ping, control channel, contact_on, ...) must come from the
-command line with a legacy config -- or you move to the modern format, which has
-directives for all of them.
+| Directive | Value | Effect |
+|---|---|---|
+| config page_on_degraded | -- (flag) | Page on a degraded (lossy) ping |
+| config source_ip | address | Default outbound bind for the connection checks |
+| config hostname | name | Org hostname shown in alerts and the status title |
+| config sender / config from | address | Alert From: address |
+| config maxqueued | integer | Cap on concurrent checks |
+| config statesave_interval | seconds | How often to flush the state file (0 = only on exit) |
+| config state_max_age | seconds | Ignore a state file older than this on load (0 disables) |
+| config noheartbeat | -- (flag) | Disable the heartbeat summary |
+| config control | -- (flag) | Enable the control / query channel |
+| config control_bind | address | Control-channel bind address (a non-loopback bind needs TLS) |
+| config control_port | integer | Control-channel port |
+| config control_token_file | "path" | Bearer-token file gating control mutations |
+| config control_tls_cert / config control_tls_key | "path" | Control-channel TLS cert / key |
+
+Flag directives (page_on_degraded, noheartbeat, control) take no value. Valid syslog
+facilities are the usual set (kern, user, mail, daemon, auth, syslog, lpr, news, uucp,
+cron, authpriv, local0-local7); an unknown one warns and falls back to daemon. An
+unknown loglevel falls back to info, and an unknown contact_on to both. config
+statusfile needs exactly <html|text> <path>.
+
+What the legacy format still can't express is per-object overrides (one host's own
+interval, source, contact_on, or loss-tolerant counts) and the structural features
+(named object graphs, multiple dep parents, group {} scopes) -- those are what the modern
+format is for.
 
 ---
 
@@ -904,10 +949,10 @@ Side-by-side
 | Spaces in values | No (whitespace-split) | Yes (quoted strings) |
 | Dependency parents | ping/smtp only | any type via dep |
 | numfailures | Position-dependent | Global default + per-object attribute |
-| Per-object interval / ping counts / source / contact_on | Not expressible (CLI only) | Per-object attributes |
+| Per-object interval / ping counts / source / contact_on | Range-scoped (sticky config, see above) | Per-object attributes |
 | Variables / reuse | No | set / $var |
-| Control channel in file | No (CLI only) | config control_* |
-| Org identity / mail-from in file | No (CLI only) | config hostname / sender |
+| Control channel in file | Yes (config control_*) | config control_* |
+| Org identity / mail-from in file | Yes (config hostname / sender) | config hostname / sender |
 
 Legacy field <-> modern attribute mapping (canonical)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -922,9 +967,9 @@ This is the canonical mapping table (Appendix C points here).
 | label / "message" | desc "text"; | |
 | contact | contact "addr"; | |
 | url, url_text (www/https) | url "path";, urltext "substring"; | |
-| username, password (pop3) | username "u";, password "p"; | |
+| username, password (pop3/pop3s, imap/imaps) | username "u";, password "p"; | Required for pop3/pop3s; optional for imap/imaps |
 | name (authdns) | dns-query "name"; | |
-| { ... } child nesting | dep "parent"; on the child | Legacy ping/smtp parents become named edges |
+| { ... } child nesting | dep "parent"; on the child | Legacy ping/ping6/smtp parents become named edges |
 | config numfailures N (positional) | per-object numfailures N; | Resolved onto each object, not replayed as a global |
 | config savestate "path" | config savestate "path"; | |
 | config statusfile html /p | config statusfile html "/p"; | |
@@ -1641,8 +1686,8 @@ Values are down, up, both, none. An object with no contact never pages regardles
 
 ---
 
-IPv6 ping -- ping6 (modern config only)
---------------------------------------
+IPv6 ping -- ping6
+-----------------
 
 Monitor a host over IPv6 with type ping6, an ICMPv6 echo. It behaves exactly like ping --
 it gates dependent children, honors loss-tolerant send_pings / min_pings, needs the same
@@ -1659,16 +1704,16 @@ same host both a ping and a ping6 object to watch each separately. A per-object 
 for a ping6 check must be an IPv6 address (source "2001:db8::5";); pingv6 and icmp6 are
 accepted aliases for the type keyword.
 
-    The legacy sysmon.conf format stays IPv4-only: a ping6 line there is skipped with a warning
-    pointing you to the modern format.
+    The legacy sysmon.conf format accepts ping6 too -- write it positionally
+    (host ping6 label [contact]), like any other legacy check.
 
 ---
 
-Mail-service checks -- imap, pop3s, imaps (modern config only)
--------------------------------------------------------------
+Mail-service checks -- imap, pop3s, imaps
+----------------------------------------
 
-Beyond plaintext pop3 and smtp, the modern format adds an IMAP greeting check and the
-implicit-TLS variants of POP3 and IMAP:
+Beyond plaintext pop3 and smtp, psysmon adds an IMAP greeting check and the implicit-TLS
+variants of POP3 and IMAP:
 
 - imap reads the server's IMAP greeting and is *up* on a ready * OK (or an already-
 authenticated * PREAUTH). Add username/password and it also performs a LOGIN, reporting
@@ -1684,6 +1729,10 @@ expiry cert still reads up.
     };
 
 Default ports: pop3s 995, imap 143, imaps 993.
+
+    The legacy sysmon.conf format accepts these too, positionally: host pop3s user pass label,
+    host imaps user pass label, and host imap label (banner) or host imap user pass label
+    (authenticated) -- credentials are optional for imap/imaps, required for pop3s.
 
 ---
 
@@ -1815,26 +1864,26 @@ Availability matrix
 |---|---|---|---|
 | Dependency suppression | Yes ({ } nesting) | Yes (dep) | -- (structure is config-only) |
 | Multi-parent dependencies (any-path) | -- (single parent) | Yes (multiple dep) | -- (structure is config-only) |
-| Modern-only check types (ping6, imap, pop3s, imaps) | No (legacy is plaintext + IPv4) | Yes | No |
+| IPv6 ping + mail checks (ping6 / imap / pop3s / imaps) | Yes | Yes | -- (config-only) |
 | Threshold alerting (numfailures) | Yes | Yes | --numfailures |
 | Re-page interval (pageinterval) | Yes | Yes | --pageinterval |
 | Recovery notices | Yes | Yes | -- |
-| Paging policy (contact_on) -- global | No (CLI only) | Yes (config contact_on) | --contact-on |
-| Paging policy (contact_on) -- per object | No | Yes | No |
+| Paging policy (contact_on) -- global | Yes (sticky config contact_on) | Yes (config contact_on) | --contact-on |
+| Paging policy (contact_on) -- per object | Range-scoped (sticky config) | Yes | No |
 | SMTP email notifier | Yes | Yes | --smtp-host / --smtp-port / --mail-from / -n |
 | Status output (HTML / text / JSON) | Yes | Yes | --status-file / --status-format / --show-up / --status-refresh |
 | Status-page logo auto-deploy | Yes | Yes | -- (follows statusfile) |
 | Object grouping on status views | No | Yes (group) | No |
-| Loss-tolerant ping + Degraded -- global | No (CLI only) | Yes (config send_pings / min_pings) | --send-pings / --min-pings |
-| Loss-tolerant ping -- per object | No | Yes (send_pings / min_pings) | No |
-| Page on degraded | No (CLI only) | Yes (config page_on_degraded) | --page-on-degraded |
+| Loss-tolerant ping + Degraded -- global | Yes (sticky config send_pings / min_pings) | Yes (config send_pings / min_pings) | --send-pings / --min-pings |
+| Loss-tolerant ping -- per object | Range-scoped (sticky config) | Yes (send_pings / min_pings) | No |
+| Page on degraded | Yes (config page_on_degraded) | Yes (config page_on_degraded) | --page-on-degraded |
 | State persistence (savestate) | Yes | Yes | --state-file / --state-save-interval / --state-max-age |
 | Leveled syslog logging | Yes | Yes | --log-level / -v / -vv / --heartbeat / --dnslog / --slow-check / --syslog-facility |
-| Per-object check cadence (queuetime) | No (global only) | Yes | --interval (global only) |
-| Per-object page threshold (numfailures) | No (global only) | Yes | --numfailures (global only) |
+| Per-object check cadence (queuetime) | Range-scoped (sticky config queuetime) | Yes | --interval (global only) |
+| Per-object page threshold (numfailures) | Range-scoped (sticky config numfailures) | Yes | --numfailures (global only) |
 | DNS check query name (dns-query) | Yes (positional) | Yes (dns-query) | -- |
-| Per-object / per-group source | No | Yes | No (global --source-ip only) |
-| Control channel (psysmonctl / psysmon-token) | Enable via CLI | Enable via config control or CLI | --control / --control-bind / --control-port / --control-token-file / --control-tls-cert / --control-tls-key |
+| Per-object / per-group source | Range-scoped (sticky config source) | Yes | No (global --source-ip only) |
+| Control channel (psysmonctl / psysmon-token) | Enable via config control or CLI | Enable via config control or CLI | --control / --control-bind / --control-port / --control-token-file / --control-tls-cert / --control-tls-key |
 
 See CLI reference and Appendix A for the complete flag list, Configuration for the full
 directive set, and Status codes for every status string including Degraded.
@@ -2407,15 +2456,13 @@ with config loglevel debug / -vv) for the specific warning. Common causes:
 - An object missing a required field for its type (e.g. a tcp/udp object with no port,
 an http/https object without url + urltext) is warned and skipped. - A dropped check
 type (nntp, pop2, umichx500, radius, bootp, snmp) warns and skips -- these aren't in
-scope for the rewrite. - ping6 in a legacy config. ping6 / pingv6 / icmp6 work in the
-modern object{} format but not the legacy sysmon.conf grammar (IPv4-only); a ping6 line
-in a legacy file warns and skips, pointing you to the modern format. A per-object source
-whose family doesn't match its check (an IPv6 source on a v4 check, or a v4 source on
-ping6) is warned and left unbound. - imap / imaps / pop3s in a legacy config. Same story
--- these mail types are modern-config-only; a legacy line warns and points you to the
-modern format (and pop3s is never silently read as plaintext pop3). - An unknown dep
-target, a dependency cycle, or a duplicate object name each warn and degrade gracefully
-(the object becomes a root, or the duplicate is skipped).
+scope for the rewrite. - A per-object source whose family doesn't match its check (an
+IPv6 source on a v4 check, or a v4 source on ping6) is warned and left unbound -- the
+object still loads and is checked, just on the kernel's default route. - ping6, imap,
+imaps, and pop3s are accepted in both the legacy and modern formats (they are no longer
+redirected to the modern config); pop3s/imaps are never silently downgraded to plaintext
+pop3/imap. - An unknown dep target, a dependency cycle, or a duplicate object name each
+warn and degrade gracefully (the object becomes a root, or the duplicate is skipped).
 
 The full required-fields and check-type tables are in Configuration.
 

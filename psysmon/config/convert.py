@@ -212,6 +212,8 @@ class _Serializer:
             self._line(f"  send_pings {node.send_pings};")
         if node.min_pings is not None:
             self._line(f"  min_pings {node.min_pings};")
+        if node.source is not None:
+            self._attr("source", node.source)  # per-object bind; "auto" stays unbound
         if parent_name is not None:
             self._attr("dep", parent_name)
         self._line("};")

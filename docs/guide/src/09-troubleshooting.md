@@ -187,13 +187,12 @@ unsupported, so the rest of the config still comes up. Check syslog (raise verbo
   an `http`/`https` object without `url` + `urltext`) is warned and skipped.
 - A **dropped check type** (`nntp`, `pop2`, `umichx500`, `radius`, `bootp`, `snmp`) warns
   and skips — these aren't in scope for the rewrite.
-- **`ping6` in a legacy config.** `ping6` / `pingv6` / `icmp6` work in the modern `object{}` format
-  but not the legacy `sysmon.conf` grammar (IPv4-only); a `ping6` line in a legacy file warns and
-  skips, pointing you to the modern format. A per-object `source` whose family doesn't match its
-  check (an IPv6 `source` on a v4 check, or a v4 `source` on `ping6`) is warned and left unbound.
-- **`imap` / `imaps` / `pop3s` in a legacy config.** Same story — these mail types are
-  modern-config-only; a legacy line warns and points you to the modern format (and `pop3s` is never
-  silently read as plaintext `pop3`).
+- **A per-object `source` whose family doesn't match its check** (an IPv6 `source` on a v4 check, or
+  a v4 `source` on `ping6`) is warned and left unbound — the object still loads and is checked, just
+  on the kernel's default route.
+- **`ping6`, `imap`, `imaps`, and `pop3s` are accepted in both the legacy and modern formats** (they
+  are no longer redirected to the modern config); `pop3s`/`imaps` are never silently downgraded to
+  plaintext `pop3`/`imap`.
 - An **unknown `dep` target**, a **dependency cycle**, or a **duplicate object name** each warn
   and degrade gracefully (the object becomes a root, or the duplicate is skipped).
 

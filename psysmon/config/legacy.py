@@ -6,14 +6,18 @@ Faithfully reproduces ``loadconfig.c``/``parseline``:
 * A line whose first token starts with ``;`` or ``#`` is a comment; blank lines are skipped.
 * ``}`` closes the current block; a trailing ``{`` opens a recursive **child block** (only on
   the ping-like branch — ping/smtp — as in the original).
-* ``config <directive> ...`` sets globals: ``statusfile``, ``pageinterval`` (minutes),
-  ``logging``, ``dnslog``, ``dnsexpire``, ``numfailures``, ``savestate``, ``sleeptime``.
+* ``config <directive> ...`` sets globals: the original ``statusfile``, ``pageinterval``
+  (minutes), ``logging``, ``dnslog``, ``dnsexpire``, ``numfailures``, ``savestate``,
+  ``sleeptime`` — plus the post-rewrite globals (``contact_on``, ``source_ip``, ``queuetime``,
+  ``send_pings``/``min_pings``, ``page_on_degraded``, the ``control*`` family, ...) which reuse
+  the modern parser's directive tables so both formats accept the same set (#93).
 * **``numfailures`` is position-dependent** — its current value snapshots into each
   subsequently-parsed node's ``max_down`` (a running value, not last-wins).
-* Per-type field positions exactly as in C (ping/smtp: label[,contact][,``{``];
+* Per-type field positions exactly as in C (ping/ping6/smtp: label[,contact][,``{``];
   tcp/udp: port,label[,contact]; www/https: url,url_text,label[,contact];
-  pop3: user,pass,label[,contact]; authdns: name,contact).
-* Dropped legacy types (imap, nntp, radius, umichx500, ...) -> warn and skip; never hard-fail.
+  pop3/pop3s: user,pass,label[,contact]; imap/imaps: label[,contact] (banner) or
+  user,pass,label[,contact] (auth); authdns: name,contact).
+* Dropped legacy types (nntp, radius, umichx500, ...) -> warn and skip; never hard-fail.
 * Keyword matching is prefix-based, like the original ``strncmp`` (so ``tcpfoo`` matches
   ``tcp``).
 
@@ -34,9 +38,11 @@ settings overrides (to feed :func:`psysmon.config.settings.merge`), and collecte
 
 from __future__ import annotations
 
+import ipaddress
+import math
 from dataclasses import dataclass, field
 
-from psysmon.config.model import DEFAULT_PORT, CheckType, Node
+from psysmon.config.model import CONTACT_ON_CHOICES, DEFAULT_PORT, SOURCE_AUTO, CheckType, Node
 
 # Valid syslog facilities (from match_facility in loadconfig.c); "none" disables logging.
 _FACILITIES = frozenset(
@@ -44,18 +50,24 @@ _FACILITIES = frozenset(
     "local0 local1 local2 local3 local4 local5 local6 local7".split()
 )
 
+# Post-rewrite string globals whose value is a filesystem path that may be quoted / contain
+# spaces — join the remaining tokens and strip a surrounding quote pair, the same way savestate
+# does, so a whitespace-split quoted path survives (#93). Other string globals take one token.
+_PATH_STR_GLOBALS = frozenset({"control_token_file", "control_tls_cert", "control_tls_key"})
+
 # Check-type keywords in the original dispatch order, prefix-matched like the C strncmp.
 # A None value marks a type the legacy parser does not handle (warn + skip). ORDER MATTERS: a
 # longer keyword sharing a prefix MUST precede the shorter one or it gets swallowed — the v6 ping
-# keywords before "ping", and "pop3s"/"imaps" before "pop3"/"imap" (else "pop3s" silently becomes
-# plaintext "pop3"). IPv6 ping and the modern mail types (imap/imaps/pop3s) are modern-config-only
-# (#24/#88), so they map to None (warn + redirect to the modern config).
+# keywords before "ping", and "pop3s"/"imaps" before "pop3"/"imap" (else "pop3s" would silently
+# become plaintext "pop3"). ping6 + the mail types (imap/imaps/pop3s) are accepted natively (#94);
+# imap was an original legacy type (loadconfig.c type 7), the rest are post-rewrite additions.
 _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
-    ("ping6", None), ("pingv6", None), ("icmp6", None),  # before "ping"! (#24)
+    ("ping6", CheckType.PING6), ("pingv6", CheckType.PING6),  # before "ping"!
+    ("icmp6", CheckType.PING6),
     ("ping", CheckType.PING),
-    ("pop3s", None), ("imaps", None),  # before "pop3"/"imap"! modern-only mail (#88)
+    ("pop3s", CheckType.POP3S), ("imaps", CheckType.IMAPS),  # before "pop3"/"imap"! (TLS)
     ("pop3", CheckType.POP3),
-    ("imap", None),
+    ("imap", CheckType.IMAP),
     ("tcp", CheckType.TCP),
     ("udp", CheckType.UDP),
     ("nntp", None),
@@ -67,16 +79,9 @@ _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
     ("https", CheckType.HTTPS),
 )
 
-# Types whose stanza may open a `{` child block (the original's ping-like parse branch).
-_PING_LIKE = frozenset({CheckType.PING, CheckType.SMTP})
-
-# Legacy IPv6 ping keywords: recognized only to warn + point at the modern config (#24), never
-# routed (the legacy grammar stays IPv4-only). Listed before "ping" in _TYPE_KEYWORDS above.
-_V6_PING_KEYWORDS = frozenset({"ping6", "pingv6", "icmp6"})
-
-# Legacy mail keywords recognized only to warn + point at the modern config (#88): imap was a
-# dropped legacy type, and pop3s/imaps are TLS variants the legacy plaintext grammar doesn't speak.
-_MODERN_ONLY_MAIL = frozenset({"imap", "imaps", "pop3s"})
+# Types whose stanza may open a `{` child block: the original's ping-like branch (ping, smtp) plus
+# ping6 — an ICMPv6 ping that can gate a dependency subtree exactly like ping (#94).
+_PING_LIKE = frozenset({CheckType.PING, CheckType.PING6, CheckType.SMTP})
 
 # Hard cap on `{` nesting depth. Real dependency trees are only a handful deep; anything past
 # this is malformed/pathological, and recursing further risks Python's RecursionError surfacing
@@ -127,6 +132,15 @@ class _Parser:
         self._lines = list(enumerate(lines, start=1))
         self._pos = 0
         self.numfailures = numfailures
+        # Position-dependent ("sticky") per-object defaults (#95): each snapshots into every
+        # subsequently-parsed node, exactly like numfailures. Seeded to each Node field's "unset"
+        # sentinel so a node parsed before any such directive inherits the global default at check
+        # time (the engine falls back to the Settings value when the per-node field is unset).
+        self.contact_on = ""
+        self.source: str | None = None
+        self.send_pings: int | None = None
+        self.min_pings: int | None = None
+        self.interval: float | None = None
         self.overrides: dict[str, object] = {}
         self.warnings: list[str] = []
 
@@ -182,16 +196,27 @@ class _Parser:
                 self._warn(lineno, "too many fields; using the first 7")
                 tokens = tokens[:7]
 
-            if len(tokens) < 3:
+            # A line that is only a block-open (`{`) strips to an empty token list above; it has no
+            # stanza or directive, so warn + drain it (keeping braces balanced) before any dispatch
+            # that indexes tokens[0]. (Matches the original `< 3 fields` handling for this case.)
+            if not tokens:
                 self._warn(lineno, "not enough fields; skipping")
                 if opens_block:
                     self.parse_block(depth + 1)  # drain the orphaned block; keep braces balanced
                 continue
+            # `config` is dispatched before the 3-field minimum: a valueless flag global (e.g.
+            # `config control`, #93) is a legitimate 2-token line. `_handle_config` owns its own
+            # arity checks; host lines still require >= 3 fields (the guard just below).
             if tokens[0] == "config":
                 self._handle_config(lineno, tokens)
                 if opens_block:
                     self._warn(lineno, "a config line cannot open a block; ignoring the '{'")
                     self.parse_block(depth + 1)
+                continue
+            if len(tokens) < 3:
+                self._warn(lineno, "not enough fields; skipping")
+                if opens_block:
+                    self.parse_block(depth + 1)  # drain the orphaned block; keep braces balanced
                 continue
 
             node = self._parse_host(lineno, tokens)
@@ -211,20 +236,26 @@ class _Parser:
         host = tokens[0]
         ctype, keyword = _match_type(tokens[1])
         if ctype is None:
-            if keyword in _V6_PING_KEYWORDS:
-                self._warn(lineno, f"IPv6 ping ({keyword!r}) needs the modern object{{}} config; "
-                           "legacy is IPv4-only — skipping (#24)")
-            elif keyword in _MODERN_ONLY_MAIL:
-                self._warn(lineno, f"{keyword!r} needs the modern object{{}} config; the legacy "
-                           "format has no IMAP/TLS mail checks — skipping (#88)")
-            elif keyword is not None:
+            if keyword is not None:  # recognized but unsupported (nntp/radius/umichx500)
                 self._warn(lineno, f"unsupported check type {keyword!r}; skipping")
             else:
                 self._warn(lineno, f"invalid check type {tokens[1]!r}; skipping")
             return None
 
         n = len(tokens)
-        node = Node(hostname=host, check_type=ctype, max_down=self.numfailures)
+        # Snapshot the position-dependent defaults in effect at this point in the file (#95) — the
+        # numfailures precedent, generalized. Unset sentinels (default) leave each field inheriting
+        # the global at check time, so a config with no sticky directives is byte-identical.
+        node = Node(
+            hostname=host,
+            check_type=ctype,
+            max_down=self.numfailures,
+            contact_on=self.contact_on,
+            send_pings=self.send_pings,
+            min_pings=self.min_pings,
+            interval=self.interval,
+            source=self._source_for(ctype, lineno),
+        )
         default_port = DEFAULT_PORT.get(ctype)
         if default_port is not None:
             node.port = default_port
@@ -252,13 +283,27 @@ class _Parser:
             node.url, node.url_text, node.label = tokens[2], tokens[3], tokens[4]
             if n >= 6:
                 node.contact = tokens[5]
-        elif ctype is CheckType.POP3:
+        elif ctype in (CheckType.POP3, CheckType.POP3S):
             if n < 5:
-                self._warn(lineno, "pop3 needs user, password and label; skipping")
+                self._warn(lineno, f"{ctype} needs user, password and label; skipping")
                 return None
             node.username, node.password, node.label = tokens[2], tokens[3], tokens[4]
             if n >= 6:
                 node.contact = tokens[5]
+        elif ctype in (CheckType.IMAP, CheckType.IMAPS):
+            # Mirror the modern imap/imaps: credentials are OPTIONAL. A short line
+            # (`host imap label [contact]`) is a banner-only check; a full pop3-style
+            # `host imap user pass label [contact]` line adds an authenticated LOGIN. The original
+            # C imap (loadconfig.c type 7) required user/pass, so that always-auth form is the
+            # 5-/6-token case here and parses identically.
+            if n < 5:
+                node.label = tokens[2]
+                if n >= 4:
+                    node.contact = tokens[3]
+            else:
+                node.username, node.password, node.label = tokens[2], tokens[3], tokens[4]
+                if n >= 6:
+                    node.contact = tokens[5]
         elif ctype is CheckType.DNS:  # authdns
             if n < 4:
                 self._warn(lineno, "authdns needs a name and contact; skipping")
@@ -274,7 +319,29 @@ class _Parser:
         return node
 
     def _handle_config(self, lineno: int, tokens: list[str]) -> None:
+        if len(tokens) < 2:
+            self._warn(lineno, "config line needs a directive; skipping")
+            return
         directive = tokens[1]
+        # The post-rewrite globals reuse the modern parser's directive tables — the single source
+        # of truth, so the legacy and modern formats accept the same `config` set (#93). Imported
+        # lazily because modern imports this module (this breaks the import cycle).
+        from psysmon.config.modern import (
+            _FLAG_DIRECTIVES,
+            _FLOAT_DIRECTIVES,
+            _INT_DIRECTIVES,
+            _STR_DIRECTIVES,
+        )
+        # Valueless flags (control / page_on_degraded / noheartbeat) may be a bare 2-token line;
+        # every other directive needs tokens[2], so guard once here and the branches below can
+        # assume the value is present. (A malformed value-directive with no value was skipped as
+        # "not enough fields" before; it now skips with a more specific message — same outcome.)
+        is_flag = directive in _FLAG_DIRECTIVES
+        if len(tokens) < 3 and not is_flag:
+            self._warn(lineno, f"config {directive} needs a value; skipping")
+            return
+
+        # --- original legacy directives (unchanged; prefix-matched like the C strncmp) ---
         if directive.startswith("pageinterval"):
             self._set_int(lineno, "pageinterval_min", tokens[2])
         elif directive.startswith("logging"):
@@ -298,6 +365,41 @@ class _Parser:
                 self.overrides["numfailures"] = value
         elif directive.startswith("sleeptime"):
             self._warn(lineno, "config sleeptime is obsolete; ignored (use --interval)")
+        # --- per-object "sticky" directives (#95): position-dependent, snapshotted into each
+        # subsequently-parsed node (like numfailures above), NOT written to the global overrides.
+        # Intercepted BEFORE the #93 global tables below, since send_pings/min_pings/queuetime also
+        # live in those tables (for the *modern* format's global use). A node parsed before any of
+        # these inherits the global Settings default at check time.
+        elif directive == "contact_on":
+            self._set_contact_on(lineno, self._one_value(lineno, "contact_on", tokens))
+        elif directive == "source":
+            self._set_sticky_source(lineno, self._one_value(lineno, "source", tokens))
+        elif directive == "queuetime":
+            value = self._to_float(lineno, self._one_value(lineno, "queuetime", tokens))
+            if value is not None and self._valid_interval(lineno, value):
+                self.interval = value
+        elif directive == "send_pings":
+            value = self._sticky_count(lineno, "send_pings", tokens)
+            if value is not None:
+                self.send_pings = value
+        elif directive == "min_pings":
+            value = self._sticky_count(lineno, "min_pings", tokens)
+            if value is not None:
+                self.min_pings = value
+        # --- post-rewrite GLOBAL directives (#93): exact-match against the shared modern tables.
+        # Exact (not prefix) match is deliberate so `control_bind`/`control_port`/... are never
+        # swallowed by the `control` flag. Existing directives above are caught first.
+        elif directive in _INT_DIRECTIVES:
+            self._set_global_int(lineno, _INT_DIRECTIVES[directive], directive, tokens)
+        elif directive in _FLOAT_DIRECTIVES:
+            self._set_global_float(lineno, _FLOAT_DIRECTIVES[directive], directive, tokens)
+        elif directive in _STR_DIRECTIVES:
+            self._set_global_str(lineno, _STR_DIRECTIVES[directive], directive, tokens)
+        elif is_flag:
+            if len(tokens) > 2:
+                self._warn(lineno, f"config {directive} takes no value; ignoring the rest")
+            field, val = _FLAG_DIRECTIVES[directive]
+            self.overrides[field] = val
         else:
             self._warn(lineno, f"unknown config directive {directive!r}; skipping")
 
@@ -357,3 +459,102 @@ class _Parser:
         except ValueError:
             self._warn(lineno, f"expected an integer, got {token!r}; skipping")
             return None
+
+    def _to_float(self, lineno: int, token: str) -> float | None:
+        try:
+            return float(token)
+        except ValueError:
+            self._warn(lineno, f"expected a number, got {token!r}; skipping")
+            return None
+
+    def _one_value(self, lineno: int, name: str, tokens: list[str]) -> str:
+        """The single config value token, warning on extra tokens like the modern parser."""
+        if len(tokens) > 3:
+            self._warn(lineno, f"config {name} takes one value; using the first")
+        return tokens[2]
+
+    def _set_global_int(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
+        """Apply a post-rewrite int GLOBAL (#93), warning on extra tokens like the modern parser."""
+        value = self._to_int(lineno, self._one_value(lineno, name, tokens))
+        if value is not None:
+            self.overrides[field_name] = value
+
+    def _set_global_float(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
+        """Apply a post-rewrite float GLOBAL from the shared tables (#93)."""
+        value = self._to_float(lineno, self._one_value(lineno, name, tokens))
+        if value is not None:
+            self.overrides[field_name] = value
+
+    def _set_contact_on(self, lineno: int, value: str) -> None:
+        """``config contact_on`` is POSITION-DEPENDENT in legacy (#95): a running per-node default
+        snapshotted into subsequently-parsed nodes (like numfailures), not a global. Validated like
+        the modern parser (an unknown value falls back to ``both``)."""
+        if value in CONTACT_ON_CHOICES:
+            self.contact_on = value
+        else:
+            self._warn(lineno, f"unknown contact_on {value!r} "
+                       f"(want {'/'.join(CONTACT_ON_CHOICES)}); using both")
+            self.contact_on = "both"
+
+    def _set_sticky_source(self, lineno: int, value: str) -> None:
+        """``config source <ip|auto>`` (#95): a position-dependent per-node bind snapshotted into
+        subsequently-parsed nodes. Syntax is validated here (an IP literal or ``auto``); the family
+        is checked per node at snapshot time (:meth:`_source_for`). A bad value warns and leaves the
+        running source unchanged."""
+        val = value.strip().strip('"')
+        if val.lower() == SOURCE_AUTO:
+            self.source = SOURCE_AUTO
+            return
+        try:
+            ipaddress.ip_address(val)
+        except ValueError:
+            self._warn(lineno, f"source must be an IP address or 'auto', got {value!r}; ignoring")
+            return
+        self.source = val
+
+    def _source_for(self, ctype: CheckType, lineno: int) -> str | None:
+        """The sticky ``source`` (#95) resolved for a node of this check type, family-checked here
+        where the check type is known: a ``ping6`` node wants an IPv6 source, every other check an
+        IPv4 one (``auto``/unset always pass). A mismatch warns and leaves the node unbound."""
+        src = self.source
+        if src is None or src == SOURCE_AUTO:
+            return src
+        want_version = 6 if ctype is CheckType.PING6 else 4
+        if ipaddress.ip_address(src).version != want_version:
+            self._warn(lineno, f"source {src!r} family does not match {ctype}; leaving unbound")
+            return None
+        return src
+
+    def _valid_interval(self, lineno: int, value: float) -> bool:
+        """``queuetime`` must be a positive, finite number — mirror the modern parser, since a
+        non-finite or non-positive interval would poison the scheduler heap (#95)."""
+        if value > 0 and math.isfinite(value):
+            return True
+        self._warn(lineno, f"config queuetime must be a positive number, got {value!r}; ignoring")
+        return False
+
+    def _sticky_count(self, lineno: int, name: str, tokens: list[str]) -> int | None:
+        """A loss-tolerant ping count (send_pings/min_pings): a positive int, like modern (#95). The
+        send/min relationship is clamped at check time, so only the >= 1 floor is enforced here."""
+        value = self._to_int(lineno, self._one_value(lineno, name, tokens))
+        if value is None:
+            return None
+        if value < 1:
+            self._warn(lineno, f"config {name} must be >= 1, got {value}; ignoring")
+            return None
+        return value
+
+    def _set_global_str(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
+        """Apply a post-rewrite string global (#93). Path-like values join the remaining tokens and
+        strip a surrounding quote pair (the savestate precedent, so a quoted path with spaces
+        survives the whitespace split); other values take the first token only."""
+        if name in _PATH_STR_GLOBALS:
+            value = " ".join(tokens[2:]).strip().strip('"')
+        else:
+            if len(tokens) > 3:
+                self._warn(lineno, f"config {name} takes one value; using the first")
+            value = tokens[2].strip('"')
+        if not value:
+            self._warn(lineno, f"config {name} needs a value; skipping")
+            return
+        self.overrides[field_name] = value

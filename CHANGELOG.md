@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Global `config` directives in legacy configs** — the legacy `sysmon.conf` format now accepts the
+  same global `config` directives as the modern format, so a drop-in legacy config can set them in
+  the file instead of only on the command line: `contact_on`, `source_ip`, `queuetime`,
+  `send_pings`/`min_pings`, `page_on_degraded`, the control-channel settings (`control`,
+  `control_bind`, `control_port`, `control_token_file`, `control_tls_cert`/`control_tls_key`),
+  `maxqueued`, `statesave_interval`, `state_max_age`, `noheartbeat`, `hostname`, and `sender`/`from`.
+  Existing legacy directives and configs parse exactly as before
+  ([#93](https://github.com/IjonTichy1970/Psysmon/issues/93)).
+- **New check types in legacy configs** — `ping6` (IPv6 ping, plus the `pingv6`/`icmp6` aliases) and
+  the mail checks `pop3s`, `imap`, and `imaps` now work in the legacy `sysmon.conf` grammar, not just
+  the modern format. `ping6` can gate a dependency subtree like `ping`; `pop3s`/`imaps` are never
+  silently prefix-matched to plaintext `pop3`/`imap`. `imap`/`imaps` mirror the modern optional
+  credentials (a `host imap label` line is a banner check; `host imap user pass label` authenticates)
+  — and the original C `sysmon`'s always-authenticated `imap` line parses unchanged
+  ([#94](https://github.com/IjonTichy1970/Psysmon/issues/94)).
+- **Per-host settings in legacy configs via sticky `config` directives** — `config source`,
+  `config contact_on`, `config send_pings`/`min_pings`, and `config queuetime` are now
+  **position-dependent** in the legacy format (like `config numfailures` always has been): the value
+  is snapshotted into every host parsed below it, until the next change, giving per-host control to a
+  grammar that has no per-object attribute syntax. The running value flows into nested `{ }` children
+  and is not reset on block close; `config source` is family-checked at each host (a v4 source leaves
+  a `ping6` host unbound). A host above any such directive inherits the global/CLI default, and a
+  config using none of them is unchanged ([#95](https://github.com/IjonTichy1970/Psysmon/issues/95)).
+
 ## [0.8.0] — 2026-06-26 — IMAP/TLS mail checks & richer group defaults
 
 ### Added

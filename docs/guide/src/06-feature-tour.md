@@ -262,7 +262,7 @@ Values are `down`, `up`, `both`, `none`. An object with no `contact` never pages
 
 ---
 
-## IPv6 ping — `ping6` **(modern config only)**
+## IPv6 ping — `ping6`
 
 Monitor a host over IPv6 with `type ping6`, an ICMPv6 echo. It behaves exactly like `ping` — it
 gates dependent children, honors loss-tolerant `send_pings` / `min_pings`, needs the same
@@ -281,15 +281,15 @@ both a `ping` and a `ping6` object to watch each separately. A per-object `sourc
 check must be an **IPv6** address (`source "2001:db8::5";`); `pingv6` and `icmp6` are accepted
 aliases for the type keyword.
 
-> The legacy `sysmon.conf` format stays IPv4-only: a `ping6` line there is skipped with a warning
-> pointing you to the modern format.
+> The legacy `sysmon.conf` format accepts `ping6` too — write it positionally
+> (`host ping6 label [contact]`), like any other legacy check.
 
 ---
 
-## Mail-service checks — `imap`, `pop3s`, `imaps` **(modern config only)**
+## Mail-service checks — `imap`, `pop3s`, `imaps`
 
-Beyond plaintext `pop3` and `smtp`, the modern format adds an IMAP greeting check and the
-implicit-TLS variants of POP3 and IMAP:
+Beyond plaintext `pop3` and `smtp`, psysmon adds an IMAP greeting check and the implicit-TLS
+variants of POP3 and IMAP:
 
 - **`imap`** reads the server's IMAP greeting and is *up* on a ready `* OK` (or an
   already-authenticated `* PREAUTH`). Add `username`/`password` and it also performs a `LOGIN`,
@@ -307,6 +307,10 @@ object mail-imaps {
 ```
 
 Default ports: `pop3s` 995, `imap` 143, `imaps` 993.
+
+> The legacy `sysmon.conf` format accepts these too, positionally: `host pop3s user pass label`,
+> `host imaps user pass label`, and `host imap label` (banner) or `host imap user pass label`
+> (authenticated) — credentials are optional for `imap`/`imaps`, required for `pop3s`.
 
 ---
 
@@ -445,26 +449,26 @@ control-channel documentation.
 |---|---|---|---|
 | Dependency suppression | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
 | Multi-parent dependencies (any-path) | — (single parent) | Yes (multiple `dep`) | — (structure is config-only) |
-| Modern-only check types (`ping6`, `imap`, `pop3s`, `imaps`) | No (legacy is plaintext + IPv4) | Yes | No |
+| IPv6 ping + mail checks (`ping6` / `imap` / `pop3s` / `imaps`) | Yes | Yes | — (config-only) |
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |
-| Paging policy (`contact_on`) — global | No (CLI only) | Yes (`config contact_on`) | `--contact-on` |
-| Paging policy (`contact_on`) — per object | No | Yes | No |
+| Paging policy (`contact_on`) — global | Yes (sticky `config contact_on`) | Yes (`config contact_on`) | `--contact-on` |
+| Paging policy (`contact_on`) — per object | Range-scoped (sticky `config`) | Yes | No |
 | SMTP email notifier | Yes | Yes | `--smtp-host` / `--smtp-port` / `--mail-from` / `-n` |
 | Status output (HTML / text / JSON) | Yes | Yes | `--status-file` / `--status-format` / `--show-up` / `--status-refresh` |
 | Status-page logo auto-deploy | Yes | Yes | — (follows `statusfile`) |
 | Object grouping on status views | No | Yes (`group`) | No |
-| Loss-tolerant ping + Degraded — global | No (CLI only) | Yes (`config send_pings` / `min_pings`) | `--send-pings` / `--min-pings` |
-| Loss-tolerant ping — per object | No | Yes (`send_pings` / `min_pings`) | No |
-| Page on degraded | No (CLI only) | Yes (`config page_on_degraded`) | `--page-on-degraded` |
+| Loss-tolerant ping + Degraded — global | Yes (sticky `config send_pings` / `min_pings`) | Yes (`config send_pings` / `min_pings`) | `--send-pings` / `--min-pings` |
+| Loss-tolerant ping — per object | Range-scoped (sticky `config`) | Yes (`send_pings` / `min_pings`) | No |
+| Page on degraded | Yes (`config page_on_degraded`) | Yes (`config page_on_degraded`) | `--page-on-degraded` |
 | State persistence (savestate) | Yes | Yes | `--state-file` / `--state-save-interval` / `--state-max-age` |
 | Leveled syslog logging | Yes | Yes | `--log-level` / `-v` / `-vv` / `--heartbeat` / `--dnslog` / `--slow-check` / `--syslog-facility` |
-| Per-object check cadence (`queuetime`) | No (global only) | Yes | `--interval` (global only) |
-| Per-object page threshold (`numfailures`) | No (global only) | Yes | `--numfailures` (global only) |
+| Per-object check cadence (`queuetime`) | Range-scoped (sticky `config queuetime`) | Yes | `--interval` (global only) |
+| Per-object page threshold (`numfailures`) | Range-scoped (sticky `config numfailures`) | Yes | `--numfailures` (global only) |
 | DNS check query name (`dns-query`) | Yes (positional) | Yes (`dns-query`) | — |
-| Per-object / per-group `source` | No | Yes | No (global `--source-ip` only) |
-| Control channel (`psysmonctl` / `psysmon-token`) | Enable via CLI | Enable via `config control` or CLI | `--control` / `--control-bind` / `--control-port` / `--control-token-file` / `--control-tls-cert` / `--control-tls-key` |
+| Per-object / per-group `source` | Range-scoped (sticky `config source`) | Yes | No (global `--source-ip` only) |
+| Control channel (`psysmonctl` / `psysmon-token`) | Enable via `config control` or CLI | Enable via `config control` or CLI | `--control` / `--control-bind` / `--control-port` / `--control-token-file` / `--control-tls-cert` / `--control-tls-key` |
 
 See [CLI reference](05-cli-reference.md) and [Appendix A](90-appendices.md) for the complete flag
 list, [Configuration](04-configuration.md) for the full directive set, and

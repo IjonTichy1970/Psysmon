@@ -107,12 +107,23 @@ router.example.net  ping  edge-router  noc@example.net  {
 Here `web`, `db`, and `sw` are suppressed when `router` is down; `host1` is additionally suppressed
 when `sw` is down.
 
-### `config numfailures` is position-dependent
+### Position-dependent ("sticky") `config` directives {#sticky-config-directives}
 
-`config numfailures N` sets how many consecutive failed checks a host must accumulate before it
-pages. In the **legacy** format this directive is **position-dependent**: its current value is
-snapshotted into every stanza parsed **after** it. It is a running value, not last-wins — change it
-again partway down the file and only the stanzas below the second change get the new value.
+A family of `config` directives is **position-dependent** in the legacy format: the current value is
+snapshotted into every host parsed **after** it (a running value, not last-wins). This is how the
+legacy grammar — which has no per-object attribute syntax — gives you **per-host** control. The
+family:
+
+| Directive | Sets, per host | Value |
+|---|---|---|
+| `config numfailures` | consecutive-failure page threshold | integer |
+| `config queuetime` | check interval | seconds |
+| `config send_pings` / `config min_pings` | loss-tolerant ping echo / required-reply counts | integer |
+| `config contact_on` | paging-transition policy | `down`\|`up`\|`both`\|`none` |
+| `config source` | outbound bind address | an IP, or `auto` (stay unbound) |
+
+Each applies to the hosts **below** it until the next change; a host parsed *before* any of them
+inherits the global default (the built-in default or the matching CLI flag). Example:
 
 ```
 config numfailures 2
@@ -120,19 +131,30 @@ config numfailures 2
 router.example.net  ping  edge-router  noc@example.net        # threshold 2
 
 config numfailures 5
+config contact_on   down
 
-flaky.example.net   ping  flaky-link    noc@example.net        # threshold 5
-host2.example.net   ping  host-2        noc@example.net        # threshold 5 (still)
+flaky.example.net   ping  flaky-link    noc@example.net        # threshold 5, pages on down only
+host2.example.net   ping  host-2        noc@example.net        # threshold 5 (still), down only
 ```
 
-> This positional behavior is unique to the legacy format. In the modern format `config numfailures`
-> is a plain global default and you set per-object thresholds with a `numfailures` attribute — the
-> converter relies on this distinction (see [migration](#3-legacy-vs-modern-and-migration)).
+**Nesting rule:** the running value is **file-position sticky, not block-scoped**. It flows down into
+nested `{ }` children, and a value set *inside* a block is **not** restored when the block closes — it
+keeps applying to the hosts after the block. (`config source` is additionally **family-checked at
+each host**: a v4 source binds the IPv4 checks but leaves a `ping6` host unbound, with a warning;
+`auto` always passes.)
+
+> This positional behavior is specific to the legacy format. In the modern `object{}` format these
+> are per-object **attributes** on each object (and most also have a global `config` form) — the
+> converter relies on the distinction (see [migration](#3-legacy-vs-modern-and-migration)). To set
+> one of these as a file-wide default in legacy, put the directive at the **top** of the file (every
+> host below inherits it); the true `Settings` global stays settable via the matching CLI flag.
 
 ### `config` directives (legacy) {#config-directives-legacy}
 
-The legacy parser's `config` line is `config <directive> <value...>`. The directive is
-prefix-matched. The complete set the legacy parser accepts:
+The legacy parser's `config` line is `config <directive> <value...>`. The original directives are
+prefix-matched (like the C `strncmp`); the later, post-rewrite globals are matched exactly.
+
+**Original directives:**
 
 | Directive | Value | Effect |
 |---|---|---|
@@ -147,14 +169,36 @@ prefix-matched. The complete set the legacy parser accepts:
 | `config statusfile` | `html`\|`text` `path` | Status-output format and path |
 | `config sleeptime` | — | **Obsolete; ignored** with a warning (use `--interval`) |
 
-Valid syslog facilities are the usual set (`kern`, `user`, `mail`, `daemon`, `auth`, `syslog`,
-`lpr`, `news`, `uucp`, `cron`, `authpriv`, `local0`–`local7`); an unknown one warns and falls back
-to `daemon`. An unknown `loglevel` falls back to `info`. `config statusfile` needs exactly the two
-arguments `<html|text> <path>`.
+**Post-rewrite globals** — the legacy format also accepts the global `config` directives the modern
+format does, so a drop-in `sysmon.conf` can set them in the file too (previously CLI-only).
+`contact_on`, `queuetime`, `send_pings`/`min_pings`, and `source` are **not** here — they're the
+position-dependent per-host directives above ([Sticky directives](#sticky-config-directives)):
 
-Anything the legacy format can't express on a line (source-IP binding, per-object intervals,
-loss-tolerant ping, control channel, `contact_on`, …) must come from the **command line** with a
-legacy config — or you move to the modern format, which has directives for all of them.
+| Directive | Value | Effect |
+|---|---|---|
+| `config page_on_degraded` | — (flag) | Page on a degraded (lossy) ping |
+| `config source_ip` | address | Default outbound bind for the connection checks |
+| `config hostname` | name | Org hostname shown in alerts and the status title |
+| `config sender` / `config from` | address | Alert `From:` address |
+| `config maxqueued` | integer | Cap on concurrent checks |
+| `config statesave_interval` | seconds | How often to flush the state file (0 = only on exit) |
+| `config state_max_age` | seconds | Ignore a state file older than this on load (0 disables) |
+| `config noheartbeat` | — (flag) | Disable the heartbeat summary |
+| `config control` | — (flag) | Enable the control / query channel |
+| `config control_bind` | address | Control-channel bind address (a non-loopback bind needs TLS) |
+| `config control_port` | integer | Control-channel port |
+| `config control_token_file` | `"path"` | Bearer-token file gating control mutations |
+| `config control_tls_cert` / `config control_tls_key` | `"path"` | Control-channel TLS cert / key |
+
+Flag directives (`page_on_degraded`, `noheartbeat`, `control`) take no value. Valid syslog
+facilities are the usual set (`kern`, `user`, `mail`, `daemon`, `auth`, `syslog`, `lpr`, `news`,
+`uucp`, `cron`, `authpriv`, `local0`–`local7`); an unknown one warns and falls back to `daemon`. An
+unknown `loglevel` falls back to `info`, and an unknown `contact_on` to `both`. `config statusfile`
+needs exactly `<html|text> <path>`.
+
+What the legacy format still can't express is **per-object** overrides (one host's own interval,
+`source`, `contact_on`, or loss-tolerant counts) and the structural features (named `object` graphs,
+multiple `dep` parents, `group {}` scopes) — those are what the modern format is for.
 
 ---
 
@@ -463,10 +507,10 @@ effect only at startup. To change a global, restart the daemon. See
 | Spaces in values | No (whitespace-split) | Yes (quoted strings) |
 | Dependency parents | ping/smtp only | any type via `dep` |
 | `numfailures` | Position-dependent | Global default + per-object attribute |
-| Per-object interval / ping counts / `source` / `contact_on` | Not expressible (CLI only) | Per-object attributes |
+| Per-object interval / ping counts / `source` / `contact_on` | Range-scoped (sticky `config`, see above) | Per-object attributes |
 | Variables / reuse | No | `set` / `$var` |
-| Control channel in file | No (CLI only) | `config control_*` |
-| Org identity / mail-from in file | No (CLI only) | `config hostname` / `sender` |
+| Control channel in file | Yes (`config control_*`) | `config control_*` |
+| Org identity / mail-from in file | Yes (`config hostname` / `sender`) | `config hostname` / `sender` |
 
 ### Legacy field ↔ modern attribute mapping (canonical)
 
@@ -480,9 +524,9 @@ This is the canonical mapping table ([Appendix C](90-appendices.md) points here)
 | `label` / "message" | `desc "text";` | |
 | `contact` | `contact "addr";` | |
 | `url`, `url_text` (www/https) | `url "path";`, `urltext "substring";` | |
-| `username`, `password` (pop3) | `username "u";`, `password "p";` | |
+| `username`, `password` (pop3/pop3s, imap/imaps) | `username "u";`, `password "p";` | Required for pop3/pop3s; optional for imap/imaps |
 | `name` (authdns) | `dns-query "name";` | |
-| `{ … }` child nesting | `dep "parent";` on the child | Legacy ping/smtp parents become named edges |
+| `{ … }` child nesting | `dep "parent";` on the child | Legacy ping/ping6/smtp parents become named edges |
 | `config numfailures N` (positional) | per-object `numfailures N;` | Resolved onto each object, not replayed as a global |
 | `config savestate "path"` | `config savestate "path";` | |
 | `config statusfile html /p` | `config statusfile html "/p";` | |

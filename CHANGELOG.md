@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- User guide: the legacy `config`-directive tables now show each directive's default value (e.g.
+  `config heartbeat` → `300` seconds), matching the modern directive table.
+
 ## [0.9.0] — 2026-06-26 — SSH/MySQL checks & legacy-config backport
 
 ### Added

@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **More `group {}` default settings** — a modern-config `group "NAME" { ... }` block can now carry
+  `contact`, `contact_on`, `numfailures`, `queuetime`, and `send_pings`/`min_pings` as shared
+  defaults (previously only `source`), so a policy is set once for a whole group instead of being
+  repeated on every object. A per-object value always wins; `send_pings`/`min_pings` inherit as a
+  pair; object-identity attributes (`host`/`type`/`port`/…) stay out and warn if used
+  ([#82](https://github.com/IjonTichy1970/Psysmon/issues/82)).
+- **Collapsible "Healthy hosts" on the status page** — `--show-up` now renders the up hosts in a
+  collapsed **Healthy hosts** section below the "Bad Hosts" table (HTML), or a labelled block after
+  it (text), instead of mixing them inline — so the down hosts stay front-and-centre and the up
+  hosts are one click away in the same file. Without `--show-up` the page is unchanged, down-only
+  ([#84](https://github.com/IjonTichy1970/Psysmon/issues/84)).
+
 ## [0.7.0] — 2026-06-25 — IPv6 ping & multi-parent dependencies
 
 ### Added

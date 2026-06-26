@@ -81,8 +81,9 @@ HTML is the default format.
 
 By default the view is **down-only** — the "Bad Hosts" page. Hosts that are up don't
 appear, and children suppressed behind a down parent are omitted (so a router outage
-doesn't fill the page with everything behind it). Pass `--show-up` to list up hosts too.
-The HTML page auto-refreshes on an interval (`--status-refresh`, default 30s).
+doesn't fill the page with everything behind it). Pass `--show-up` to add the up hosts in a
+collapsed **"Healthy hosts"** section below the down ones — one click away, without burying the
+outages. The HTML page auto-refreshes on an interval (`--status-refresh`, default 30s).
 
 If any objects carry a `group` label (set in the modern config — see
 [Configuration → Group scopes](04-configuration.md#group-scopes)), the page lists them under

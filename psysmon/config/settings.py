@@ -115,7 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="HTML status auto-refresh interval",
     )
     p.add_argument(
-        "--show-up", dest="show_up", action="store_true", help="list up hosts too (not just down)"
+        "--show-up", dest="show_up", action="store_true",
+        help="also show up hosts, in a collapsed 'Healthy hosts' section below the down ones",
     )
 
     # Identity / network

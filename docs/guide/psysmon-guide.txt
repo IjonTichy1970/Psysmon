@@ -785,11 +785,15 @@ Group scopes -- group "NAME" { ... }
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A top-level group "NAME" { ... } block gives every object that joins the group (via the
-group "NAME" attribute) shared default settings. Today it carries source; it's a scope,
-so future per-group defaults slot in the same way. A per-object value always wins over
-the group default, and the membership attribute works with or without a matching block
-(a block-less group is just a display label). Group/object declaration order doesn't
-matter.
+group "NAME" attribute) shared default settings: source, contact, contact_on,
+numfailures, queuetime, and the ping pair send_pings/min_pings. Object-*identity*
+attributes (host/ip, type, port, url/urltext, username/password, dns-query, desc) aren't
+group defaults -- they warn and are ignored in a block. A per-object value always wins
+over the group default; send_pings/min_pings inherit as an atomic pair. The membership
+attribute works with or without a matching block (a block-less group is just a display
+label), and group/object declaration order doesn't matter. (A dns object's *required*
+contact must be set on the object itself -- its required-field check runs before group
+defaults are applied.)
 
     group "vpn-sites" {
         source auto;            # these hosts route freely (unbound)
@@ -1194,12 +1198,12 @@ Files and output
 
 Where PSYSMON reads its config and writes its status page.
 
-- -f / --config PATH -- config file path (default /etc/psysmon.conf).
-- --status-file PATH -- where to write the status page.
-- --status-format html|text -- status file format (HTML by default).
-- --status-refresh SECONDS -- auto-refresh interval baked into the HTML page.
-- --show-up -- list *up* hosts too; by default the page shows only down hosts ("Bad
-  Hosts").
+- -f / --config PATH -- config file path (default /etc/psysmon.conf). - --status-file
+PATH -- where to write the status page. - --status-format html|text -- status file format
+(HTML by default). - --status-refresh SECONDS -- auto-refresh interval baked into the
+HTML page. - --show-up -- also show the *up* hosts: on the HTML page in a collapsed
+"Healthy hosts" section below the down ones, and on the text page as a labelled block
+after them. By default only down hosts are shown ("Bad Hosts").
 
     psysmon -f /etc/psysmon.conf --status-file /var/www/psysmon/status.html --show-up
 
@@ -1489,10 +1493,11 @@ the format and path with config statusfile <html|text> "path", --status-file PAT
 
 - HTML "Bad Hosts" page -- a dark-themed page listing down hosts (the default view), with
 a browser auto-refresh (--status-refresh SECONDS). Suppressed hosts are hidden by
-default; use --show-up to list up hosts too. All dynamic content is HTML-escaped. - Text
-table -- a flat variant (--status-format text). - JSON -- all nodes, each with a
-suppressed flag and a down_parents list (which of a node's dependency parents are
-currently down -- empty when fully healthy), for dashboards and automation.
+default; use --show-up to add a collapsed "Healthy hosts" section below (the down hosts
+stay on top). All dynamic content is HTML-escaped. - Text table -- a flat variant
+(--status-format text). - JSON -- all nodes, each with a suppressed flag and a
+down_parents list (which of a node's dependency parents are currently down -- empty when
+fully healthy), for dashboards and automation.
 
 When objects have a group set (modern format), the HTML page lists them under per-group
 headings (with an "Ungrouped" bucket) and the JSON carries a group field per host. See
@@ -1658,11 +1663,12 @@ group headings (with an "Ungrouped" bucket) and add a group field to the JSON. T
 grammar and precedence are in Configuration -> Group scopes.
 
 A top-level group "NAME" { ... } block additionally gives every member shared default
-settings. Today it carries source (below); it is a scope, so future per-group defaults
-slot in the same way. A per-object value always wins over the group default, and the
-membership attribute works with or without a matching block (a block-less group is just
-a display label). Declaration order doesn't matter -- defaults are resolved after the
-whole file is read.
+settings: source, contact, contact_on, numfailures, queuetime, and the ping pair
+send_pings/min_pings (object-identity attributes like host/type/port stay out -- they
+name one object). A per-object value always wins over the group default;
+send_pings/min_pings inherit as an atomic pair. The membership attribute works with or
+without a matching block (a block-less group is just a display label), and declaration
+order doesn't matter -- defaults are resolved after the whole file is read.
 
     group "dmz" {
         source "192.0.2.9";      # bind DMZ checks to this egress address
@@ -1883,8 +1889,10 @@ the default format.
 
 By default the view is down-only -- the "Bad Hosts" page. Hosts that are up don't appear,
 and children suppressed behind a down parent are omitted (so a router outage doesn't
-fill the page with everything behind it). Pass --show-up to list up hosts too. The HTML
-page auto-refreshes on an interval (--status-refresh, default 30s).
+fill the page with everything behind it). Pass --show-up to add the up hosts in a
+collapsed "Healthy hosts" section below the down ones -- one click away, without burying
+the outages. The HTML page auto-refreshes on an interval (--status-refresh, default
+30s).
 
 If any objects carry a group label (set in the modern config -- see Configuration -> Group
 scopes), the page lists them under per-group headings, with an "Ungrouped" bucket for
@@ -2640,7 +2648,8 @@ defaults (see CLI reference for the precedence rule with worked examples).
                             status file format
       --status-refresh SECONDS
                             HTML status auto-refresh interval
-      --show-up             list up hosts too (not just down)
+      --show-up             also show up hosts, in a collapsed 'Healthy hosts'
+                            section below the down ones
       --source-ip IP        outbound bind source IP
       --hostname NAME       hostname shown in alerts/status
       --interval SEC        check interval

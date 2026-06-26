@@ -119,7 +119,8 @@ config statusfile html "/var/www/psysmon/status.html";
 
 - **HTML "Bad Hosts" page** — a dark-themed page listing down hosts (the default view), with a
   browser auto-refresh (`--status-refresh SECONDS`). Suppressed hosts are hidden by default; use
-  `--show-up` to list up hosts too. All dynamic content is HTML-escaped.
+  `--show-up` to add a collapsed **"Healthy hosts"** section below (the down hosts stay on top). All
+  dynamic content is HTML-escaped.
 - **Text table** — a flat variant (`--status-format text`).
 - **JSON** — all nodes, each with a `suppressed` flag and a `down_parents` list (which of a node's
   dependency parents are currently down — empty when fully healthy), for dashboards and automation.
@@ -291,11 +292,13 @@ A `group "name"` attribute labels an object; the status views then list objects 
 headings (with an "Ungrouped" bucket) and add a `group` field to the JSON. The full grammar and
 precedence are in [Configuration → Group scopes](04-configuration.md#group-scopes).
 
-A top-level `group "NAME" { … }` block additionally gives every member shared default settings.
-Today it carries `source` (below); it is a scope, so future per-group defaults slot in the same
-way. A per-object value always wins over the group default, and the membership attribute works
-with or without a matching block (a block-less group is just a display label). Declaration order
-doesn't matter — defaults are resolved after the whole file is read.
+A top-level `group "NAME" { … }` block additionally gives every member shared default settings:
+`source`, `contact`, `contact_on`, `numfailures`, `queuetime`, and the ping pair
+`send_pings`/`min_pings` (object-identity attributes like `host`/`type`/`port` stay out — they name
+one object). A per-object value always wins over the group default; `send_pings`/`min_pings`
+inherit as an atomic pair. The membership attribute works with or without a matching block (a
+block-less group is just a display label), and declaration order doesn't matter — defaults are
+resolved after the whole file is read.
 
 ```
 group "dmz" {

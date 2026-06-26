@@ -15,6 +15,13 @@ All notable changes to this project are documented here. The format is based on
   `maxqueued`, `statesave_interval`, `state_max_age`, `noheartbeat`, `hostname`, and `sender`/`from`.
   Existing legacy directives and configs parse exactly as before
   ([#93](https://github.com/IjonTichy1970/Psysmon/issues/93)).
+- **New check types in legacy configs** — `ping6` (IPv6 ping, plus the `pingv6`/`icmp6` aliases) and
+  the mail checks `pop3s`, `imap`, and `imaps` now work in the legacy `sysmon.conf` grammar, not just
+  the modern format. `ping6` can gate a dependency subtree like `ping`; `pop3s`/`imaps` are never
+  silently prefix-matched to plaintext `pop3`/`imap`. `imap`/`imaps` mirror the modern optional
+  credentials (a `host imap label` line is a banner check; `host imap user pass label` authenticates)
+  — and the original C `sysmon`'s always-authenticated `imap` line parses unchanged
+  ([#94](https://github.com/IjonTichy1970/Psysmon/issues/94)).
 
 ## [0.8.0] — 2026-06-26 — IMAP/TLS mail checks & richer group defaults
 

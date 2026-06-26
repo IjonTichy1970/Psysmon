@@ -262,7 +262,7 @@ Values are `down`, `up`, `both`, `none`. An object with no `contact` never pages
 
 ---
 
-## IPv6 ping — `ping6` **(modern config only)**
+## IPv6 ping — `ping6`
 
 Monitor a host over IPv6 with `type ping6`, an ICMPv6 echo. It behaves exactly like `ping` — it
 gates dependent children, honors loss-tolerant `send_pings` / `min_pings`, needs the same
@@ -281,15 +281,15 @@ both a `ping` and a `ping6` object to watch each separately. A per-object `sourc
 check must be an **IPv6** address (`source "2001:db8::5";`); `pingv6` and `icmp6` are accepted
 aliases for the type keyword.
 
-> The legacy `sysmon.conf` format stays IPv4-only: a `ping6` line there is skipped with a warning
-> pointing you to the modern format.
+> The legacy `sysmon.conf` format accepts `ping6` too — write it positionally
+> (`host ping6 label [contact]`), like any other legacy check.
 
 ---
 
-## Mail-service checks — `imap`, `pop3s`, `imaps` **(modern config only)**
+## Mail-service checks — `imap`, `pop3s`, `imaps`
 
-Beyond plaintext `pop3` and `smtp`, the modern format adds an IMAP greeting check and the
-implicit-TLS variants of POP3 and IMAP:
+Beyond plaintext `pop3` and `smtp`, psysmon adds an IMAP greeting check and the implicit-TLS
+variants of POP3 and IMAP:
 
 - **`imap`** reads the server's IMAP greeting and is *up* on a ready `* OK` (or an
   already-authenticated `* PREAUTH`). Add `username`/`password` and it also performs a `LOGIN`,
@@ -307,6 +307,10 @@ object mail-imaps {
 ```
 
 Default ports: `pop3s` 995, `imap` 143, `imaps` 993.
+
+> The legacy `sysmon.conf` format accepts these too, positionally: `host pop3s user pass label`,
+> `host imaps user pass label`, and `host imap label` (banner) or `host imap user pass label`
+> (authenticated) — credentials are optional for `imap`/`imaps`, required for `pop3s`.
 
 ---
 
@@ -445,7 +449,7 @@ control-channel documentation.
 |---|---|---|---|
 | Dependency suppression | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
 | Multi-parent dependencies (any-path) | — (single parent) | Yes (multiple `dep`) | — (structure is config-only) |
-| Modern-only check types (`ping6`, `imap`, `pop3s`, `imaps`) | No (legacy is plaintext + IPv4) | Yes | No |
+| IPv6 ping + mail checks (`ping6` / `imap` / `pop3s` / `imaps`) | Yes | Yes | — (config-only) |
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |

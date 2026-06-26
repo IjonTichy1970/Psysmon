@@ -13,10 +13,11 @@ Faithfully reproduces ``loadconfig.c``/``parseline``:
   the modern parser's directive tables so both formats accept the same set (#93).
 * **``numfailures`` is position-dependent** — its current value snapshots into each
   subsequently-parsed node's ``max_down`` (a running value, not last-wins).
-* Per-type field positions exactly as in C (ping/smtp: label[,contact][,``{``];
+* Per-type field positions exactly as in C (ping/ping6/smtp: label[,contact][,``{``];
   tcp/udp: port,label[,contact]; www/https: url,url_text,label[,contact];
-  pop3: user,pass,label[,contact]; authdns: name,contact).
-* Dropped legacy types (imap, nntp, radius, umichx500, ...) -> warn and skip; never hard-fail.
+  pop3/pop3s: user,pass,label[,contact]; imap/imaps: label[,contact] (banner) or
+  user,pass,label[,contact] (auth); authdns: name,contact).
+* Dropped legacy types (nntp, radius, umichx500, ...) -> warn and skip; never hard-fail.
 * Keyword matching is prefix-based, like the original ``strncmp`` (so ``tcpfoo`` matches
   ``tcp``).
 
@@ -55,15 +56,16 @@ _PATH_STR_GLOBALS = frozenset({"control_token_file", "control_tls_cert", "contro
 # Check-type keywords in the original dispatch order, prefix-matched like the C strncmp.
 # A None value marks a type the legacy parser does not handle (warn + skip). ORDER MATTERS: a
 # longer keyword sharing a prefix MUST precede the shorter one or it gets swallowed — the v6 ping
-# keywords before "ping", and "pop3s"/"imaps" before "pop3"/"imap" (else "pop3s" silently becomes
-# plaintext "pop3"). IPv6 ping and the modern mail types (imap/imaps/pop3s) are modern-config-only
-# (#24/#88), so they map to None (warn + redirect to the modern config).
+# keywords before "ping", and "pop3s"/"imaps" before "pop3"/"imap" (else "pop3s" would silently
+# become plaintext "pop3"). ping6 + the mail types (imap/imaps/pop3s) are accepted natively (#94);
+# imap was an original legacy type (loadconfig.c type 7), the rest are post-rewrite additions.
 _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
-    ("ping6", None), ("pingv6", None), ("icmp6", None),  # before "ping"! (#24)
+    ("ping6", CheckType.PING6), ("pingv6", CheckType.PING6),  # before "ping"!
+    ("icmp6", CheckType.PING6),
     ("ping", CheckType.PING),
-    ("pop3s", None), ("imaps", None),  # before "pop3"/"imap"! modern-only mail (#88)
+    ("pop3s", CheckType.POP3S), ("imaps", CheckType.IMAPS),  # before "pop3"/"imap"! (TLS)
     ("pop3", CheckType.POP3),
-    ("imap", None),
+    ("imap", CheckType.IMAP),
     ("tcp", CheckType.TCP),
     ("udp", CheckType.UDP),
     ("nntp", None),
@@ -75,16 +77,9 @@ _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
     ("https", CheckType.HTTPS),
 )
 
-# Types whose stanza may open a `{` child block (the original's ping-like parse branch).
-_PING_LIKE = frozenset({CheckType.PING, CheckType.SMTP})
-
-# Legacy IPv6 ping keywords: recognized only to warn + point at the modern config (#24), never
-# routed (the legacy grammar stays IPv4-only). Listed before "ping" in _TYPE_KEYWORDS above.
-_V6_PING_KEYWORDS = frozenset({"ping6", "pingv6", "icmp6"})
-
-# Legacy mail keywords recognized only to warn + point at the modern config (#88): imap was a
-# dropped legacy type, and pop3s/imaps are TLS variants the legacy plaintext grammar doesn't speak.
-_MODERN_ONLY_MAIL = frozenset({"imap", "imaps", "pop3s"})
+# Types whose stanza may open a `{` child block: the original's ping-like branch (ping, smtp) plus
+# ping6 — an ICMPv6 ping that can gate a dependency subtree exactly like ping (#94).
+_PING_LIKE = frozenset({CheckType.PING, CheckType.PING6, CheckType.SMTP})
 
 # Hard cap on `{` nesting depth. Real dependency trees are only a handful deep; anything past
 # this is malformed/pathological, and recursing further risks Python's RecursionError surfacing
@@ -230,13 +225,7 @@ class _Parser:
         host = tokens[0]
         ctype, keyword = _match_type(tokens[1])
         if ctype is None:
-            if keyword in _V6_PING_KEYWORDS:
-                self._warn(lineno, f"IPv6 ping ({keyword!r}) needs the modern object{{}} config; "
-                           "legacy is IPv4-only — skipping (#24)")
-            elif keyword in _MODERN_ONLY_MAIL:
-                self._warn(lineno, f"{keyword!r} needs the modern object{{}} config; the legacy "
-                           "format has no IMAP/TLS mail checks — skipping (#88)")
-            elif keyword is not None:
+            if keyword is not None:  # recognized but unsupported (nntp/radius/umichx500)
                 self._warn(lineno, f"unsupported check type {keyword!r}; skipping")
             else:
                 self._warn(lineno, f"invalid check type {tokens[1]!r}; skipping")
@@ -271,13 +260,27 @@ class _Parser:
             node.url, node.url_text, node.label = tokens[2], tokens[3], tokens[4]
             if n >= 6:
                 node.contact = tokens[5]
-        elif ctype is CheckType.POP3:
+        elif ctype in (CheckType.POP3, CheckType.POP3S):
             if n < 5:
-                self._warn(lineno, "pop3 needs user, password and label; skipping")
+                self._warn(lineno, f"{ctype} needs user, password and label; skipping")
                 return None
             node.username, node.password, node.label = tokens[2], tokens[3], tokens[4]
             if n >= 6:
                 node.contact = tokens[5]
+        elif ctype in (CheckType.IMAP, CheckType.IMAPS):
+            # Mirror the modern imap/imaps: credentials are OPTIONAL. A short line
+            # (`host imap label [contact]`) is a banner-only check; a full pop3-style
+            # `host imap user pass label [contact]` line adds an authenticated LOGIN. The original
+            # C imap (loadconfig.c type 7) required user/pass, so that always-auth form is the
+            # 5-/6-token case here and parses identically.
+            if n < 5:
+                node.label = tokens[2]
+                if n >= 4:
+                    node.contact = tokens[3]
+            else:
+                node.username, node.password, node.label = tokens[2], tokens[3], tokens[4]
+                if n >= 6:
+                    node.contact = tokens[5]
         elif ctype is CheckType.DNS:  # authdns
             if n < 4:
                 self._warn(lineno, "authdns needs a name and contact; skipping")

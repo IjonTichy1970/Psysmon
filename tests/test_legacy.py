@@ -110,7 +110,7 @@ def test_tcp_invalid_port_skipped():
 
 def test_dropped_types_skip_not_fail():
     res = parse(
-        "a.example.net imap u p l c@x\n"
+        "a.example.net umichx500 dir c@x\n"  # still-dropped (imap/pop3s/etc. are accepted now, #94)
         "b.example.net nntp news c@x\n"
         "c.example.net radius u p s c@x\n"
         "d.example.net ping d.example.net c@x\n"
@@ -125,28 +125,143 @@ def test_invalid_type_warns():
     assert any("invalid check type" in w for w in res.warnings)
 
 
-def test_legacy_ping6_not_misrouted_to_ipv4_ping():
-    # "ping6"/"pingv6" must NOT prefix-match "ping" and silently become IPv4 ping; they are
-    # skipped with a pointer to the modern config (the legacy grammar stays IPv4-only, #24).
+def test_legacy_ping6_accepted_and_can_parent():
+    # ping6/pingv6/icmp6 are now native legacy types (#94); they must NOT prefix-match "ping".
     for kw in ("ping6", "pingv6", "icmp6"):
-        res = parse(f"h.example.net {kw} h.example.net noc@x\n")
-        assert res.roots == []  # NOT a v4 ping node
-        assert any("modern" in w and "#24" in w for w in res.warnings)
-    # A plain "ping" still works — the new keywords didn't shadow it.
-    ok = parse("h.example.net ping h.example.net noc@x\n")
-    assert len(ok.roots) == 1 and ok.roots[0].check_type is CheckType.PING
+        res = parse(f"h.example.net {kw} v6-label noc@x\n")
+        assert [n.check_type for n in res.roots] == [CheckType.PING6], kw
+        assert res.warnings == []
+    # plain "ping" still works — the v6 keywords didn't shadow it.
+    ok = parse("h.example.net ping v4-label noc@x\n")
+    assert [n.check_type for n in ok.roots] == [CheckType.PING]
+    # ping6 can gate a dependency subtree, like ping.
+    tree = parse("gw.example.net ping6 edge noc@x {\nweb.example.net ping6 web noc@x\n}\n")
+    assert tree.roots[0].check_type is CheckType.PING6
+    assert [c.hostname for c in tree.roots[0].children] == ["web.example.net"]
 
 
-def test_legacy_mail_tls_types_redirect_to_modern():
-    # imap/imaps/pop3s in a legacy config are skipped with a modern-config pointer; "pop3s" must
-    # NOT silently prefix-match to plaintext "pop3" (#88).
-    for kw in ("pop3s", "imaps", "imap"):
-        res = parse(f"h.example.net {kw} u p label noc@x\n")
-        assert res.roots == []
-        assert any("modern" in w and "#88" in w for w in res.warnings)
-    # plain pop3 still works — pop3s didn't shadow it the wrong way.
-    ok = parse("h.example.net pop3 user secret label noc@x\n")
-    assert len(ok.roots) == 1 and ok.roots[0].check_type is CheckType.POP3
+def test_legacy_pop3s_accepted_not_plaintext():
+    # pop3s is POP3-over-TLS (port 995), NOT silently prefix-matched to plaintext pop3 (#94).
+    n = parse("mail.example.net pop3s mu mp label noc@x\n").roots[0]
+    assert n.check_type is CheckType.POP3S and n.port == 995
+    assert (n.username, n.password, n.label, n.contact) == ("mu", "mp", "label", "noc@x")
+    # plain pop3 still works and stays distinct (the prefix order didn't shadow it).
+    ok = parse("mail.example.net pop3 mu mp label noc@x\n").roots[0]
+    assert ok.check_type is CheckType.POP3 and ok.port == 110
+
+
+def test_legacy_pop3_family_requires_credentials():
+    # pop3/pop3s always authenticate (mirror modern): too few fields -> warn + skip.
+    res = parse("mail.example.net pop3s onlylabel noc@x\n")  # 4 tokens, no user/pass
+    assert res.roots == []
+    assert any("needs user, password and label" in w for w in res.warnings)
+
+
+def test_legacy_imap_optional_credentials():
+    # imap/imaps mirror modern's optional credentials (#94): a short line is banner-only, a full
+    # pop3-style line authenticates.
+    minimal = parse("h.example.net imap just-a-label\n").roots[0]  # 3 tokens
+    assert minimal.check_type is CheckType.IMAP and minimal.port == 143
+    assert not minimal.username and not minimal.password and not minimal.contact
+    assert minimal.label == "just-a-label"
+
+    banner = parse("h.example.net imap banner-label noc@x\n").roots[0]  # 4 tokens: label + contact
+    assert not banner.username and not banner.password
+    assert banner.label == "banner-label" and banner.contact == "noc@x"
+
+    auth = parse("h.example.net imap iuser ipass auth-label noc@x\n").roots[0]  # 6 tokens: auth
+    assert (auth.username, auth.password, auth.label, auth.contact) == (
+        "iuser", "ipass", "auth-label", "noc@x")
+
+    # imaps is IMAP-over-TLS (port 993) with the same optional-cred rule.
+    sbanner = parse("h.example.net imaps imaps-banner noc@x\n").roots[0]
+    assert sbanner.check_type is CheckType.IMAPS and sbanner.port == 993
+    assert not sbanner.username and not sbanner.password
+    sauth = parse("h.example.net imaps iuser ipass label\n").roots[0]  # 5 tokens: auth
+    assert sauth.check_type is CheckType.IMAPS
+    assert (sauth.username, sauth.password) == ("iuser", "ipass")
+
+
+def test_legacy_imap_matches_original_always_auth_form():
+    # The original C imap (loadconfig.c type 7) was `host imap user pass message [contact]`; that
+    # 5-/6-token form must parse to an authenticated check, byte-identical to the original layout.
+    n = parse("h.example.net imap mailuser mailpass mylabel noc@x\n").roots[0]
+    assert n.check_type is CheckType.IMAP
+    assert (n.username, n.password, n.label, n.contact) == (
+        "mailuser", "mailpass", "mylabel", "noc@x")
+
+
+def test_legacy_new_types_round_trip_through_convert():
+    from psysmon.config.convert import to_modern
+    from psysmon.config.modern import parse as mparse
+
+    def walk(nodes):
+        for nn in nodes:
+            yield nn
+            yield from walk(nn.children)
+
+    def sig(roots):
+        return sorted((n.check_type.value, n.username, n.password, n.port) for n in walk(roots))
+
+    cfg = (
+        "gw.example.net ping6 edge noc@x {\n"
+        "web.example.net ping6 web noc@x\n"
+        "}\n"
+        "m1.example.net pop3s mu mp p3s noc@x\n"
+        "m2.example.net imap banner noc@x\n"
+        "m3.example.net imap iu ip auth noc@x\n"
+        "m4.example.net imaps iu ip i noc@x\n"
+    )
+    res = parse(cfg)
+    text, warns = to_modern(res)
+    assert warns == []
+    mr = mparse(text)
+    assert mr.warnings == []
+    assert sig(res.roots) == sig(mr.roots)
+
+
+def test_legacy_new_type_keyword_as_label_is_unaffected():
+    # The new type keywords match only in the TYPE position (tokens[1]); a tcp check whose *label*
+    # happens to be a new keyword is unchanged. production.conf relies on this (it has a tcp/143
+    # check labelled "imap"), so this is the load-bearing back-compat invariant (#94).
+    for label in ("imap", "imaps", "pop3s", "ping6"):
+        n = parse(f"h.example.net tcp 143 {label} noc@x\n").roots[0]
+        assert n.check_type is CheckType.TCP and n.port == 143
+        assert n.label == label and n.contact == "noc@x"
+
+
+def test_legacy_type_prefix_match_resolves_to_longer_keyword():
+    # strncmp-style prefix match: a token starting with a longer keyword resolves to it, never the
+    # shorter prefix — pop3s/imaps must never degrade to plaintext pop3/imap (the #88 ordering).
+    assert parse("h.example.net pop3sx u p l\n").roots[0].check_type is CheckType.POP3S
+    assert parse("h.example.net imapsx u p l\n").roots[0].check_type is CheckType.IMAPS
+    assert parse("h.example.net ping6x label\n").roots[0].check_type is CheckType.PING6
+    assert parse("h.example.net pop3x u p l\n").roots[0].check_type is CheckType.POP3
+
+
+def test_legacy_imap_convert_emits_creds_only_when_authenticated():
+    from psysmon.config.convert import to_modern
+
+    auth_text, _ = to_modern(parse("h.example.net imap iu ip auth noc@x\n"))
+    assert "username" in auth_text and "password" in auth_text
+    banner_text, _ = to_modern(parse("h.example.net imap banner noc@x\n"))
+    assert "username" not in banner_text and "password" not in banner_text
+
+
+def test_legacy_imap_four_token_is_banner_not_auth():
+    # Token count disambiguates (n<5 = banner): `host imap A B` is a banner check with label=A,
+    # contact=B, NOT auth-without-label. The original C rejected <5 tokens, so nothing regresses.
+    n = parse("h.example.net imap alice bob\n").roots[0]
+    assert n.check_type is CheckType.IMAP
+    assert n.label == "alice" and n.contact == "bob"
+    assert not n.username and not n.password
+
+
+def test_legacy_ping6_port_unset_and_numfailures_snapshots():
+    res = parse("config numfailures 7\ngw.example.net ping6 edge noc@x\n", numfailures=2)
+    n = res.roots[0]
+    assert n.check_type is CheckType.PING6 and n.port == 0  # ping6 has no port
+    assert n.max_down == 7  # position-dependent numfailures snapshots into ping6 like any node
 
 
 def test_deferred_dns_keeps_unresolvable_host():

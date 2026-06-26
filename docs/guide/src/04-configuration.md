@@ -506,9 +506,9 @@ This is the canonical mapping table ([Appendix C](90-appendices.md) points here)
 | `label` / "message" | `desc "text";` | |
 | `contact` | `contact "addr";` | |
 | `url`, `url_text` (www/https) | `url "path";`, `urltext "substring";` | |
-| `username`, `password` (pop3) | `username "u";`, `password "p";` | |
+| `username`, `password` (pop3/pop3s, imap/imaps) | `username "u";`, `password "p";` | Required for pop3/pop3s; optional for imap/imaps |
 | `name` (authdns) | `dns-query "name";` | |
-| `{ … }` child nesting | `dep "parent";` on the child | Legacy ping/smtp parents become named edges |
+| `{ … }` child nesting | `dep "parent";` on the child | Legacy ping/ping6/smtp parents become named edges |
 | `config numfailures N` (positional) | per-object `numfailures N;` | Resolved onto each object, not replayed as a global |
 | `config savestate "path"` | `config savestate "path";` | |
 | `config statusfile html /p` | `config statusfile html "/p";` | |

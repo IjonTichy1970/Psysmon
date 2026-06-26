@@ -122,9 +122,9 @@ format with a legacy→modern converter has landed
 ([#3](https://github.com/IjonTichy1970/Psysmon/issues/3); see
 [docs/modern-config.md](docs/modern-config.md)), along with a secure opt-in control channel
 ([#69](https://github.com/IjonTichy1970/Psysmon/issues/69)), operator acknowledgements & grouping
-([#20](https://github.com/IjonTichy1970/Psysmon/issues/20)), and multi-parent dependencies
-([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)). IPv6 ping
-([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)) is in progress.
+([#20](https://github.com/IjonTichy1970/Psysmon/issues/20)), multi-parent dependencies
+([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)), and IPv6 ping (`ping6`)
+([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)).
 
 ## Heritage
 

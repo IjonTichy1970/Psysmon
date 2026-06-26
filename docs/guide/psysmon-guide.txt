@@ -70,9 +70,9 @@ Introduction
 ============
 
 PSYSMON is a dependency-aware network monitoring daemon -- a modern Python rewrite of
-Jared Mauch's C sysmon. It periodically checks hosts and services (ping, TCP, UDP, SMTP,
-POP3, DNS, HTTP/HTTPS), pages you when something goes down and again when it recovers,
-and writes a live status page.
+Jared Mauch's C sysmon. It periodically checks hosts and services (ping/ping6, TCP, UDP,
+SMTP, POP3, DNS, HTTP/HTTPS), pages you when something goes down and again when it
+recovers, and writes a live status page.
 
 The core idea: dependency suppression
 -------------------------------------
@@ -102,9 +102,9 @@ config formats: the original positional legacy grammar (still the default, for d
 compatibility) and a richer modern object{} grammar with named dependencies, variables,
 and per-object settings. See Configuration. - Modern safety: no cleartext credential
 dump; an opt-in, token-gated, loopback-default control channel; raw-socket privilege
-dropped after startup. - New capabilities: loss-tolerant ping, per-object check
-intervals, per-object/group outbound source binding, operator acknowledge/notes, and
-JSON status output for dashboards.
+dropped after startup. - New capabilities: loss-tolerant ping, IPv6 ping (ping6), per-
+object check intervals, per-object/group outbound source binding, operator
+acknowledge/notes, and JSON status output for dashboards.
 
 Who it's for
 ------------
@@ -669,17 +669,18 @@ This table covers the structural attributes. An object body can also carry per-o
 override attributes -- queuetime, numfailures, send_pings / min_pings, group, contact_on,
 and source -- documented under Per-object overrides below.
 
-Check types (type keyword): ping, tcp, udp, smtp, pop3, dns, http, https. For legacy
-familiarity, authdns is accepted as an alias for dns and www for http. Default ports:
-smtp 25, pop3 110, dns 53, http 80, https 443 (ping has none; tcp/udp require an
-explicit port).
+Check types (type keyword): ping, ping6, tcp, udp, smtp, pop3, dns, http, https. ping is
+an ICMP (IPv4) echo; ping6 is an ICMPv6 (IPv6) echo that resolves the host's AAAA record
+(pingv6/icmp6 are accepted aliases). For legacy familiarity, authdns is accepted as an
+alias for dns and www for http. Default ports: smtp 25, pop3 110, dns 53, http 80, https
+443 (ping and ping6 have none; tcp/udp require an explicit port).
 
 Required fields per type -- an object missing a required field is warned and skipped; the
 rest of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| ping, smtp | host, type |
+| ping, ping6, smtp | host, type |
 | tcp, udp | host, type, port |
 | http, https | host, type, url, urltext |
 | pop3 | host, type, username, password |
@@ -762,18 +763,20 @@ resolution is per-object source > the object's group source > the per-type defau
 unbound. The per-type default differs by check type, and this is a common source of
 confusion:
 
-- ping (ICMP) is unbound by default. The kernel routes each probe by destination,
-regardless of config source_ip. This matches a plain ping with no -I and is right for
-hosts reached over a VPN or a dynamic interface. - All other checks
-(tcp/udp/smtp/pop3/dns) default to the global config source_ip (the ACL-egress address),
-or unbound if none is set.
+- ping and ping6 (ICMP/ICMPv6) are unbound by default. The kernel routes each probe by
+destination, regardless of config source_ip (which is IPv4 anyway). This matches a plain
+ping/ping6 with no -I and is right for hosts reached over a VPN or a dynamic interface.
+- All other checks (tcp/udp/smtp/pop3/dns) default to the global config source_ip (the
+ACL-egress address), or unbound if none is set.
 
 Set source to:
 
-- an IPv4 address (source "203.0.113.5";) -- bind this object's probes to that local
-address. Works for ping too. (IPv6 source binding is rejected at load; that's planned.)
-- auto (source auto;) -- keep this object unbound (route by destination) even when a
-group default or config source_ip would otherwise bind it. This is the explicit opt-out.
+- an IP address (source "203.0.113.5";) -- bind this object's probes to that local
+address; works for ping too. The family must match the check: a ping6 object takes an
+IPv6 source (source "2001:db8::5";), every other check an IPv4 one; a wrong-family
+source is warned and the object is left unbound. - auto (source auto;) -- keep this
+object unbound (route by destination) even when a group default or config source_ip
+would otherwise bind it. This is the explicit opt-out.
 
     HTTP/HTTPS exception: source is not applied to http/https checks (the HTTP client offers no
     per-request source bind).
@@ -790,10 +793,10 @@ matter.
 
     group "vpn-sites" {
         source auto;            # these hosts route freely (unbound)
-    };
+    }
     group "dmz" {
         source "192.0.2.9";     # bind DMZ checks to this egress address
-    };
+    }
 
     object gw {
         host "198.51.100.1"; type ping;
@@ -1624,6 +1627,29 @@ Values are down, up, both, none. An object with no contact never pages regardles
 
 ---
 
+IPv6 ping -- ping6 (modern config only)
+--------------------------------------
+
+Monitor a host over IPv6 with type ping6, an ICMPv6 echo. It behaves exactly like ping --
+it gates dependent children, honors loss-tolerant send_pings / min_pings, needs the same
+raw-socket privilege (root or CAP_NET_RAW), and pages the same way -- but it resolves the
+host's AAAA record and sends ICMPv6 echoes:
+
+    object v6-gw {
+        host "gw.example.net"; type ping6; contact "noc@example.net";
+    };
+
+ping6 is AAAA-only: a host with no AAAA record reads No dns entry (a resolution failure)
+rather than silently falling back to IPv4. The two families are independent -- give the
+same host both a ping and a ping6 object to watch each separately. A per-object source
+for a ping6 check must be an IPv6 address (source "2001:db8::5";); pingv6 and icmp6 are
+accepted aliases for the type keyword.
+
+    The legacy sysmon.conf format stays IPv4-only: a ping6 line there is skipped with a warning
+    pointing you to the modern format.
+
+---
+
 Grouping -- group and the group { } scope (modern config only)
 -------------------------------------------------------------
 
@@ -1670,24 +1696,26 @@ Per-object / per-group outbound source -- source (modern config only)
 --------------------------------------------------------------------
 
 source controls which local address a check's probes go out from. Resolution per object
-is: per-object source > the object's group source > the per-type default > unbound. It
-is IPv4-only (an IPv6 source is rejected at load).
+is: per-object source > the object's group source > the per-type default > unbound. The
+source's family must match the check -- a ping6 object takes an IPv6 source, every other
+check an IPv4 one.
 
 The per-type default differs:
 
-- Ping (ICMP) is unbound by default -- it routes each probe by destination and ignores
-the global config source_ip. This is the right behavior for hosts reached over a VPN or
-a dynamic interface, and it matches a plain ping with no -I. - All other checks
-(tcp/udp/smtp/pop3/dns) default to the global config source_ip (the ACL-egress address),
-or unbound if none is set.
+- Ping and ping6 (ICMP/ICMPv6) are unbound by default -- they route each probe by
+destination and ignore the global config source_ip (which is IPv4 anyway). This is the
+right behavior for hosts reached over a VPN or a dynamic interface, and it matches a
+plain ping/ping6 with no -I. - All other checks (tcp/udp/smtp/pop3/dns) default to the
+global config source_ip (the ACL-egress address), or unbound if none is set.
 
 Set source to:
 
-- an IPv4 address (source "203.0.113.5";) -- bind this object's probes to that local
+- an IP address (source "203.0.113.5";) -- bind this object's probes to that local
 address; works for ping too (e.g. to pin a stable VPN local address) and for the
-connection checks. - auto (source auto;) -- keep this object unbound (route by
-destination) even when a group default or config source_ip would otherwise bind it. This
-is the explicit opt-out.
+connection checks. The family must match the check: a ping6 object takes an IPv6 source
+(source "2001:db8::5";), every other check an IPv4 one. - auto (source auto;) -- keep
+this object unbound (route by destination) even when a group default or config source_ip
+would otherwise bind it. This is the explicit opt-out.
 
     object vpn-gw {
         host "198.51.100.1"; type ping;
@@ -2127,9 +2155,9 @@ fully-down ancestor freezes its subtree. See Feature tour -> dependency suppress
 Troubleshooting.
 
 Which codes a given check can produce depends on the check type -- e.g. Unpingable comes
-only from ping, Bad Auth only from POP3, and Bad Resp from DNS (malformed/wrong-source
-reply) or HTTP (body missing the expected text). See the Feature tour for what each
-check verifies.
+only from a ping check (ping or ping6), Bad Auth only from POP3, and Bad Resp from DNS
+(malformed/wrong-source reply) or HTTP (body missing the expected text). See the Feature
+tour for what each check verifies.
 
 
 ########################################################################################
@@ -2148,11 +2176,11 @@ Ping and reachability
 Every ping fails / a host reads "Unpingable" / I get a permission error at startup
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Raw ICMP needs privilege. psysmon opens its raw sockets at startup, which requires root
-or the CAP_NET_RAW capability on Linux; without it the daemon can't open the unbound
-ping socket and surfaces a clean startup error. (Ping is a Linux feature -- raw ICMP
-demux relies on the event loop's add_reader, which isn't available on the Windows event
-loop.)
+Raw ICMP (and ICMPv6, for ping6) needs privilege. psysmon opens its raw sockets at
+startup, which requires root or the CAP_NET_RAW capability on Linux; without it the
+daemon can't open the unbound ping/ping6 socket and surfaces a clean startup error.
+(Ping is a Linux feature -- raw ICMP/ICMPv6 demux relies on the event loop's add_reader,
+which isn't available on the Windows event loop.)
 
 Fixes:
 
@@ -2336,11 +2364,13 @@ with config loglevel debug / -vv) for the specific warning. Common causes:
 - An object missing a required field for its type (e.g. a tcp/udp object with no port,
 an http/https object without url + urltext) is warned and skipped. - A dropped check
 type (imap, nntp, pop2, umichx500, radius, bootp, snmp) warns and skips -- these aren't
-in scope for the rewrite. - IPv6 ping types (ping6 / pingv6 / icmp6) warn and skip; IPv6
-is deferred (tracked on GitHub (https://github.com/IjonTichy1970/Psysmon/issues/24)). An
-IPv6 source is likewise rejected at load. - An unknown dep target, a dependency cycle,
-or a duplicate object name each warn and degrade gracefully (the object becomes a root,
-or the duplicate is skipped).
+in scope for the rewrite. - ping6 in a legacy config. ping6 / pingv6 / icmp6 work in the
+modern object{} format but not the legacy sysmon.conf grammar (IPv4-only); a ping6 line
+in a legacy file warns and skips, pointing you to the modern format. A per-object source
+whose family doesn't match its check (an IPv6 source on a v4 check, or a v4 source on
+ping6) is warned and left unbound. - An unknown dep target, a dependency cycle, or a
+duplicate object name each warn and degrade gracefully (the object becomes a root, or
+the duplicate is skipped).
 
 The full required-fields and check-type tables are in Configuration.
 
@@ -2451,10 +2481,11 @@ source (auto) : The outbound bind address for an object's probes, set per object
 "203.0.113.5";) or for a whole group. Precedence is per-object > group default > global
 config source_ip. source auto forces the target to stay unbound (the kernel picks the
 route) even when a group default or source_ip would otherwise bind it -- useful for hosts
-reached over a VPN or a dynamic interface. Note: ping is unbound by default and ignores
-the global source_ip; only an explicit per-object/group source binds ping. Connection
-checks (tcp/udp/smtp/pop3/dns) default to source_ip. The source value is IPv4-only, and
-HTTP/HTTPS checks are always unbound. See Configuration.
+reached over a VPN or a dynamic interface. Note: ping and ping6 are unbound by default
+and ignore the global source_ip; only an explicit per-object/group source binds them.
+Connection checks (tcp/udp/smtp/pop3/dns) default to source_ip. A source's family must
+match its check (IPv6 for ping6, IPv4 otherwise), and HTTP/HTTPS checks are always
+unbound. See Configuration.
 
 savestate : Optional on-disk persistence of live monitoring state, so a restart or
 upgrade doesn't forget what was already down and re-page known outages. Enabled with

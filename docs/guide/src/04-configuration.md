@@ -234,17 +234,18 @@ This table covers the **structural** attributes. An object body can also carry *
 override** attributes — `queuetime`, `numfailures`, `send_pings` / `min_pings`, `group`,
 `contact_on`, and `source` — documented under [Per-object overrides](#per-object-overrides) below.
 
-**Check types** (`type` keyword): `ping`, `tcp`, `udp`, `smtp`, `pop3`, `dns`, `http`, `https`. For
-legacy familiarity, `authdns` is accepted as an alias for `dns` and `www` for `http`. Default
-ports: smtp `25`, pop3 `110`, dns `53`, http `80`, https `443` (ping has none; tcp/udp require an
-explicit `port`).
+**Check types** (`type` keyword): `ping`, `ping6`, `tcp`, `udp`, `smtp`, `pop3`, `dns`, `http`,
+`https`. `ping` is an ICMP (IPv4) echo; **`ping6` is an ICMPv6 (IPv6) echo** that resolves the
+host's **AAAA** record (`pingv6`/`icmp6` are accepted aliases). For legacy familiarity, `authdns`
+is accepted as an alias for `dns` and `www` for `http`. Default ports: smtp `25`, pop3 `110`, dns
+`53`, http `80`, https `443` (ping and ping6 have none; tcp/udp require an explicit `port`).
 
 **Required fields per type** — an object missing a required field is warned and skipped; the rest
 of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `smtp` | `host`, `type` |
+| `ping`, `ping6`, `smtp` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
 | `http`, `https` | `host`, `type`, `url`, `urltext` |
 | `pop3` | `host`, `type`, `username`, `password` |
@@ -324,16 +325,18 @@ An object with no `contact` address never pages regardless of `contact_on`.
 **per-object `source` › the object's group `source` › the per-type default › unbound.** The
 per-type default differs by check type, and this is a common source of confusion:
 
-- **ping (ICMP) is unbound by default.** The kernel routes each probe by destination, **regardless
-  of `config source_ip`**. This matches a plain `ping` with no `-I` and is right for hosts reached
-  over a VPN or a dynamic interface.
+- **ping and ping6 (ICMP/ICMPv6) are unbound by default.** The kernel routes each probe by
+  destination, **regardless of `config source_ip`** (which is IPv4 anyway). This matches a plain
+  `ping`/`ping6` with no `-I` and is right for hosts reached over a VPN or a dynamic interface.
 - **All other checks** (tcp/udp/smtp/pop3/dns) default to the global **`config source_ip`** (the
   ACL-egress address), or unbound if none is set.
 
 Set `source` to:
 
-- an **IPv4 address** (`source "203.0.113.5";`) — bind this object's probes to that local address.
-  Works for ping too. (IPv6 source binding is rejected at load; that's planned.)
+- an **IP address** (`source "203.0.113.5";`) — bind this object's probes to that local address;
+  works for ping too. The family must match the check: a `ping6` object takes an **IPv6** source
+  (`source "2001:db8::5";`), every other check an IPv4 one; a wrong-family source is warned and the
+  object is left unbound.
 - **`auto`** (`source auto;`) — keep this object **unbound** (route by destination) even when a
   group default or `config source_ip` would otherwise bind it. This is the explicit opt-out.
 
@@ -351,10 +354,10 @@ just a display label). Group/object declaration order doesn't matter.
 ```
 group "vpn-sites" {
     source auto;            # these hosts route freely (unbound)
-};
+}
 group "dmz" {
     source "192.0.2.9";     # bind DMZ checks to this egress address
-};
+}
 
 object gw {
     host "198.51.100.1"; type ping;

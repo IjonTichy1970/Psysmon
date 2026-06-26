@@ -9,10 +9,11 @@ status word on the page, see [Status codes](08-status-codes.md); for the complet
 
 ### Every ping fails / a host reads "Unpingable" / I get a permission error at startup
 
-Raw ICMP needs privilege. psysmon opens its raw sockets at startup, which requires **root or the
-`CAP_NET_RAW` capability** on Linux; without it the daemon can't open the unbound ping socket and
-surfaces a clean startup error. (Ping is a Linux feature — raw ICMP demux relies on the event
-loop's `add_reader`, which isn't available on the Windows event loop.)
+Raw ICMP (and ICMPv6, for `ping6`) needs privilege. psysmon opens its raw sockets at startup, which
+requires **root or the `CAP_NET_RAW` capability** on Linux; without it the daemon can't open the
+unbound ping/ping6 socket and surfaces a clean startup error. (Ping is a Linux feature — raw
+ICMP/ICMPv6 demux relies on the event loop's `add_reader`, which isn't available on the Windows
+event loop.)
 
 Fixes:
 
@@ -186,9 +187,10 @@ unsupported, so the rest of the config still comes up. Check syslog (raise verbo
   an `http`/`https` object without `url` + `urltext`) is warned and skipped.
 - A **dropped check type** (`imap`, `nntp`, `pop2`, `umichx500`, `radius`, `bootp`, `snmp`) warns
   and skips — these aren't in scope for the rewrite.
-- **IPv6 ping** types (`ping6` / `pingv6` / `icmp6`) warn and skip; IPv6 is deferred
-  ([tracked on GitHub](https://github.com/IjonTichy1970/Psysmon/issues/24)). An IPv6 `source` is likewise
-  rejected at load.
+- **`ping6` in a legacy config.** `ping6` / `pingv6` / `icmp6` work in the modern `object{}` format
+  but not the legacy `sysmon.conf` grammar (IPv4-only); a `ping6` line in a legacy file warns and
+  skips, pointing you to the modern format. A per-object `source` whose family doesn't match its
+  check (an IPv6 `source` on a v4 check, or a v4 `source` on `ping6`) is warned and left unbound.
 - An **unknown `dep` target**, a **dependency cycle**, or a **duplicate object name** each warn
   and degrade gracefully (the object becomes a root, or the duplicate is skipped).
 

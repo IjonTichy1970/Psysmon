@@ -1,7 +1,7 @@
 # Introduction
 
 PSYSMON is a **dependency-aware network monitoring daemon** — a modern Python rewrite of Jared
-Mauch's C `sysmon`. It periodically checks hosts and services (ping, TCP, UDP, SMTP, POP3, DNS, HTTP/HTTPS),
+Mauch's C `sysmon`. It periodically checks hosts and services (ping/ping6, TCP, UDP, SMTP, POP3, DNS, HTTP/HTTPS),
 pages you when something goes down and again when it recovers, and writes a live status page.
 
 ## The core idea: dependency suppression
@@ -30,8 +30,9 @@ model, the status page — but rebuilds the internals:
   per-object settings. See [Configuration](04-configuration.md).
 - **Modern safety:** no cleartext credential dump; an opt-in, token-gated, loopback-default control
   channel; raw-socket privilege dropped after startup.
-- **New capabilities:** loss-tolerant ping, per-object check intervals, per-object/group outbound
-  source binding, operator acknowledge/notes, and JSON status output for dashboards.
+- **New capabilities:** loss-tolerant ping, IPv6 ping (`ping6`), per-object check intervals,
+  per-object/group outbound source binding, operator acknowledge/notes, and JSON status output for
+  dashboards.
 
 ## Who it's for
 

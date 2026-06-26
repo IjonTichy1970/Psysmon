@@ -10,7 +10,7 @@ stays the default and keeps working unchanged. A file is treated as modern when 
 `config` lines, which both formats share) is parsed as legacy. The two formats are never mixed in
 one file.
 
-> Accurate as of psysmon 0.2.0 (modern config milestones M1–M5). To migrate an existing config,
+> Accurate as of psysmon 0.7.0. To migrate an existing config,
 > see [Migrating from the legacy format](#migrating-from-the-legacy-format).
 
 ## A quick example
@@ -121,9 +121,11 @@ Inside the block, attributes are `key value;` pairs.
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
 | `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (OR / any-path) |
 
-**Check types** (the `type` keyword): `ping`, `tcp`, `udp`, `smtp`, `pop3`, `dns`, `http`, `https`.
-For legacy familiarity, `authdns` is accepted as an alias for `dns` and `www` for `http`. Default
-ports: smtp `25`, pop3 `110`, dns `53`, http `80`, https `443` (ping has none; tcp/udp require an
+**Check types** (the `type` keyword): `ping`, `ping6`, `tcp`, `udp`, `smtp`, `pop3`, `dns`, `http`,
+`https`. `ping` is an ICMP (IPv4) echo; **`ping6` is an ICMPv6 (IPv6) echo** — it resolves the
+host's **AAAA** record and pings over IPv6 (`pingv6` and `icmp6` are accepted aliases). For legacy
+familiarity, `authdns` is accepted as an alias for `dns` and `www` for `http`. Default ports: smtp
+`25`, pop3 `110`, dns `53`, http `80`, https `443` (ping and ping6 have none; tcp/udp require an
 explicit `port`).
 
 **Required fields per type** — an object missing a required field is warned and skipped; the rest
@@ -131,7 +133,7 @@ of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `smtp` | `host`, `type` |
+| `ping`, `ping6`, `smtp` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
 | `http`, `https` | `host`, `type`, `url`, `urltext` |
 | `pop3` | `host`, `type`, `username`, `password` |
@@ -172,18 +174,19 @@ An object with no `contact` address never pages regardless of `contact_on`.
 
 The per-type default differs:
 
-- **ping (ICMP) is unbound by default** — the kernel routes each probe by destination, *regardless
-  of `config source_ip`*. This is the right behavior for hosts reached over a VPN or a dynamic
-  interface (nothing to track when the local address changes), and it matches a plain `ping` with
-  no `-I`.
+- **ping and ping6 (ICMP/ICMPv6) are unbound by default** — the kernel routes each probe by
+  destination, *regardless of `config source_ip`* (which is IPv4 anyway). This is the right
+  behavior for hosts reached over a VPN or a dynamic interface (nothing to track when the local
+  address changes), and it matches a plain `ping`/`ping6` with no `-I`.
 - **all other checks** (tcp/udp/smtp/pop3/dns) default to the global **`config source_ip`** (the
   ACL-egress address), or unbound if none is set.
 
 Set `source` to:
 
-- an **IPv4 address** (`source "203.0.113.5";`) — bind this object's probes to that local address.
-  Works for ping too (pin a stable VPN local address), and for the connection checks. (IPv6 source
-  binding isn't supported yet — an IPv6 `source` is rejected at load; that's #24.)
+- an **IP address** (`source "203.0.113.5";`) — bind this object's probes to that local address.
+  Works for ping (pin a stable VPN local address) and the connection checks. The source's family
+  must match the check: a `ping6` object takes an **IPv6** source (`source "2001:db8::5";`), every
+  other check an IPv4 one. A source of the wrong family is warned and the object is left unbound.
 - **`auto`** (`source auto;`) — keep this object **unbound** (route by destination) even when a
   group default or `config source_ip` would otherwise bind it. This is the explicit opt-out.
 
@@ -300,7 +303,6 @@ clean warning or a clear refusal, never a silent surprise):
 
 - **`include`** — not yet supported; a config using it is **rejected at load**. (A follow-up,
   M2b, will add it with proper `$var`-across-include scoping.)
-- **IPv6 ping** (`ping6` / `pingv6` / `icmp6`) — deferred ([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)); these `type`s warn and skip.
 - **Dropped check types** — `imap`, `nntp`, `pop2`, `umichx500`, `radius`, `bootp`, `snmp` warn and
   skip (they were unused in practice and are out of scope for the rewrite).
 - **The 0.93 control/query protocol, client tooling interop, and the phone-home heartbeat** — these

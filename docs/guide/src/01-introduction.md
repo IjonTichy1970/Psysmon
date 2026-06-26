@@ -29,7 +29,8 @@ model, the status page — but rebuilds the internals:
   compatibility) and a richer **modern `object{}`** grammar with named dependencies, variables, and
   per-object settings. See [Configuration](04-configuration.md).
 - **Modern safety:** no cleartext credential dump; an opt-in, token-gated, loopback-default control
-  channel; raw-socket privilege dropped after startup.
+  channel; and the daemon is launched as a root process rather than a setuid binary (a
+  privilege-drop step exists in the code but is not yet enabled — planned).
 - **New capabilities:** loss-tolerant ping, IPv6 ping (`ping6`), per-object check intervals,
   per-object/group outbound source binding, operator acknowledge/notes, and JSON status output for
   dashboards.

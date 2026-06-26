@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **Global `config` directives in legacy configs** — the legacy `sysmon.conf` format now accepts the
+  same global `config` directives as the modern format, so a drop-in legacy config can set them in
+  the file instead of only on the command line: `contact_on`, `source_ip`, `queuetime`,
+  `send_pings`/`min_pings`, `page_on_degraded`, the control-channel settings (`control`,
+  `control_bind`, `control_port`, `control_token_file`, `control_tls_cert`/`control_tls_key`),
+  `maxqueued`, `statesave_interval`, `state_max_age`, `noheartbeat`, `hostname`, and `sender`/`from`.
+  Existing legacy directives and configs parse exactly as before
+  ([#93](https://github.com/IjonTichy1970/Psysmon/issues/93)).
+
 ## [0.8.0] — 2026-06-26 — IMAP/TLS mail checks & richer group defaults
 
 ### Added

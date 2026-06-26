@@ -6,8 +6,11 @@ Faithfully reproduces ``loadconfig.c``/``parseline``:
 * A line whose first token starts with ``;`` or ``#`` is a comment; blank lines are skipped.
 * ``}`` closes the current block; a trailing ``{`` opens a recursive **child block** (only on
   the ping-like branch — ping/smtp — as in the original).
-* ``config <directive> ...`` sets globals: ``statusfile``, ``pageinterval`` (minutes),
-  ``logging``, ``dnslog``, ``dnsexpire``, ``numfailures``, ``savestate``, ``sleeptime``.
+* ``config <directive> ...`` sets globals: the original ``statusfile``, ``pageinterval``
+  (minutes), ``logging``, ``dnslog``, ``dnsexpire``, ``numfailures``, ``savestate``,
+  ``sleeptime`` — plus the post-rewrite globals (``contact_on``, ``source_ip``, ``queuetime``,
+  ``send_pings``/``min_pings``, ``page_on_degraded``, the ``control*`` family, ...) which reuse
+  the modern parser's directive tables so both formats accept the same set (#93).
 * **``numfailures`` is position-dependent** — its current value snapshots into each
   subsequently-parsed node's ``max_down`` (a running value, not last-wins).
 * Per-type field positions exactly as in C (ping/smtp: label[,contact][,``{``];
@@ -36,13 +39,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from psysmon.config.model import DEFAULT_PORT, CheckType, Node
+from psysmon.config.model import CONTACT_ON_CHOICES, DEFAULT_PORT, CheckType, Node
 
 # Valid syslog facilities (from match_facility in loadconfig.c); "none" disables logging.
 _FACILITIES = frozenset(
     "kern user mail daemon auth syslog lpr news uucp cron authpriv "
     "local0 local1 local2 local3 local4 local5 local6 local7".split()
 )
+
+# Post-rewrite string globals whose value is a filesystem path that may be quoted / contain
+# spaces — join the remaining tokens and strip a surrounding quote pair, the same way savestate
+# does, so a whitespace-split quoted path survives (#93). Other string globals take one token.
+_PATH_STR_GLOBALS = frozenset({"control_token_file", "control_tls_cert", "control_tls_key"})
 
 # Check-type keywords in the original dispatch order, prefix-matched like the C strncmp.
 # A None value marks a type the legacy parser does not handle (warn + skip). ORDER MATTERS: a
@@ -182,16 +190,27 @@ class _Parser:
                 self._warn(lineno, "too many fields; using the first 7")
                 tokens = tokens[:7]
 
-            if len(tokens) < 3:
+            # A line that is only a block-open (`{`) strips to an empty token list above; it has no
+            # stanza or directive, so warn + drain it (keeping braces balanced) before any dispatch
+            # that indexes tokens[0]. (Matches the original `< 3 fields` handling for this case.)
+            if not tokens:
                 self._warn(lineno, "not enough fields; skipping")
                 if opens_block:
                     self.parse_block(depth + 1)  # drain the orphaned block; keep braces balanced
                 continue
+            # `config` is dispatched before the 3-field minimum: a valueless flag global (e.g.
+            # `config control`, #93) is a legitimate 2-token line. `_handle_config` owns its own
+            # arity checks; host lines still require >= 3 fields (the guard just below).
             if tokens[0] == "config":
                 self._handle_config(lineno, tokens)
                 if opens_block:
                     self._warn(lineno, "a config line cannot open a block; ignoring the '{'")
                     self.parse_block(depth + 1)
+                continue
+            if len(tokens) < 3:
+                self._warn(lineno, "not enough fields; skipping")
+                if opens_block:
+                    self.parse_block(depth + 1)  # drain the orphaned block; keep braces balanced
                 continue
 
             node = self._parse_host(lineno, tokens)
@@ -274,7 +293,29 @@ class _Parser:
         return node
 
     def _handle_config(self, lineno: int, tokens: list[str]) -> None:
+        if len(tokens) < 2:
+            self._warn(lineno, "config line needs a directive; skipping")
+            return
         directive = tokens[1]
+        # The post-rewrite globals reuse the modern parser's directive tables — the single source
+        # of truth, so the legacy and modern formats accept the same `config` set (#93). Imported
+        # lazily because modern imports this module (this breaks the import cycle).
+        from psysmon.config.modern import (
+            _FLAG_DIRECTIVES,
+            _FLOAT_DIRECTIVES,
+            _INT_DIRECTIVES,
+            _STR_DIRECTIVES,
+        )
+        # Valueless flags (control / page_on_degraded / noheartbeat) may be a bare 2-token line;
+        # every other directive needs tokens[2], so guard once here and the branches below can
+        # assume the value is present. (A malformed value-directive with no value was skipped as
+        # "not enough fields" before; it now skips with a more specific message — same outcome.)
+        is_flag = directive in _FLAG_DIRECTIVES
+        if len(tokens) < 3 and not is_flag:
+            self._warn(lineno, f"config {directive} needs a value; skipping")
+            return
+
+        # --- original legacy directives (unchanged; prefix-matched like the C strncmp) ---
         if directive.startswith("pageinterval"):
             self._set_int(lineno, "pageinterval_min", tokens[2])
         elif directive.startswith("logging"):
@@ -298,6 +339,22 @@ class _Parser:
                 self.overrides["numfailures"] = value
         elif directive.startswith("sleeptime"):
             self._warn(lineno, "config sleeptime is obsolete; ignored (use --interval)")
+        # --- post-rewrite globals (#93): exact-match against the shared modern tables. Exact (not
+        # prefix) match is deliberate so `control_bind`/`control_port`/... are never swallowed by
+        # the `control` flag. Existing directives above are caught first, so they never reach here.
+        elif directive == "contact_on":
+            self._set_contact_on(lineno, tokens[2])
+        elif directive in _INT_DIRECTIVES:
+            self._set_global_int(lineno, _INT_DIRECTIVES[directive], directive, tokens)
+        elif directive in _FLOAT_DIRECTIVES:
+            self._set_global_float(lineno, _FLOAT_DIRECTIVES[directive], directive, tokens)
+        elif directive in _STR_DIRECTIVES:
+            self._set_global_str(lineno, _STR_DIRECTIVES[directive], directive, tokens)
+        elif is_flag:
+            if len(tokens) > 2:
+                self._warn(lineno, f"config {directive} takes no value; ignoring the rest")
+            field, val = _FLAG_DIRECTIVES[directive]
+            self.overrides[field] = val
         else:
             self._warn(lineno, f"unknown config directive {directive!r}; skipping")
 
@@ -357,3 +414,51 @@ class _Parser:
         except ValueError:
             self._warn(lineno, f"expected an integer, got {token!r}; skipping")
             return None
+
+    def _to_float(self, lineno: int, token: str) -> float | None:
+        try:
+            return float(token)
+        except ValueError:
+            self._warn(lineno, f"expected a number, got {token!r}; skipping")
+            return None
+
+    def _set_global_int(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
+        """Apply a post-rewrite int global (#93), warning on extra tokens like the modern parser
+        (the original directives keep their pre-existing lenient single-token behavior)."""
+        if len(tokens) > 3:
+            self._warn(lineno, f"config {name} takes one value; using the first")
+        value = self._to_int(lineno, tokens[2])
+        if value is not None:
+            self.overrides[field_name] = value
+
+    def _set_global_float(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
+        """Apply a post-rewrite float global (e.g. ``queuetime`` -> ``interval_s``, #93)."""
+        if len(tokens) > 3:
+            self._warn(lineno, f"config {name} takes one value; using the first")
+        value = self._to_float(lineno, tokens[2])
+        if value is not None:
+            self.overrides[field_name] = value
+
+    def _set_contact_on(self, lineno: int, value: str) -> None:
+        """``config contact_on`` — validated like the modern parser (#93)."""
+        if value in CONTACT_ON_CHOICES:
+            self.overrides["contact_on"] = value
+        else:
+            self._warn(lineno, f"unknown contact_on {value!r} "
+                       f"(want {'/'.join(CONTACT_ON_CHOICES)}); using both")
+            self.overrides["contact_on"] = "both"
+
+    def _set_global_str(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
+        """Apply a post-rewrite string global (#93). Path-like values join the remaining tokens and
+        strip a surrounding quote pair (the savestate precedent, so a quoted path with spaces
+        survives the whitespace split); other values take the first token only."""
+        if name in _PATH_STR_GLOBALS:
+            value = " ".join(tokens[2:]).strip().strip('"')
+        else:
+            if len(tokens) > 3:
+                self._warn(lineno, f"config {name} takes one value; using the first")
+            value = tokens[2].strip('"')
+        if not value:
+            self._warn(lineno, f"config {name} needs a value; skipping")
+            return
+        self.overrides[field_name] = value

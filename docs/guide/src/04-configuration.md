@@ -131,8 +131,10 @@ host2.example.net   ping  host-2        noc@example.net        # threshold 5 (st
 
 ### `config` directives (legacy) {#config-directives-legacy}
 
-The legacy parser's `config` line is `config <directive> <value...>`. The directive is
-prefix-matched. The complete set the legacy parser accepts:
+The legacy parser's `config` line is `config <directive> <value...>`. The original directives are
+prefix-matched (like the C `strncmp`); the later, post-rewrite globals are matched exactly.
+
+**Original directives:**
 
 | Directive | Value | Effect |
 |---|---|---|
@@ -147,14 +149,38 @@ prefix-matched. The complete set the legacy parser accepts:
 | `config statusfile` | `html`\|`text` `path` | Status-output format and path |
 | `config sleeptime` | — | **Obsolete; ignored** with a warning (use `--interval`) |
 
-Valid syslog facilities are the usual set (`kern`, `user`, `mail`, `daemon`, `auth`, `syslog`,
-`lpr`, `news`, `uucp`, `cron`, `authpriv`, `local0`–`local7`); an unknown one warns and falls back
-to `daemon`. An unknown `loglevel` falls back to `info`. `config statusfile` needs exactly the two
-arguments `<html|text> <path>`.
+**Post-rewrite globals** — the legacy format now also accepts every global the modern format does,
+so a drop-in `sysmon.conf` can set them in the file too (previously these were reachable only on the
+command line):
 
-Anything the legacy format can't express on a line (source-IP binding, per-object intervals,
-loss-tolerant ping, control channel, `contact_on`, …) must come from the **command line** with a
-legacy config — or you move to the modern format, which has directives for all of them.
+| Directive | Value | Effect |
+|---|---|---|
+| `config contact_on` | `down`\|`up`\|`both`\|`none` | Default paging-transition policy |
+| `config queuetime` | seconds | Default per-host check interval |
+| `config send_pings` / `config min_pings` | integer | Loss-tolerant ping echo / required-reply counts |
+| `config page_on_degraded` | — (flag) | Page on a degraded (lossy) ping |
+| `config source_ip` | address | Default outbound bind for the connection checks |
+| `config hostname` | name | Org hostname shown in alerts and the status title |
+| `config sender` / `config from` | address | Alert `From:` address |
+| `config maxqueued` | integer | Cap on concurrent checks |
+| `config statesave_interval` | seconds | How often to flush the state file (0 = only on exit) |
+| `config state_max_age` | seconds | Ignore a state file older than this on load (0 disables) |
+| `config noheartbeat` | — (flag) | Disable the heartbeat summary |
+| `config control` | — (flag) | Enable the control / query channel |
+| `config control_bind` | address | Control-channel bind address (a non-loopback bind needs TLS) |
+| `config control_port` | integer | Control-channel port |
+| `config control_token_file` | `"path"` | Bearer-token file gating control mutations |
+| `config control_tls_cert` / `config control_tls_key` | `"path"` | Control-channel TLS cert / key |
+
+Flag directives (`page_on_degraded`, `noheartbeat`, `control`) take no value. Valid syslog
+facilities are the usual set (`kern`, `user`, `mail`, `daemon`, `auth`, `syslog`, `lpr`, `news`,
+`uucp`, `cron`, `authpriv`, `local0`–`local7`); an unknown one warns and falls back to `daemon`. An
+unknown `loglevel` falls back to `info`, and an unknown `contact_on` to `both`. `config statusfile`
+needs exactly `<html|text> <path>`.
+
+What the legacy format still can't express is **per-object** overrides (one host's own interval,
+`source`, `contact_on`, or loss-tolerant counts) and the structural features (named `object` graphs,
+multiple `dep` parents, `group {}` scopes) — those are what the modern format is for.
 
 ---
 
@@ -463,10 +489,10 @@ effect only at startup. To change a global, restart the daemon. See
 | Spaces in values | No (whitespace-split) | Yes (quoted strings) |
 | Dependency parents | ping/smtp only | any type via `dep` |
 | `numfailures` | Position-dependent | Global default + per-object attribute |
-| Per-object interval / ping counts / `source` / `contact_on` | Not expressible (CLI only) | Per-object attributes |
+| Per-object interval / ping counts / `source` / `contact_on` | No (per-object); globals via `config` | Per-object attributes |
 | Variables / reuse | No | `set` / `$var` |
-| Control channel in file | No (CLI only) | `config control_*` |
-| Org identity / mail-from in file | No (CLI only) | `config hostname` / `sender` |
+| Control channel in file | Yes (`config control_*`) | `config control_*` |
+| Org identity / mail-from in file | Yes (`config hostname` / `sender`) | `config hostname` / `sender` |
 
 ### Legacy field ↔ modern attribute mapping (canonical)
 

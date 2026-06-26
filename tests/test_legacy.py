@@ -280,6 +280,206 @@ def test_config_savestate():
     assert "state_path" not in parse("config savestate\n").overrides
 
 
+# --- post-rewrite global directives backported to legacy (#93) ------------------------
+
+def test_config_backport_globals():
+    """The post-rewrite globals the legacy parser used to drop are now honored, landing in the
+    same Settings fields as the modern parser (#93)."""
+    cfg = (
+        "config contact_on down\n"
+        "config source_ip 192.0.2.10\n"
+        "config queuetime 2.5\n"
+        "config send_pings 3\n"
+        "config min_pings 2\n"
+        "config maxqueued 50\n"
+        "config statesave_interval 30\n"
+        "config state_max_age 600\n"
+        "config control\n"
+        "config control_port 2026\n"
+        "config control_bind 192.0.2.1\n"
+        'config control_token_file "/etc/psysmon/control.token"\n'
+        "config page_on_degraded\n"
+        "config noheartbeat\n"
+        "config sender noc@example.net\n"
+        "config hostname mon.example.net\n"
+    )
+    res = parse(cfg, numfailures=2)
+    assert res.warnings == []
+    assert res.overrides == {
+        "contact_on": "down",
+        "source_ip": "192.0.2.10",
+        "interval_s": 2.5,
+        "send_pings": 3,
+        "min_pings": 2,
+        "max_concurrency": 50,
+        "statesave_s": 30,
+        "state_max_age_s": 600,
+        "control_enabled": True,
+        "control_port": 2026,
+        "control_bind": "192.0.2.1",
+        "control_token_file": "/etc/psysmon/control.token",
+        "page_on_degraded": True,
+        "heartbeat_s": 0,  # set by `noheartbeat`
+        "mail_from": "noc@example.net",
+        "org_hostname": "mon.example.net",
+    }
+
+
+def test_config_backport_matches_modern():
+    """The same global `config` line yields identical overrides in both parsers (#93)."""
+    from psysmon.config.modern import parse as mparse
+
+    cases = [
+        ("contact_on up", "contact_on up;"),
+        ("source_ip 198.51.100.5", "source_ip 198.51.100.5;"),
+        ("queuetime 45", "queuetime 45;"),
+        ("send_pings 4", "send_pings 4;"),
+        ("control", "control;"),
+        ("control_port 9999", "control_port 9999;"),
+        ("page_on_degraded", "page_on_degraded;"),
+        ("from alerts@example.net", "from alerts@example.net;"),
+    ]
+    for legacy_line, modern_line in cases:
+        lr = parse(f"config {legacy_line}\n")
+        mr = mparse(f"config {modern_line}\n")
+        assert lr.overrides == mr.overrides, legacy_line
+        assert lr.warnings == []
+
+
+def test_config_every_global_matches_modern():
+    """Drift guard: EVERY global in the modern directive tables yields identical overrides (and no
+    warnings) in the legacy parser — so a future wrong-field mapping or type mismatch fails here,
+    not silently (#93)."""
+    from psysmon.config import modern
+    from psysmon.config.modern import parse as mparse
+
+    def value_for(name: str) -> str:
+        if name in modern._FLAG_DIRECTIVES:
+            return ""  # valueless
+        if name in modern._INT_DIRECTIVES or name in modern._FLOAT_DIRECTIVES:
+            return "5"
+        if name == "contact_on":
+            return "down"
+        return "x.example.net"  # string globals
+
+    names = (
+        set(modern._INT_DIRECTIVES)
+        | set(modern._FLOAT_DIRECTIVES)
+        | set(modern._STR_DIRECTIVES)
+        | set(modern._FLAG_DIRECTIVES)
+        | {"contact_on"}
+    )
+    for name in sorted(names):
+        line = f"config {name} {value_for(name)}".rstrip()
+        lr = parse(line + "\n")
+        mr = mparse(line + ";\n")
+        assert lr.overrides == mr.overrides, f"{name}: {lr.overrides} != {mr.overrides}"
+        assert lr.warnings == [], f"{name}: {lr.warnings}"
+
+
+def test_config_numeric_extra_token_warns_like_modern():
+    res = parse("config send_pings 3 4\n")  # int global with an extra token
+    assert res.overrides["send_pings"] == 3
+    assert any("takes one value" in w for w in res.warnings)
+
+
+def test_config_numeric_invalid_value_skips():
+    r1 = parse("config queuetime abc\n")  # float global, bad value
+    assert "interval_s" not in r1.overrides
+    assert any("number" in w for w in r1.warnings)
+    r2 = parse("config send_pings xyz\n")  # int global, bad value
+    assert "send_pings" not in r2.overrides
+    assert any("integer" in w for w in r2.warnings)
+
+
+def test_config_new_global_prefix_near_miss_warns_unknown():
+    # Exact-match (not prefix): a near-miss of a new directive is NOT accepted (#93).
+    for bad in ("control_por 9", "send_ping 3", "source_i 192.0.2.1"):
+        res = parse(f"config {bad}\n")
+        assert any("unknown config directive" in w for w in res.warnings), bad
+
+
+def test_config_noheartbeat_vs_heartbeat_do_not_collide():
+    assert parse("config heartbeat 120\n").overrides == {"heartbeat_s": 120}
+    assert parse("config noheartbeat\n").overrides == {"heartbeat_s": 0}
+
+
+def test_config_bare_brace_line_does_not_crash():
+    """A lone `{` strips to no tokens; it must warn + skip (not crash), and still drain a following
+    block so braces stay balanced — a regression guard for the #93 dispatch reorder."""
+    res = parse("{\n")
+    assert res.roots == []
+    assert any("not enough fields" in w for w in res.warnings)
+    res2 = parse(
+        "h.example.net ping h c@x\n"
+        "{\n"
+        "child.example.net ping c c@x\n"
+        "}\n"
+        "after.example.net ping a c@x\n"
+    )
+    # the orphaned block is drained; parsing recovers and the trailing host still loads.
+    assert [r.hostname for r in res2.roots] == ["h.example.net", "after.example.net"]
+
+
+def test_config_old_style_block_unchanged():
+    """The dispatch reorder must not change how a pre-#93 legacy config parses — #93 is additive."""
+    cfg = (
+        "config pageinterval 15\n"
+        "config numfailures 4\n"
+        "config logging local4\n"
+        "config loglevel info\n"
+        "config statusfile html /var/www/status.html\n"
+        "config savestate /var/lib/psysmon/state.json\n"
+        "config sleeptime 30\n"
+        "router.example.net ping edge noc@example.net\n"
+    )
+    res = parse(cfg, numfailures=2)
+    assert res.overrides == {
+        "pageinterval_min": 15,
+        "numfailures": 4,
+        "syslog_facility": "local4",
+        "log_level": "info",
+        "status_html": True,
+        "status_path": "/var/www/status.html",
+        "state_path": "/var/lib/psysmon/state.json",
+    }
+    assert any("sleeptime is obsolete" in w for w in res.warnings)
+    assert [r.hostname for r in res.roots] == ["router.example.net"]
+    assert res.roots[0].max_down == 4  # numfailures snapshotted (position-dependent)
+
+
+def test_config_contact_on_validates():
+    assert parse("config contact_on none\n").overrides["contact_on"] == "none"
+    bad = parse("config contact_on sometimes\n")
+    assert bad.overrides["contact_on"] == "both"  # invalid -> both, like the modern parser
+    assert any("contact_on" in w for w in bad.warnings)
+
+
+def test_config_flag_extra_token_warns():
+    res = parse("config control on\n")  # a flag takes no value
+    assert res.overrides["control_enabled"] is True
+    assert any("takes no value" in w for w in res.warnings)
+
+
+def test_config_value_directive_missing_value_skips():
+    res = parse("config source_ip\n")  # 2-token line; a value directive needs its value
+    assert "source_ip" not in res.overrides
+    assert any("needs a value" in w for w in res.warnings)
+
+
+def test_config_control_paths_join_quoted_spaces():
+    # path-like control globals follow the savestate join+strip precedent (#93).
+    res = parse('config control_tls_cert "/etc/my certs/psysmon.pem"\n')
+    assert res.overrides["control_tls_cert"] == "/etc/my certs/psysmon.pem"
+
+
+def test_config_control_not_swallowed_by_prefix():
+    """Exact-match (not prefix): control_bind/control_port aren't captured by the `control` flag."""
+    res = parse("config control_bind 203.0.113.7\n")
+    assert res.overrides == {"control_bind": "203.0.113.7"}
+    assert res.warnings == []
+
+
 # --- format detection -----------------------------------------------------------------
 
 def test_detect_legacy(sample_config_text):

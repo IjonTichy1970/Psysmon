@@ -200,18 +200,26 @@ Set `source` to:
 ### Group scopes — `group "NAME" { ... }`
 
 A top-level `group "NAME" { … }` block gives every object that joins the group (via the
-`group "NAME"` attribute) shared default settings. Today it carries `source`; it's a scope, so
-future per-group defaults slot in the same way. A per-object value always wins over the group
-default, and the per-object `group "NAME"` membership attribute keeps working with or without a
-matching block (a block-less group is just a display label, #20). Group/object declaration order
-doesn't matter — defaults are resolved after the whole file is read.
+`group "NAME"` attribute) shared default settings: `source`, `contact`, `contact_on`,
+`numfailures`, `queuetime`, and the ping pair `send_pings`/`min_pings`. Object-*identity*
+attributes (`host`/`ip`, `type`, `port`, `url`/`urltext`, `username`/`password`, `dns-query`,
+`desc`) name a single object, so they aren't group defaults — they warn and are ignored inside a
+block. A per-object value always wins over the group default; `send_pings`/`min_pings` inherit as
+an atomic pair (a member that sets either keeps its own ping-count config). The per-object
+`group "NAME"` membership attribute keeps working with or without a matching block (a block-less
+group is just a display label, #20), and group/object declaration order doesn't matter — defaults
+are resolved after the whole file is read. (One wrinkle: a `dns` object's *required* `contact` must
+be set on the object itself — the required-field check runs at parse time, before group defaults
+are applied, so a group `contact` won't satisfy it.)
 
 ```
 group "vpn-sites" {
-    source auto;            # these hosts route freely (unbound)
+    source auto;              # these hosts route freely (unbound)
 }
 group "dmz" {
-    source "192.0.2.9";     # bind DMZ checks to this egress address
+    source "192.0.2.9";       # bind DMZ checks to this egress address
+    contact "noc@example.net";  # shared on-call for every member
+    numfailures 3;              # ... and a shared down threshold
 }
 
 object gw {

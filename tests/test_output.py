@@ -67,6 +67,86 @@ def test_html_show_up_also():
     assert "up.example.net" in h
 
 
+def test_html_healthy_section_collapsed_with_show_up():
+    # --show-up renders the up hosts in a collapsed <details> "Healthy hosts" section below the
+    # bad table; the down hosts stay in the top table (#84).
+    states = [
+        ns("bad.example.net", CheckType.PING, Status.UNPINGABLE, downct=2),
+        ns("good.example.net", CheckType.TCP, Status.OK, port=22),
+    ]
+    h = html_for(states, show_up_also=True)
+    assert '<details class="healthy">' in h   # present and collapsed (no `open` attribute)
+    assert "Healthy hosts (1)" in h
+    # the down host renders before the healthy section; the up host lives inside it
+    assert h.index("bad.example.net") < h.index('<details class="healthy">')
+    assert h.index('<details class="healthy">') < h.index("good.example.net")
+
+
+def test_html_no_healthy_section_without_show_up():
+    states = [
+        ns("bad.example.net", CheckType.PING, Status.UNPINGABLE),
+        ns("good.example.net", CheckType.TCP, Status.OK, port=22),
+    ]
+    h = html_for(states)  # show_up_also=False (default)
+    assert "<details" not in h          # no Healthy section at all (the CSS selector isn't a tag)
+    assert "good.example.net" not in h  # up host hidden
+    assert "bad.example.net" in h       # down host shown
+
+
+def test_html_healthy_section_when_all_up():
+    h = html_for([ns("good.example.net", CheckType.TCP, Status.OK, port=22)], show_up_also=True)
+    assert "All systems operational" in h    # no down hosts -> the ok panel
+    assert '<details class="healthy">' in h  # plus the collapsed healthy list below it
+    assert "good.example.net" in h
+
+
+def test_html_healthy_excludes_suppressed_children():
+    states = [
+        ns("good.example.net", CheckType.TCP, Status.OK, port=22),
+        ns("child.example.net", CheckType.TCP, Status.OK, port=80, suppressed=True),
+    ]
+    h = html_for(states, show_up_also=True)
+    assert "good.example.net" in h
+    assert "child.example.net" not in h  # suppressed children are never shown, even in Healthy
+
+
+def test_text_healthy_section_with_show_up():
+    states = [
+        ns("bad.example.net", CheckType.PING, Status.UNPINGABLE),
+        ns("good.example.net", CheckType.TCP, Status.OK, port=22),
+    ]
+    t = render_text(states, org_hostname="o", show_up_also=True, now_wall=NOW)
+    assert "-- Healthy hosts (1) --" in t
+    assert t.index("bad.example.net") < t.index("Healthy hosts") < t.index("good.example.net")
+    t2 = render_text(states, org_hostname="o", show_up_also=False, now_wall=NOW)
+    assert "Healthy hosts" not in t2 and "good.example.net" not in t2  # no block, up host absent
+
+
+def test_html_no_healthy_section_when_all_down_with_show_up():
+    # --show-up with zero up hosts emits no Healthy <details> section (guarded by `up_rows`).
+    h = html_for([ns("bad.example.net", CheckType.PING, Status.UNPINGABLE)], show_up_also=True)
+    assert "<details" not in h and "Healthy hosts" not in h
+    assert "bad.example.net" in h
+
+
+def test_text_no_healthy_section_when_all_down_with_show_up():
+    t = render_text([ns("bad.example.net", CheckType.PING, Status.UNPINGABLE)],
+                    org_hostname="o", show_up_also=True, now_wall=NOW)
+    assert "Healthy hosts" not in t and "bad.example.net" in t
+
+
+def test_html_healthy_section_groups_up_hosts():
+    # The Healthy section reuses the grouped-table rendering, so up hosts are grouped + ordered.
+    states = [
+        ns("a.example.net", CheckType.TCP, Status.OK, port=22, group="alpha"),
+        ns("b.example.net", CheckType.TCP, Status.OK, port=22, group="beta"),
+    ]
+    h = html_for(states, show_up_also=True)
+    assert '<details class="healthy">' in h
+    assert "alpha" in h and "beta" in h
+    assert h.index("alpha") < h.index("beta")  # alphabetical group order inside the section
+
+
 def test_html_all_operational_when_none_down():
     h = html_for([ns("up.example.net", CheckType.TCP, Status.OK)])
     assert "All systems operational" in h

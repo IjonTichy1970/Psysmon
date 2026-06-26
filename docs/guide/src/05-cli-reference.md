@@ -49,7 +49,9 @@ Where PSYSMON reads its config and writes its status page.
 - `--status-file PATH` — where to write the status page.
 - `--status-format html|text` — status file format (HTML by default).
 - `--status-refresh SECONDS` — auto-refresh interval baked into the HTML page.
-- `--show-up` — list *up* hosts too; by default the page shows only down hosts ("Bad Hosts").
+- `--show-up` — also show the *up* hosts: on the HTML page in a collapsed **"Healthy hosts"**
+  section below the down ones, and on the text page as a labelled block after them. By default only
+  down hosts are shown ("Bad Hosts").
 
 ```bash
 psysmon -f /etc/psysmon.conf --status-file /var/www/psysmon/status.html --show-up

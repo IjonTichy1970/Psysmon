@@ -346,10 +346,14 @@ Set `source` to:
 ### Group scopes — `group "NAME" { ... }` {#group-scopes}
 
 A top-level `group "NAME" { … }` block gives every object that joins the group (via the
-`group "NAME"` attribute) shared default settings. Today it carries `source`; it's a scope, so
-future per-group defaults slot in the same way. A per-object value always wins over the group
-default, and the membership attribute works with or without a matching block (a block-less group is
-just a display label). Group/object declaration order doesn't matter.
+`group "NAME"` attribute) shared default settings: `source`, `contact`, `contact_on`,
+`numfailures`, `queuetime`, and the ping pair `send_pings`/`min_pings`. Object-*identity*
+attributes (`host`/`ip`, `type`, `port`, `url`/`urltext`, `username`/`password`, `dns-query`,
+`desc`) aren't group defaults — they warn and are ignored in a block. A per-object value always
+wins over the group default; `send_pings`/`min_pings` inherit as an atomic pair. The membership
+attribute works with or without a matching block (a block-less group is just a display label), and
+group/object declaration order doesn't matter. (A `dns` object's *required* `contact` must be set
+on the object itself — its required-field check runs before group defaults are applied.)
 
 ```
 group "vpn-sites" {

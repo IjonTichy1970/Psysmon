@@ -78,21 +78,23 @@ td.host { font-weight:600; }
   padding:40px; text-align:center; }
 .ok-panel .big { font-size:42px; color:var(--green); margin-bottom:6px; }
 .footer { padding:14px 26px 26px; color:var(--muted); font-size:12px; }
+details.healthy { margin-top:22px; }
+details.healthy > summary { cursor:pointer; padding:8px 0; font-size:13px; text-transform:uppercase;
+  letter-spacing:.6px; color:var(--green); }
 """
 
 _COLUMNS = ("HostName", "Type", "Port", "Count", "Notified", "Status", "Time Failed", "Last Outage")
 
 
-def _visible(node_states: NodeStates, show_up_also: bool) -> NodeStates:
-    """Rows to show: down (or all, if show_up_also), never suppressed children."""
-    out: NodeStates = []
+def _partition(node_states: NodeStates) -> tuple[NodeStates, NodeStates]:
+    """Non-suppressed rows split into (down, up). Suppressed children are omitted (owner choice)."""
+    down: NodeStates = []
+    up: NodeStates = []
     for node, state in node_states:
         if state.suppressed:
             continue
-        if is_up(state.lastcheck) and not show_up_also:
-            continue
-        out.append((node, state))
-    return out
+        (up if is_up(state.lastcheck) else down).append((node, state))
+    return down, up
 
 
 def _grouped(rows: NodeStates) -> list[tuple[str, NodeStates]]:
@@ -133,6 +135,18 @@ def _last_outage(state: NodeState, now_wall: float) -> str:
     return timefmt.elapsed(state.last_up, now_wall)
 
 
+def _render_tables(rows: NodeStates, now_wall: float) -> str:
+    """Grouped HTML tables for ``rows`` — one table per ``Node.group`` (#20), or a single flat
+    table when no groups are in use."""
+    headers = "".join(f"<th>{h}</th>" for h in _COLUMNS)
+    sections = []
+    for label, grp in _grouped(rows):
+        body = "\n".join(_html_row(node, state, now_wall) for node, state in grp)
+        heading = f'<h2 class="group">{_esc(label)}</h2>\n' if label else ""
+        sections.append(f"{heading}<table><tr>{headers}</tr>\n{body}\n</table>")
+    return "".join(sections)
+
+
 def render_html(
     node_states: NodeStates,
     *,
@@ -142,22 +156,21 @@ def render_html(
     logo_url: str,
     now_wall: float,
 ) -> str:
-    rows = _visible(node_states, show_up_also)
-    down = sum(1 for _, s in rows if not is_up(s.lastcheck))
+    down_rows, up_rows = _partition(node_states)
+    down = len(down_rows)
 
-    if rows:
-        headers = "".join(f"<th>{h}</th>" for h in _COLUMNS)
-        sections = []
-        for label, grp in _grouped(rows):
-            body = "\n".join(_html_row(node, state, now_wall) for node, state in grp)
-            heading = f'<h2 class="group">{_esc(label)}</h2>\n' if label else ""
-            sections.append(f"{heading}<table><tr>{headers}</tr>\n{body}\n</table>")
-        content = f'<div class="wrap">{"".join(sections)}</div>'
+    if down_rows:
+        bad = _render_tables(down_rows, now_wall)
     else:
-        content = (
-            '<div class="wrap"><div class="ok-panel"><div class="big">✓</div>'
-            "<div>All systems operational</div></div></div>"
-        )
+        bad = ('<div class="ok-panel"><div class="big">✓</div>'
+               "<div>All systems operational</div></div>")
+    # With --show-up, the up hosts go in a collapsed "Healthy hosts" section below the bad table
+    # (down hosts stay front-and-centre); without it the page is down-only, no extra bytes (#84).
+    healthy = ""
+    if show_up_also and up_rows:
+        healthy = (f'<details class="healthy"><summary>Healthy hosts ({len(up_rows)})</summary>\n'
+                   f"{_render_tables(up_rows, now_wall)}</details>")
+    content = f'<div class="wrap">{bad}{healthy}</div>'
 
     if down:
         summary = f'<span class="count down">{down}</span> host{"s" if down != 1 else ""} down'
@@ -211,15 +224,8 @@ def _html_row(node: Node, state: NodeState, now_wall: float) -> str:
     return "<tr>" + "".join(cells) + "</tr>"
 
 
-def render_text(
-    node_states: NodeStates, *, org_hostname: str, show_up_also: bool, now_wall: float
-) -> str:
-    rows = _visible(node_states, show_up_also)
-    lines = [
-        f"Network status for {org_hostname} — {timefmt.clock_time(now_wall)}",
-        f"{'Hostname':<28}{'Type':<8}{'Port':<6}{'Cnt':<5}{'Noti':<5}"
-        f"{'Status':<16}{'Time Failed':<16}Last Outage",
-    ]
+def _emit_text_rows(lines: list[str], rows: NodeStates, now_wall: float) -> None:
+    """Append the grouped text rows for ``rows`` to ``lines`` (a ``== group ==`` header each)."""
     for label, grp in _grouped(rows):
         if label:
             lines.append(f"== {label} ==")
@@ -234,8 +240,25 @@ def render_text(
                 f"{timefmt.clock_time(state.deathtime, never_if_zero=True):<16}"
                 f"{_last_outage(state, now_wall)}{extra}"
             )
-    if not rows:
+
+
+def render_text(
+    node_states: NodeStates, *, org_hostname: str, show_up_also: bool, now_wall: float
+) -> str:
+    down_rows, up_rows = _partition(node_states)
+    lines = [
+        f"Network status for {org_hostname} — {timefmt.clock_time(now_wall)}",
+        f"{'Hostname':<28}{'Type':<8}{'Port':<6}{'Cnt':<5}{'Noti':<5}"
+        f"{'Status':<16}{'Time Failed':<16}Last Outage",
+    ]
+    _emit_text_rows(lines, down_rows, now_wall)
+    if not down_rows:
         lines.append("All systems operational.")
+    # --show-up: list the up hosts in a labelled "Healthy hosts" block after the down ones (#84).
+    if show_up_also and up_rows:
+        lines.append("")
+        lines.append(f"-- Healthy hosts ({len(up_rows)}) --")
+        _emit_text_rows(lines, up_rows, now_wall)
     return "\n".join(lines) + "\n"
 
 

@@ -115,6 +115,74 @@ def test_parse_rejects_non_ipv4():
     assert ping.parse_echo_reply(packet) is None
 
 
+# --- pure helpers: IPv6 (ICMPv6) build / parse -------------------------------------------
+
+def _to_echo_reply6(request: bytes) -> bytes:
+    """Turn an ICMPv6 echo *request* (type 128) into a *reply* (type 129); checksum stays 0.
+
+    On a raw AF_INET6 socket the kernel fills the checksum and does *not* prepend an IP header,
+    so a reply frame is just the 8-byte ICMPv6 header + payload at offset 0 — no IPv4-style wrap.
+    """
+    ident, seq = struct.unpack("!HH", request[4:8])
+    payload = request[ping._ECHO_HEADER.size :]
+    return ping._ECHO_HEADER.pack(ping.ICMP6_ECHO_REPLY, 0, 0, ident, seq) + payload
+
+
+def test_build_echo_request6_header_fields():
+    req = ping.build_echo_request6(0xABCD, 0x0007, b"hello")
+    msg_type, code, csum, ident, seq = ping._ECHO_HEADER.unpack(req[: ping._ECHO_HEADER.size])
+    assert (msg_type, code, ident, seq) == (ping.ICMP6_ECHO_REQUEST, 0, 0xABCD, 0x0007)
+    # Checksum left 0 — the kernel computes the real ICMPv6 checksum (over the IPv6 pseudo-header);
+    # icmp_checksum must NOT be applied to a v6 frame.
+    assert csum == 0
+    assert req[ping._ECHO_HEADER.size :] == b"hello"
+
+
+def test_build_echo_request6_masks_ident_seq_to_16_bits():
+    # Over-16-bit ident/seq are masked (& 0xFFFF) — pins the masking a bare builder would skip.
+    req = ping.build_echo_request6(0x1_0042, 0x1_0099, b"x")
+    _t, _c, _csum, ident, seq = ping._ECHO_HEADER.unpack(req[: ping._ECHO_HEADER.size])
+    assert (ident, seq) == (0x0042, 0x0099)
+
+
+def test_build_parse_round_trip6():
+    # No IP header on a raw AF_INET6 socket: the reply parses at offset 0.
+    req = ping.build_echo_request6(0x1111, 0x2222, b"payload")
+    assert ping.parse_echo_reply6(_to_echo_reply6(req)) == (0x1111, 0x2222, b"payload")
+
+
+def test_parse6_returns_empty_payload_for_header_only_reply():
+    # Header-only reply -> empty payload (the demux then rejects b"" — it can't echo the nonce).
+    reply = _to_echo_reply6(ping.build_echo_request6(0x7777, 0x0003, b""))
+    assert ping.parse_echo_reply6(reply) == (0x7777, 0x0003, b"")
+
+
+def test_parse6_rejects_non_echo_reply():
+    # An echo *request* (type 128) is not a reply (type 129) -> None.
+    assert ping.parse_echo_reply6(ping.build_echo_request6(0x1234, 0x0001, b"data")) is None
+
+
+def test_parse6_rejects_truncated_packet():
+    assert ping.parse_echo_reply6(b"") is None
+    assert ping.parse_echo_reply6(b"\x81\x00\x00\x00\x00") is None  # 5 bytes < 8-byte header
+    assert ping.parse_echo_reply6(b"\x81" + b"\x00" * 6) is None    # 7 bytes — exact < 8 boundary
+
+
+def test_parse6_rejects_ipv4_wrapped_packet():
+    # The "no IHL skip" invariant: a v4-style reply (IPv4 header + ICMP) fed to the v6 parser
+    # reads the IPv4 header's first byte (0x45) as the ICMPv6 type -> not 129 -> None. A raw v6
+    # socket never delivers an IP header, so this only guards against cross-wiring the parsers.
+    v4_reply = _wrap_ipv4(_to_echo_reply(ping.build_echo_request(0x1, 0x1, b"sixteen-byte-pad!")))
+    assert ping.parse_echo_reply6(v4_reply) is None
+
+
+def test_v4_parser_rejects_ipv6_frame():
+    # The mirror: a raw ICMPv6 reply (no IP header, type 129) fed to the v4 parser fails its
+    # version>>4 == 4 check (0x81 >> 4 == 8) -> None.
+    v6_reply = _to_echo_reply6(ping.build_echo_request6(0x1, 0x1, b"sixteen-byte-pad!"))
+    assert ping.parse_echo_reply(v6_reply) is None
+
+
 # --- counter is monotonic, not random ----------------------------------------------------
 
 def test_counter_increments_and_is_16bit():

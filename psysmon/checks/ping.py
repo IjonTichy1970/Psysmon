@@ -29,7 +29,8 @@ requires root / raw-socket capability) and they are kept open across a later pri
 bound raw socket, so such probes fall back to the unbound socket with a one-time warning.
 
 The pure framing helpers (:func:`icmp_checksum`, :func:`build_echo_request`,
-:func:`parse_echo_reply`) need no privilege and are unit-tested directly.
+:func:`parse_echo_reply`, and their ICMPv6 siblings :func:`build_echo_request6` /
+:func:`parse_echo_reply6`) need no privilege and are unit-tested directly.
 """
 
 from __future__ import annotations
@@ -51,6 +52,9 @@ logger = logging.getLogger(__name__)
 # ICMP message types we care about.
 ICMP_ECHO_REQUEST = 8
 ICMP_ECHO_REPLY = 0
+# ICMPv6 echo types (RFC 4443) — the IPv6 ping path (#24). Same 8-byte echo header layout.
+ICMP6_ECHO_REQUEST = 128
+ICMP6_ECHO_REPLY = 129
 
 _ECHO_HEADER = struct.Struct("!BBHHH")  # type, code, checksum, identifier, sequence
 # Fallback payload for the standalone build_echo_request() framing helper / tests only — real
@@ -119,6 +123,38 @@ def parse_echo_reply(packet: bytes) -> tuple[int, int, bytes] | None:
     if msg_type != ICMP_ECHO_REPLY:
         return None
     return ident, seq, icmp[_ECHO_HEADER.size :]
+
+
+def build_echo_request6(ident: int, seq: int, payload: bytes = _DEFAULT_PAYLOAD) -> bytes:
+    """Build an ICMPv6 echo *request* (type 128, code 0).
+
+    The checksum is deliberately left 0: the kernel computes the real ICMPv6 checksum, which
+    covers the IPv6 pseudo-header (the source/destination addresses) that only the kernel knows —
+    so ``icmp_checksum`` is *not* applied here (it would produce a wrong value, omitting the
+    pseudo-header). On a raw ``IPPROTO_ICMPV6`` socket the kernel inserts the checksum at the
+    protocol-mandated offset automatically (RFC 3542); a later commit sets ``IPV6_CHECKSUM``
+    explicitly only as a belt-and-suspenders affirmation of that contract, not to enable it.
+    """
+    ident &= 0xFFFF
+    seq &= 0xFFFF
+    return _ECHO_HEADER.pack(ICMP6_ECHO_REQUEST, 0, 0, ident, seq) + payload
+
+
+def parse_echo_reply6(packet: bytes) -> tuple[int, int, bytes] | None:
+    """Parse a received ICMPv6 packet, returning ``(identifier, sequence, payload)`` for a reply.
+
+    Unlike IPv4, the kernel does *not* prepend the IPv6 header on a raw ``AF_INET6`` socket, so
+    the ICMPv6 header is at offset 0 — there is no header to skip (the IHL logic of
+    :func:`parse_echo_reply` is absent). Returns ``None`` for any packet that is not a well-formed
+    ICMPv6 type-129 echo reply (wrong type, truncated, etc.). The payload after the 8-byte header
+    is returned so the caller can verify the echoed nonce.
+    """
+    if len(packet) < _ECHO_HEADER.size:
+        return None
+    msg_type, _code, _checksum, ident, seq = _ECHO_HEADER.unpack(packet[: _ECHO_HEADER.size])
+    if msg_type != ICMP6_ECHO_REPLY:
+        return None
+    return ident, seq, packet[_ECHO_HEADER.size :]
 
 
 class PingService:

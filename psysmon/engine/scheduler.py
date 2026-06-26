@@ -39,7 +39,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 
-from psysmon.checks import base, dns, http, pop3, smtp, tcp, udp
+from psysmon.checks import base, dns, http, imap, pop3, smtp, tcp, udp
 from psysmon.checks.ping import PingService
 from psysmon.config.model import SOURCE_AUTO, CheckType, Node, NodeState, is_ping_type, type_to_name
 from psysmon.config.settings import Settings
@@ -66,6 +66,9 @@ _CHECKERS: dict[CheckType, base.Checker] = {
     CheckType.UDP: udp.check,
     CheckType.SMTP: smtp.check,
     CheckType.POP3: pop3.check,
+    CheckType.POP3S: pop3.check,   # POP3 over implicit TLS (base wraps TLS for POP3S) (#88)
+    CheckType.IMAP: imap.check,
+    CheckType.IMAPS: imap.check,   # IMAP over implicit TLS (#88)
     CheckType.DNS: dns.check,
     CheckType.HTTP: http.check,
     CheckType.HTTPS: http.check,

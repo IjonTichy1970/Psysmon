@@ -42,6 +42,13 @@ def test_ping6_type_tables_populated():
     assert DEFAULT_PORT[CheckType.PING6] is None
 
 
+def test_mail_tls_type_tables_populated():
+    # type_to_name / DEFAULT_PORT carry the new mail types (else status page / port fallback fail).
+    for ct, name, port in ((CheckType.POP3S, "pop3s", 995), (CheckType.IMAP, "imap", 143),
+                           (CheckType.IMAPS, "imaps", 993)):
+        assert type_to_name(ct) == name and DEFAULT_PORT[ct] == port
+
+
 def test_default_ports():
     assert DEFAULT_PORT[CheckType.SMTP] == 25
     assert DEFAULT_PORT[CheckType.POP3] == 110

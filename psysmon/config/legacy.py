@@ -45,12 +45,15 @@ _FACILITIES = frozenset(
 )
 
 # Check-type keywords in the original dispatch order, prefix-matched like the C strncmp.
-# A None value marks a type the legacy parser does not handle (warn + skip). The v6 ping
-# keywords MUST precede "ping": otherwise "ping6"/"pingv6" prefix-match "ping" and silently
-# become IPv4 ping. IPv6 ping is modern-config-only (#24), so they map to None (warn + redirect).
+# A None value marks a type the legacy parser does not handle (warn + skip). ORDER MATTERS: a
+# longer keyword sharing a prefix MUST precede the shorter one or it gets swallowed — the v6 ping
+# keywords before "ping", and "pop3s"/"imaps" before "pop3"/"imap" (else "pop3s" silently becomes
+# plaintext "pop3"). IPv6 ping and the modern mail types (imap/imaps/pop3s) are modern-config-only
+# (#24/#88), so they map to None (warn + redirect to the modern config).
 _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
     ("ping6", None), ("pingv6", None), ("icmp6", None),  # before "ping"! (#24)
     ("ping", CheckType.PING),
+    ("pop3s", None), ("imaps", None),  # before "pop3"/"imap"! modern-only mail (#88)
     ("pop3", CheckType.POP3),
     ("imap", None),
     ("tcp", CheckType.TCP),
@@ -70,6 +73,10 @@ _PING_LIKE = frozenset({CheckType.PING, CheckType.SMTP})
 # Legacy IPv6 ping keywords: recognized only to warn + point at the modern config (#24), never
 # routed (the legacy grammar stays IPv4-only). Listed before "ping" in _TYPE_KEYWORDS above.
 _V6_PING_KEYWORDS = frozenset({"ping6", "pingv6", "icmp6"})
+
+# Legacy mail keywords recognized only to warn + point at the modern config (#88): imap was a
+# dropped legacy type, and pop3s/imaps are TLS variants the legacy plaintext grammar doesn't speak.
+_MODERN_ONLY_MAIL = frozenset({"imap", "imaps", "pop3s"})
 
 # Hard cap on `{` nesting depth. Real dependency trees are only a handful deep; anything past
 # this is malformed/pathological, and recursing further risks Python's RecursionError surfacing
@@ -207,6 +214,9 @@ class _Parser:
             if keyword in _V6_PING_KEYWORDS:
                 self._warn(lineno, f"IPv6 ping ({keyword!r}) needs the modern object{{}} config; "
                            "legacy is IPv4-only — skipping (#24)")
+            elif keyword in _MODERN_ONLY_MAIL:
+                self._warn(lineno, f"{keyword!r} needs the modern object{{}} config; the legacy "
+                           "format has no IMAP/TLS mail checks — skipping (#88)")
             elif keyword is not None:
                 self._warn(lineno, f"unsupported check type {keyword!r}; skipping")
             else:

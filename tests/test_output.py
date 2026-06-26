@@ -213,6 +213,15 @@ def test_json_emits_ping6_type():
     assert hosts[0]["type"] == "ping6"
 
 
+def test_json_emits_mail_tls_types():
+    # pop3s/imap/imaps serialize with their own type strings in the JSON (#88).
+    states = [ns("a.example.net", CheckType.POP3S, Status.OK, port=995),
+              ns("b.example.net", CheckType.IMAP, Status.OK, port=143),
+              ns("c.example.net", CheckType.IMAPS, Status.OK, port=993)]
+    types = {h["hostname"]: h["type"] for h in json.loads(to_json(states, now_wall=NOW))["hosts"]}
+    assert types == {"a.example.net": "pop3s", "b.example.net": "imap", "c.example.net": "imaps"}
+
+
 def test_html_shows_ack_badge_and_escapes_note():
     states = [ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW,
                  acked=True, note="<script>alert(1)</script>")]

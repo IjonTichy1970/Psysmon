@@ -121,11 +121,13 @@ Inside the block, attributes are `key value;` pairs.
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
 | `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (OR / any-path) |
 
-**Check types** (the `type` keyword): `ping`, `ping6`, `tcp`, `udp`, `smtp`, `pop3`, `dns`, `http`,
-`https`. `ping` is an ICMP (IPv4) echo; **`ping6` is an ICMPv6 (IPv6) echo** — it resolves the
-host's **AAAA** record and pings over IPv6 (`pingv6` and `icmp6` are accepted aliases). For legacy
-familiarity, `authdns` is accepted as an alias for `dns` and `www` for `http`. Default ports: smtp
-`25`, pop3 `110`, dns `53`, http `80`, https `443` (ping and ping6 have none; tcp/udp require an
+**Check types** (the `type` keyword): `ping`, `ping6`, `tcp`, `udp`, `smtp`, `pop3`, `pop3s`,
+`imap`, `imaps`, `dns`, `http`, `https`. `ping` is an ICMP (IPv4) echo and **`ping6`** an ICMPv6
+(IPv6) echo over the host's **AAAA** record (`pingv6`/`icmp6` are accepted aliases). **`imap`** is
+an IMAP greeting check (with an optional LOGIN — see below); **`pop3s`/`imaps`** are the
+implicit-TLS variants of POP3/IMAP (TLS from connect). For legacy familiarity, `authdns` is an
+alias for `dns` and `www` for `http`. Default ports: smtp `25`, pop3 `110`, pop3s `995`, imap
+`143`, imaps `993`, dns `53`, http `80`, https `443` (ping and ping6 have none; tcp/udp require an
 explicit `port`).
 
 **Required fields per type** — an object missing a required field is warned and skipped; the rest
@@ -133,11 +135,18 @@ of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `ping6`, `smtp` | `host`, `type` |
+| `ping`, `ping6`, `smtp`, `imap`, `imaps` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
 | `http`, `https` | `host`, `type`, `url`, `urltext` |
-| `pop3` | `host`, `type`, `username`, `password` |
+| `pop3`, `pop3s` | `host`, `type`, `username`, `password` |
 | `dns` | `host`, `type`, `dns-query`, `contact` |
+
+**Mail checks.** `imap` reads the IMAP greeting and is *up* on a ready server; set
+`username`/`password` and it also performs a `LOGIN`, reporting a rejected credential as `Bad Auth`.
+`pop3s` and `imaps` speak their protocol over **implicit TLS** (TLS from connect). These TLS checks
+are *reachability* checks — the handshake must succeed, but the certificate is **not** verified, so
+a self-signed or soon-to-expire cert still reads up (certificate-*expiry* monitoring is a separate,
+planned check). `pop3`/`pop3s` require `username`/`password`; `imap`/`imaps` take them optionally.
 
 ### Per-object overrides (psysmon extensions)
 

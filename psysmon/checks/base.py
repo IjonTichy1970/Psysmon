@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import socket
+import ssl
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -25,10 +26,31 @@ import dns.asyncquery
 import dns.exception
 import dns.message
 
-from psysmon.config.model import DEFAULT_PORT, Node
+from psysmon.config.model import DEFAULT_PORT, CheckType, Node
 from psysmon.status import Status
 
 DEFAULT_TIMEOUT_S = 10.0
+
+# Check types that speak their protocol over implicit TLS (TLS from connect, not STARTTLS) (#88).
+_IMPLICIT_TLS = frozenset({CheckType.POP3S, CheckType.IMAPS})
+
+
+def _tls_context() -> ssl.SSLContext:
+    """A client TLS context that establishes the connection but does NOT verify the certificate.
+
+    The TLS service checks are *reachability* checks (decision for #88): they answer "is the
+    service answering over TLS", so a self-signed or soon-to-expire cert must not read as down —
+    certificate *health* (expiry/chain) is owned by a separate check (#87). The verify-less context
+    mirrors the deliberate ``CERT_NONE`` choice in the control channel; hostname checking is off so
+    it also works against an IP literal.
+    """
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+_TLS_CONTEXT = _tls_context()
 
 
 class Resolver(Protocol):
@@ -71,10 +93,16 @@ async def resolve(
 
 
 async def open_connection(
-    ip: str, port: int, ctx: CheckContext
+    ip: str, port: int, ctx: CheckContext, *, tls: bool = False,
+    server_hostname: str | None = None,
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """Open a TCP connection, binding the configured source IP if set."""
+    """Open a TCP connection, binding the configured source IP if set. With ``tls=True`` the stream
+    is wrapped in (unverified, reachability-only) TLS, using ``server_hostname`` for SNI (#88)."""
     local_addr = (ctx.source_ip, 0) if ctx.source_ip else None
+    if tls:
+        return await asyncio.open_connection(
+            ip, port, local_addr=local_addr, ssl=_TLS_CONTEXT, server_hostname=server_hostname
+        )
     return await asyncio.open_connection(ip, port, local_addr=local_addr)
 
 
@@ -119,12 +147,16 @@ async def open_check_connection(
     """Resolve + open a TCP connection for a stream check, always tearing it down cleanly.
 
     Centralizes the resolve -> effective-port -> open_connection scaffolding shared by the
-    tcp/smtp/pop3 checks and guarantees the same teardown everywhere (``close()`` +
-    ``wait_closed()``), so the contract can't drift between checkers.
+    tcp/smtp/pop3/imap checks and guarantees the same teardown everywhere (``close()`` +
+    ``wait_closed()``), so the contract can't drift between checkers. For the implicit-TLS types
+    (pop3s/imaps) it transparently wraps the stream in TLS, so the protocol checkers are unchanged.
     """
     ip = await resolve(node, ctx)
     use_port = port if port is not None else effective_port(node)
-    reader, writer = await open_connection(ip, use_port, ctx)
+    tls = node.check_type in _IMPLICIT_TLS  # pop3s/imaps speak over implicit TLS (#88)
+    reader, writer = await open_connection(
+        ip, use_port, ctx, tls=tls, server_hostname=node.hostname if tls else None
+    )
     try:
         yield reader, writer
     finally:

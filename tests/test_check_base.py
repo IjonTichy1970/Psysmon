@@ -52,6 +52,38 @@ async def test_resolve_passes_family_to_resolver():
     assert seen == [socket.AF_INET, socket.AF_INET6]
 
 
+async def test_open_check_connection_wraps_tls_for_implicit_tls_types(monkeypatch):
+    # pop3s/imaps connect over TLS (SNI = the hostname); plaintext types don't (#88).
+    captured: dict = {}
+
+    async def fake_open(ip, port, ctx, *, tls=False, server_hostname=None):
+        captured.update(tls=tls, sni=server_hostname)
+
+        class _RW:
+            def close(self):
+                pass
+
+            async def wait_closed(self):
+                pass
+
+        return _RW(), _RW()
+
+    monkeypatch.setattr(base, "open_connection", fake_open)
+    ctx = base.CheckContext(resolver=FakeResolver())
+
+    async with base.open_check_connection(
+        Node(hostname="mx.example.net", check_type=CheckType.IMAPS), ctx
+    ):
+        pass
+    assert captured == {"tls": True, "sni": "mx.example.net"}
+
+    async with base.open_check_connection(
+        Node(hostname="mx.example.net", check_type=CheckType.IMAP), ctx
+    ):
+        pass
+    assert captured == {"tls": False, "sni": None}
+
+
 async def test_perform_success_passthrough(check_ctx):
     async def ok(n, ctx):
         return Status.OK

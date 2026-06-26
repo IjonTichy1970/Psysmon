@@ -75,6 +75,26 @@ def test_to_modern_emits_ping6():
     assert len(reparsed.roots) == 1 and reparsed.roots[0].check_type is CheckType.PING6
 
 
+def test_to_modern_emits_mail_tls_types():
+    # to_modern must serialize the new mail types (not KeyError) and round-trip through the modern
+    # parser, carrying pop3s's required creds and imaps's optional creds (#88).
+    roots = [
+        Node(hostname="im.example.net", check_type=CheckType.IMAP),
+        Node(hostname="ims.example.net", check_type=CheckType.IMAPS, username="u", password="p"),
+        Node(hostname="p3s.example.net", check_type=CheckType.POP3S, username="u", password="p"),
+    ]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert "type imap;" in text and "type imaps;" in text and "type pop3s;" in text
+    reparsed = parse_modern(text)
+    types = {n.hostname: n.check_type for n in reparsed.roots}
+    assert types == {
+        "im.example.net": CheckType.IMAP,
+        "ims.example.net": CheckType.IMAPS,
+        "p3s.example.net": CheckType.POP3S,
+    }
+
+
 def test_default_ports_omitted_tcp_udp_kept():
     _, _, text, _ = _roundtrip(PER_TYPE)
     # tcp/udp have no default port -> always emitted; smtp/pop3/dns/http/https default -> omitted.

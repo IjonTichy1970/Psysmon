@@ -188,11 +188,12 @@ _TYPE_KEYWORDS = {
     "udp": CheckType.UDP,
     "smtp": CheckType.SMTP,
     "pop3": CheckType.POP3,
+    "pop3s": CheckType.POP3S, "imap": CheckType.IMAP, "imaps": CheckType.IMAPS,  # #88
     "dns": CheckType.DNS, "authdns": CheckType.DNS,
     "http": CheckType.HTTP, "www": CheckType.HTTP,
     "https": CheckType.HTTPS,
 }
-_DROPPED_TYPES = frozenset({"imap", "nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
+_DROPPED_TYPES = frozenset({"nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
 # Object attributes the parser understands; anything else (a typo, or a not-yet-supported key)
 # warns and is ignored. Structural fields (M3) + per-object overrides (M4) + contact_on + source.
 _OBJECT_ATTRS = frozenset({
@@ -696,11 +697,20 @@ class _Parser:
                 self._warn(line, f"object '{name}': {type_kw} needs 'url' and 'urltext'; skipping")
                 return None, []
             node.url, node.url_text = resolved["url"], resolved["urltext"]
-        elif ctype is CheckType.POP3:
+        elif ctype in (CheckType.POP3, CheckType.POP3S):
             if not resolved.get("username") or not resolved.get("password"):
-                self._warn(line, f"object '{name}': pop3 needs 'username' and 'password'; skipping")
+                self._warn(line, f"object '{name}': {type_kw} needs 'username' and 'password'; "
+                           "skipping")
                 return None, []
             node.username, node.password = resolved["username"], resolved["password"]
+        elif ctype in (CheckType.IMAP, CheckType.IMAPS):
+            # IMAP is a banner check; a LOGIN runs only if BOTH credentials are given (#88).
+            u, p = resolved.get("username"), resolved.get("password")
+            if u and p:
+                node.username, node.password = u, p
+            elif u or p:
+                self._warn(line, f"object '{name}': imap auth needs both 'username' and "
+                           "'password'; ignoring the partial credentials")
         elif ctype is CheckType.DNS:
             # Legacy authdns requires a name AND a contact (a DNS check that pages nobody is what
             # the legacy parser rejected at load) — keep parity.

@@ -18,9 +18,9 @@ from enum import StrEnum
 class CheckType(StrEnum):
     """Check types in scope for the rewrite.
 
-    Values are the legacy ``sysmon.conf`` keywords. (Dropped legacy types — imap, nntp,
-    radius, umichX500, snmp, pop2, bootp — are intentionally absent; the parser warns and
-    skips them.)
+    Values are the config keywords. (Dropped legacy types — nntp, radius, umichX500, snmp, pop2,
+    bootp — are intentionally absent; the parser warns and skips them. ``imap`` was dropped too but
+    is revived for the modern config in #88.)
     """
 
     PING = "ping"
@@ -29,6 +29,9 @@ class CheckType(StrEnum):
     UDP = "udp"
     SMTP = "smtp"
     POP3 = "pop3"
+    POP3S = "pop3s"  # POP3 over implicit TLS (#88)
+    IMAP = "imap"  # IMAP greeting + optional LOGIN (#88)
+    IMAPS = "imaps"  # IMAP over implicit TLS (#88)
     DNS = "dns"  # authoritative DNS query (legacy "authdns")
     HTTP = "http"  # legacy "www" content check
     HTTPS = "https"
@@ -42,6 +45,9 @@ DEFAULT_PORT: dict[CheckType, int | None] = {
     CheckType.UDP: None,  # required in config
     CheckType.SMTP: 25,
     CheckType.POP3: 110,
+    CheckType.POP3S: 995,
+    CheckType.IMAP: 143,
+    CheckType.IMAPS: 993,
     CheckType.DNS: 53,
     CheckType.HTTP: 80,
     CheckType.HTTPS: 443,
@@ -55,6 +61,9 @@ _DISPLAY_NAME: dict[CheckType, str] = {
     CheckType.UDP: "udp",
     CheckType.SMTP: "smtp",
     CheckType.POP3: "pop3",
+    CheckType.POP3S: "pop3s",
+    CheckType.IMAP: "imap",
+    CheckType.IMAPS: "imaps",
     CheckType.DNS: "authdns",
     CheckType.HTTP: "www",
     CheckType.HTTPS: "https",

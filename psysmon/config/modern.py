@@ -183,6 +183,7 @@ _VAR_RE = re.compile(r"\$([A-Za-z_]\w*)")  # a $NAME reference (set / $var subst
 # --- object `type <T>` keyword -> CheckType (M3) -------------------------------------------
 _TYPE_KEYWORDS = {
     "ping": CheckType.PING,
+    "ping6": CheckType.PING6, "pingv6": CheckType.PING6, "icmp6": CheckType.PING6,  # #24
     "tcp": CheckType.TCP,
     "udp": CheckType.UDP,
     "smtp": CheckType.SMTP,
@@ -192,7 +193,6 @@ _TYPE_KEYWORDS = {
     "https": CheckType.HTTPS,
 }
 _DROPPED_TYPES = frozenset({"imap", "nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
-_DEFERRED_TYPES = frozenset({"ping6", "pingv6", "icmp6"})  # IPv6 ping -> #24
 # Object attributes the parser understands; anything else (a typo, or a not-yet-supported key)
 # warns and is ignored. Structural fields (M3) + per-object overrides (M4) + contact_on + source.
 _OBJECT_ATTRS = frozenset({
@@ -614,25 +614,30 @@ class _Parser:
         self._group_defaults[name] = settings
 
     def _parse_source(self, line: int, who: str, raw: str) -> str | None:
-        """Validate a ``source`` value: the literal ``auto`` (-> SOURCE_AUTO, stay unbound) or an IP
-        literal (the bind address). Anything else warns and is ignored (returns ``None``)."""
+        """Validate a ``source`` value's syntax: the literal ``auto`` (-> SOURCE_AUTO, stay
+        unbound) or an IP literal, v4 or v6 (the bind address). A non-IP warns and is ignored
+        (returns ``None``). The family is matched against the check separately
+        (:meth:`_source_family_ok`) — a group default's family can't be judged until it is applied
+        to a typed node, so syntax and family validation are split (#24)."""
         val = raw.strip()
         if val.lower() == SOURCE_AUTO:
             return SOURCE_AUTO
         try:
-            addr = ipaddress.ip_address(val)
+            ipaddress.ip_address(val)
         except ValueError:
-            self._warn(line, f"{who}: source must be an IPv4 address or 'auto', got '{raw}'; "
-                       "ignoring")
-            return None
-        if addr.version != 4:
-            # The whole bind stack is IPv4-only (raw AF_INET ping; IPv4 connection checks); an IPv6
-            # source could never bind, so reject it at load with a clear warning rather than letting
-            # it silently fail at probe time. IPv6 is #24.
-            self._warn(line, f"{who}: IPv6 source binding isn't supported yet (#24), got '{raw}'; "
+            self._warn(line, f"{who}: source must be an IP address or 'auto', got '{raw}'; "
                        "ignoring")
             return None
         return val
+
+    @staticmethod
+    def _source_family_ok(node: Node, src: str) -> bool:
+        """True if bind source ``src`` is family-compatible with ``node``'s check: ``auto`` always
+        is; a ``ping6`` check wants an IPv6 source, every other check an IPv4 source (#24)."""
+        if src == SOURCE_AUTO:
+            return True
+        want_version = 6 if node.check_type is CheckType.PING6 else 4
+        return ipaddress.ip_address(src).version == want_version
 
     def _build_node(
         self, line: int, name: str, attrs: dict[str, tuple[int, list[Token]]]
@@ -686,7 +691,7 @@ class _Parser:
                 self._warn(line, f"object '{name}': dns needs 'dns-query' and 'contact'; skipping")
                 return None, []
             node.username = resolved["dns-query"]  # the name to look up (legacy convention)
-        else:  # ping-like (ping, smtp): a port may still override the default
+        else:  # ping-like (ping, ping6, smtp): a port may still override the default
             if "port" in resolved:
                 port = self._port(line, name, resolved.get("port"))
                 if port is not None:
@@ -747,8 +752,11 @@ class _Parser:
                            f"{'/'.join(CONTACT_ON_CHOICES)}; ignoring")
         if "source" in resolved:
             src = self._parse_source(line, f"object '{name}'", resolved["source"])
-            if src is not None:
+            if src is not None and self._source_family_ok(node, src):
                 node.source = src  # wins over any group default (resolved later)
+            elif src is not None:
+                self._warn(line, f"object '{name}': source {src} is the wrong family for a "
+                           f"{node.check_type.value} check; leaving unbound")
         self._apply_ping_counts(line, name, node, resolved)
 
     def _apply_ping_counts(
@@ -807,8 +815,6 @@ class _Parser:
     def _type_error(name: str, type_kw: str | None) -> str:
         if type_kw is None:
             return f"object '{name}' has no 'type'; skipping"
-        if type_kw in _DEFERRED_TYPES:
-            return f"object '{name}': IPv6 ping ('{type_kw}') isn't supported yet (#24); skipping"
         if type_kw in _DROPPED_TYPES:
             return f"object '{name}': check type '{type_kw}' is not supported; skipping"
         return f"object '{name}': invalid type '{type_kw}'; skipping"
@@ -818,11 +824,17 @@ class _Parser:
         none (#70). Per-object ``source`` (already on the node) wins; a group with no ``source``
         default, or membership in a group with no block (a plain display label, #20), leaves the
         object's source unset (it then falls back to the engine's per-type default)."""
-        for _name, node, _dep, _line in self._objects:
+        for _name, node, _dep, line in self._objects:
             if node.source is None and node.group:
                 grp = self._group_defaults.get(node.group)
                 if grp and "source" in grp:
-                    node.source = grp["source"]
+                    src = grp["source"]
+                    if self._source_family_ok(node, src):
+                        node.source = src
+                    else:
+                        self._warn(line, f"object '{node.hostname}': group '{node.group}' source "
+                                   f"{src} is the wrong family for a {node.check_type.value} "
+                                   "check; leaving unbound")
 
     def _build_forest(self) -> list[Node]:
         """Resolve each object's ``dep`` edges into the ``Node.children`` DAG (multi-parent, #62).

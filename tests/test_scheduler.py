@@ -505,6 +505,16 @@ def test_multi_parent_mixed_ping_and_non_ping_uses_the_ping_path():
     assert not any("non-ping parent" in w for w in sched.warnings)  # no spurious warning
 
 
+def test_ping6_parent_gates_children_like_ping():
+    # A ping6 parent opens a dependency gate exactly like an IPv4 ping parent (is_ping_type, not a
+    # PING-only special-case): its child is gated by it, with no "non-ping parent" warning (#24).
+    c = node("c", CheckType.TCP)
+    a = node("a", CheckType.PING6, children=[c])
+    sched, _ = make([a], ScriptedRunner({}), ManualClock())
+    assert {s.node.hostname for s in _sched_of(sched, "c").gate} == {"a"}
+    assert not any("non-ping parent" in w for w in sched.warnings)
+
+
 def test_all_non_ping_parents_drops_with_warning():
     # c deps only x (tcp): no ping path at all -> dropped + warned (path-relative non-ping rule).
     c = node("c", CheckType.TCP)
@@ -1021,14 +1031,18 @@ async def test_no_global_source_leaves_non_ping_unbound():
 
 
 def test_scheduler_collects_bound_ping_sources_for_the_pool():
-    # The scheduler hands the PingService the distinct BOUND ping sources to pre-open; `auto`,
-    # unset, and non-ping nodes contribute none (#70).
+    # The scheduler hands the PingService the distinct BOUND ping sources to pre-open, split by
+    # family: a ping6 node's IPv6 source feeds the v6 pool, not the v4 collection (#70/#24).
+    # `auto`, unset, and non-ping nodes contribute none.
     clock = ManualClock()
     roots = [
         Node(hostname="a", check_type=CheckType.PING, source="203.0.113.5"),
         Node(hostname="b", check_type=CheckType.PING, source=SOURCE_AUTO),
         Node(hostname="c", check_type=CheckType.PING),
         Node(hostname="d", check_type=CheckType.TCP, port=80, source="198.51.100.9"),
+        Node(hostname="e", check_type=CheckType.PING6, source="2001:db8::5"),
     ]
     sched, _ = make(roots, ScriptedRunner(), clock, source_ip="192.0.2.1")
-    assert sched.ping_service._configured_sources == frozenset({"203.0.113.5"})
+    assert sched.ping_service._v4.configured == frozenset({"203.0.113.5"})
+    assert sched.ping_service._v6.configured == frozenset({"2001:db8::5"})
+    assert sched.ping_service._v6.enabled is True  # a ping6 node enables the v6 pool

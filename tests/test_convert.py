@@ -13,7 +13,9 @@ import pytest
 
 from psysmon.config.convert import convert, main, to_modern
 from psysmon.config.detect import ConfigFormat, detect
+from psysmon.config.legacy import ParseResult
 from psysmon.config.legacy import parse as parse_legacy
+from psysmon.config.model import CheckType, Node
 from psysmon.config.modern import parse as parse_modern
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -61,6 +63,16 @@ def test_every_type_round_trips_cleanly():
     assert _forest(leg.roots) == _forest(mod.roots)
     assert warnings == [] and mod.warnings == []
     assert detect(text) is ConfigFormat.MODERN
+
+
+def test_to_modern_emits_ping6():
+    # A modern forest can carry a ping6 node even though the legacy parser never produces one; the
+    # converter must serialize it (not KeyError) and the modern parser must read it back (#24).
+    result = ParseResult(roots=[Node(hostname="h.example.net", check_type=CheckType.PING6)])
+    text, warnings = to_modern(result)
+    assert "type ping6;" in text and warnings == []
+    reparsed = parse_modern(text)
+    assert len(reparsed.roots) == 1 and reparsed.roots[0].check_type is CheckType.PING6
 
 
 def test_default_ports_omitted_tcp_udp_kept():

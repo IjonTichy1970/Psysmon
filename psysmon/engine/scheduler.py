@@ -41,7 +41,7 @@ from dataclasses import dataclass, replace
 
 from psysmon.checks import base, dns, http, pop3, smtp, tcp, udp
 from psysmon.checks.ping import PingService
-from psysmon.config.model import SOURCE_AUTO, CheckType, Node, NodeState, type_to_name
+from psysmon.config.model import SOURCE_AUTO, CheckType, Node, NodeState, is_ping_type, type_to_name
 from psysmon.config.settings import Settings
 from psysmon.engine.clock import Clock, SystemClock
 from psysmon.engine.dnscache import DnsCache
@@ -195,16 +195,29 @@ class Scheduler:
         # Tell the ping service which bound sources to pre-open (while still privileged) so each
         # configured per-object/group ping source gets its own raw socket in the pool (#70).
         self._ping.set_sources(self._collect_ping_sources())
+        self._ping.set_sources6(self._collect_ping6_sources())
+        self._ping.enable_v6(self._has_ping6())
         self._stagger_due(stagger)
         self._build_heap()
 
     # --- forest flattening + gate computation -----------------------------------------
 
     def _collect_ping_sources(self) -> set[str]:
-        """Distinct bound sources among scheduled ping nodes — the bound sockets the ping pool
-        must pre-open (the unbound default is implicit). Unset/`auto` ping nodes contribute none."""
+        """Distinct bound IPv4 sources among scheduled ping nodes — the bound sockets the v4 ping
+        pool must pre-open (the unbound default is implicit). Unset/`auto` nodes contribute none."""
         return {s.source for s in self._scheduled
                 if s.node.check_type is CheckType.PING and s.source}
+
+    def _collect_ping6_sources(self) -> set[str]:
+        """Distinct bound IPv6 sources among scheduled ping6 nodes — the v6 pool's bound sockets
+        (#24). A v6 source opens an AF_INET6 socket, so it can't share the v4 collection."""
+        return {s.source for s in self._scheduled
+                if s.node.check_type is CheckType.PING6 and s.source}
+
+    def _has_ping6(self) -> bool:
+        """Whether any scheduled node is ping6, so prepare() opens the v6 raw socket only when it's
+        actually needed — a v4-only daemon never touches AF_INET6 (#24)."""
+        return any(s.node.check_type is CheckType.PING6 for s in self._scheduled)
 
     def _flatten(self, roots: list[Node]) -> list[_Scheduled]:
         """Build the scheduled set, recording each node's *direct* ping parents in ``gate``.
@@ -248,7 +261,7 @@ class Scheduler:
             if parent is not None and not any(p is parent for p in sched.gate):
                 sched.gate.append(parent)  # accumulate direct ping parents (identity, not value)
             if fresh:  # expand a subtree once; a shared node accumulates parents, no re-expand
-                is_ping = node.check_type is CheckType.PING
+                is_ping = is_ping_type(node.check_type)
                 child_parent = sched if is_ping else None
                 for child in reversed(node.children):
                     stack.append((child, child_parent, is_ping))  # gated only behind a ping
@@ -406,7 +419,7 @@ class Scheduler:
             return None
         if tok:
             return tok
-        if node.check_type is CheckType.PING:
+        if is_ping_type(node.check_type):
             return None
         return self._settings.source_ip
 
@@ -418,14 +431,14 @@ class Scheduler:
         return replace(self._ctx, source_ip=sched.source)
 
     async def _default_runner(self, node: Node, ctx: base.CheckContext) -> int:
-        if node.check_type is CheckType.PING:
+        if is_ping_type(node.check_type):
             return await self._ping.check(node, ctx)
         return await base.perform(_CHECKERS[node.check_type], node, ctx)
 
     async def _run_check(self, sched: _Scheduled) -> None:
         node = sched.node
         try:
-            if node.check_type is CheckType.PING:
+            if is_ping_type(node.check_type):
                 started = self._clock.monotonic()
                 # ctx.source_ip carries this node's resolved ping source; the PingService picks the
                 # matching pooled socket (None = unbound, ping's default regardless of source_ip).
@@ -654,6 +667,12 @@ class Scheduler:
         ping_sources = self._collect_ping_sources()
         self._ping.set_sources(ping_sources)
         self._ping.prune(ping_sources)
+        ping6_sources = self._collect_ping6_sources()
+        self._ping.set_sources6(ping6_sources)
+        self._ping.prune6(ping6_sources)
+        # enable_v6 is deliberately NOT re-called here: it gates only the one-shot prepare() (run
+        # pre-privilege-drop). A reload that first introduces a ping6 node falls back to lazy open
+        # at check time — the same post-drop limitation as a brand-new v4 bound source (#24).
         seen: set[tuple[str, CheckType, int]] = set()
         for sched in self._scheduled:
             key = (sched.node.hostname, sched.node.check_type, sched.node.port)

@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from psysmon.config.model import DEFAULT_PORT, CheckType, Node, NodeState, type_to_name
+from psysmon.config.model import (
+    DEFAULT_PORT,
+    CheckType,
+    Node,
+    NodeState,
+    is_ping_type,
+    type_to_name,
+)
 
 
 def test_node_defaults():
@@ -18,6 +25,21 @@ def test_children_are_independent_lists():
     b = Node(hostname="b", check_type=CheckType.PING)
     a.children.append(Node(hostname="c", check_type=CheckType.TCP, port=22))
     assert a.children and not b.children  # no shared mutable default
+
+
+def test_is_ping_type_covers_both_ping_families():
+    # The single predicate every ping site shares: ping AND ping6, and nothing else (#24).
+    assert is_ping_type(CheckType.PING)
+    assert is_ping_type(CheckType.PING6)
+    for ct in (CheckType.TCP, CheckType.UDP, CheckType.SMTP, CheckType.POP3,
+               CheckType.DNS, CheckType.HTTP, CheckType.HTTPS):
+        assert not is_ping_type(ct)
+
+
+def test_ping6_type_tables_populated():
+    # type_to_name / DEFAULT_PORT must carry PING6, else status page / port fallback KeyErrors.
+    assert type_to_name(CheckType.PING6) == "ping6"
+    assert DEFAULT_PORT[CheckType.PING6] is None
 
 
 def test_default_ports():

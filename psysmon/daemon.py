@@ -24,7 +24,7 @@ from pathlib import Path
 from psysmon.checks.ping import PingService
 from psysmon.config.detect import ConfigFormat, detect
 from psysmon.config.legacy import parse as parse_legacy
-from psysmon.config.model import CheckType, Node
+from psysmon.config.model import Node, is_ping_type
 from psysmon.config.modern import parse as parse_modern
 from psysmon.config.settings import Settings, cli_overrides, merge
 from psysmon.control.server import ControlServer
@@ -253,7 +253,8 @@ def _is_root() -> bool:
 
 
 def _has_ping(scheduler: Scheduler) -> bool:
-    return any(node.check_type is CheckType.PING for node, _ in scheduler.node_states())
+    # Counts ping AND ping6 (#24), so a v6-only config still opens its raw socket as root.
+    return any(is_ping_type(node.check_type) for node, _ in scheduler.node_states())
 
 
 def _setup_syslog(settings: Settings) -> None:

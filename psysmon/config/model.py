@@ -24,6 +24,7 @@ class CheckType(StrEnum):
     """
 
     PING = "ping"
+    PING6 = "ping6"  # ICMPv6 echo (#24); value is the modern keyword, not a legacy one
     TCP = "tcp"
     UDP = "udp"
     SMTP = "smtp"
@@ -36,6 +37,7 @@ class CheckType(StrEnum):
 # Default port per type (None = not applicable or supplied explicitly in config).
 DEFAULT_PORT: dict[CheckType, int | None] = {
     CheckType.PING: None,
+    CheckType.PING6: None,
     CheckType.TCP: None,  # required in config
     CheckType.UDP: None,  # required in config
     CheckType.SMTP: 25,
@@ -48,6 +50,7 @@ DEFAULT_PORT: dict[CheckType, int | None] = {
 # type_to_name() display strings from the original lib.c (used in the status file).
 _DISPLAY_NAME: dict[CheckType, str] = {
     CheckType.PING: "ping",
+    CheckType.PING6: "ping6",
     CheckType.TCP: "tcp",
     CheckType.UDP: "udp",
     CheckType.SMTP: "smtp",
@@ -61,6 +64,16 @@ _DISPLAY_NAME: dict[CheckType, str] = {
 def type_to_name(check_type: CheckType) -> str:
     """Display name for a check type, matching the original status-file column."""
     return _DISPLAY_NAME[check_type]
+
+
+def is_ping_type(check_type: CheckType) -> bool:
+    """True for any ICMP echo check — IPv4 ``ping`` or IPv6 ``ping6`` (#24).
+
+    The single predicate every ping-special-casing site shares (gating children, defaulting to an
+    unbound source, routing to the ping service rather than the ``_CHECKERS`` table, and running
+    unbounded by the check semaphore), so no caller has to enumerate the two ping types by hand.
+    """
+    return check_type in (CheckType.PING, CheckType.PING6)
 
 
 # Which state transitions trigger a page. "both" is psysmon's historical behavior (page on a

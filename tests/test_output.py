@@ -127,6 +127,12 @@ def test_json_includes_acked_and_note():
     assert hosts["b.example.net"]["acked"] is False and hosts["b.example.net"]["note"] is None
 
 
+def test_json_emits_ping6_type():
+    # A ping6 node serializes with type "ping6" in the JSON — the status column (decision #4, #24).
+    hosts = json.loads(to_json([ns("h.example.net", CheckType.PING6)], now_wall=NOW))["hosts"]
+    assert hosts[0]["type"] == "ping6"
+
+
 def test_html_shows_ack_badge_and_escapes_note():
     states = [ns("d.example.net", CheckType.PING, Status.UNPINGABLE, deathtime=NOW,
                  acked=True, note="<script>alert(1)</script>")]

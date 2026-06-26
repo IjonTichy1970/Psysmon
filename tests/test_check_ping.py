@@ -27,6 +27,10 @@ def node(host="h.example.net"):
     return Node(hostname=host, check_type=CheckType.PING)
 
 
+def node6(host="h.example.net"):
+    return Node(hostname=host, check_type=CheckType.PING6)
+
+
 # --- pure helpers: checksum ---------------------------------------------------------------
 
 def test_checksum_known_vector_all_zeros():
@@ -223,6 +227,7 @@ class _FakeSocket:
         self.mangle_payload = False  # if True, reply with the right (ident,seq) but a wrong nonce
         self.strip_payload = False  # if True, reply with the right (ident,seq) but NO payload
         self.pad = b""  # if set, echo the nonce followed by these trailing bytes (padding)
+        self.v6 = False  # if True, frame replies as raw ICMPv6 (type 129, no IPv4 header) (#24)
         self._inbox: list[tuple[bytes, tuple]] = []
 
     def sendto(self, packet, addr):
@@ -254,7 +259,9 @@ class _FakeSocket:
                 ident, seq = struct.unpack("!HH", packet[4:8])
                 sent_payload = packet[ping._ECHO_HEADER.size :]
                 replied_to = ping.build_echo_request(ident, seq, sent_payload + self.pad)
-            self._inbox.append((_wrap_ipv4(_to_echo_reply(replied_to)), src))
+            reply = (_to_echo_reply6(replied_to) if self.v6
+                     else _wrap_ipv4(_to_echo_reply(replied_to)))
+            self._inbox.append((reply, src))
         return len(packet)
 
     def recvfrom(self, _bufsize):
@@ -266,14 +273,15 @@ class _FakeSocket:
         self.closed = True
 
 
-def _pump_on_send(svc, sock):
+def _pump_on_send(svc, sock, pool=None):
     """Emulate add_reader: when a send queues a reply, deliver it to the demux next loop turn."""
+    pool = pool if pool is not None else svc._v4
     orig_sendto = sock.sendto
 
     def sendto_then_pump(packet, addr):
         n = orig_sendto(packet, addr)
         if sock._inbox:
-            asyncio.get_running_loop().call_soon(svc._on_readable, sock)
+            asyncio.get_running_loop().call_soon(svc._on_readable, sock, pool)
         return n
 
     sock.sendto = sendto_then_pump  # type: ignore[method-assign]
@@ -281,19 +289,28 @@ def _pump_on_send(svc, sock):
 
 def _install_fake_socket(svc, sock):
     """Wire a fake socket in as the unbound default pool socket and pump it from the loop."""
-    svc._socks[None] = sock
-    svc._registered.add(None)
-    svc._socket_for = lambda source=None: sock  # type: ignore[method-assign]
+    svc._v4.socks[None] = sock
+    svc._v4.registered.add(None)
+    svc._socket_for = lambda pool=None, source=None: sock  # type: ignore[method-assign]
     _pump_on_send(svc, sock)
 
 
 def _install_fake_pool(svc, by_source):
     """Wire a {source: _FakeSocket} pool so check() picks a socket by ctx.source_ip (#70)."""
     for source, sock in by_source.items():
-        svc._socks[source] = sock
-        svc._registered.add(source)
+        svc._v4.socks[source] = sock
+        svc._v4.registered.add(source)
         _pump_on_send(svc, sock)
-    svc._socket_for = lambda source=None: by_source[source]  # type: ignore[method-assign]
+    svc._socket_for = lambda pool=None, source=None: by_source[source]  # type: ignore[method-assign]
+
+
+def _install_fake_socket6(svc, sock):
+    """Wire a fake socket as the v6 unbound pool socket; check() routes a ping6 node here (#24)."""
+    sock.v6 = True
+    svc._v6.socks[None] = sock
+    svc._v6.registered.add(None)
+    svc._socket_for = lambda pool=None, source=None: sock  # type: ignore[method-assign]
+    _pump_on_send(svc, sock, svc._v6)
 
 
 async def test_check_ok_when_reply_arrives():
@@ -307,6 +324,30 @@ async def test_check_ok_when_reply_arrives():
     assert result == Status.OK
     assert len(sock.sent) == 1  # answered on the first attempt, no retries
     assert not svc._pending  # the future was cleaned up
+
+
+async def test_check_ping6_uses_v6_pool_and_aaaa():
+    # A PING6 node resolves AAAA (family=AF_INET6) and demuxes a type-129 ICMPv6 reply through the
+    # v6 pool, sharing the same (ident, seq)+nonce machinery as v4 (#24).
+    svc = ping.PingService()
+    sock = _FakeSocket()
+    _install_fake_socket6(svc, sock)
+
+    seen_family: list = []
+
+    class _V6Resolver:
+        async def resolve(self, hostname, family=socket.AF_INET):
+            seen_family.append(family)
+            return "2001:db8::1"
+
+    ctx = base.CheckContext(resolver=_V6Resolver(), timeout_s=2.0)
+    result = await svc.check(node6(), ctx)
+
+    assert result == Status.OK
+    assert seen_family == [socket.AF_INET6]               # AAAA-only resolution requested
+    assert len(sock.sent) == 1
+    assert sock.sent[0][0][0] == ping.ICMP6_ECHO_REQUEST  # sent an ICMPv6 echo (type 128)
+    assert not svc._pending                               # future cleaned up
 
 
 async def test_check_unpingable_when_no_reply():
@@ -443,6 +484,17 @@ async def test_check_resolve_failure_returns_no_dns_before_socket():
     ctx = base.CheckContext(resolver=FakeResolver(default=None), timeout_s=2.0)
     assert await svc.check(node(), ctx) == Status.NO_DNS
     assert sock.sent == []  # nothing was sent
+
+
+async def test_check_ping6_no_aaaa_returns_no_dns():
+    # ping6 is AAAA-only (decision #3): a host with no AAAA yields NO_DNS and never sends.
+    svc = ping.PingService()
+    sock = _FakeSocket()
+    _install_fake_socket6(svc, sock)
+
+    ctx = base.CheckContext(resolver=FakeResolver(default=None), timeout_s=2.0)
+    assert await svc.check(node6(), ctx) == Status.NO_DNS
+    assert sock.sent == []  # AAAA failed before any socket work
 
 
 async def test_check_unsendable_route_error_maps_to_status():
@@ -587,7 +639,7 @@ async def test_prepare_opens_socket_without_attaching_reader(monkeypatch):
     svc = ping.PingService()
     opens: list[_CountingSocket] = []
     monkeypatch.setattr(svc, "_open_raw",
-                        lambda source=None: opens.append(_CountingSocket()) or opens[-1])
+                        lambda *a: opens.append(_CountingSocket()) or opens[-1])
 
     loop = asyncio.get_running_loop()
     adds: list[int] = []
@@ -596,17 +648,17 @@ async def test_prepare_opens_socket_without_attaching_reader(monkeypatch):
     monkeypatch.setattr(loop, "remove_reader", lambda fd: removes.append(fd))
 
     svc.prepare()
-    assert svc._socks.get(None) is not None and None not in svc._registered
+    assert svc._v4.socks.get(None) is not None and None not in svc._v4.registered
     assert len(opens) == 1 and adds == []  # unbound socket open, reader not yet attached
 
-    first = svc._ensure_socket(None)
-    assert None in svc._registered and len(adds) == 1  # attached exactly once
-    second = svc._ensure_socket(None)
+    first = svc._ensure_socket(svc._v4, None)
+    assert None in svc._v4.registered and len(adds) == 1  # attached exactly once
+    second = svc._ensure_socket(svc._v4, None)
     assert second is first and len(adds) == 1  # idempotent: same socket, no re-attach
     assert len(opens) == 1  # prepare()'s socket was reused, not reopened
 
     svc.close()
-    assert svc._socks == {} and svc._registered == set()
+    assert svc._v4.socks == {} and svc._v4.registered == set()
     assert removes == [first.fileno()] and first.closed is True
 
 
@@ -616,25 +668,45 @@ async def test_prepare_opens_one_socket_per_configured_source(monkeypatch):
     svc.set_sources(["203.0.113.5", "203.0.113.9"])
     bound: list = []
     monkeypatch.setattr(svc, "_open_raw",
-                        lambda source=None: bound.append(source) or _CountingSocket())
+                        lambda pool=None, source=None: bound.append(source) or _CountingSocket())
 
     svc.prepare()
-    assert set(svc._socks) == {None, "203.0.113.5", "203.0.113.9"}
+    assert set(svc._v4.socks) == {None, "203.0.113.5", "203.0.113.9"}
     assert sorted(b for b in bound if b) == ["203.0.113.5", "203.0.113.9"]
     assert None in bound  # the unbound default was opened too
+
+
+async def test_prepare_skips_v6_pool_until_enabled(monkeypatch):
+    # A v4-only daemon never opens an AF_INET6 socket: prepare() touches the v6 pool only after
+    # enable_v6() (a ping6 node exists), so an IPv6-disabled host doesn't fail startup (#24).
+    svc = ping.PingService()
+    families: list = []
+    monkeypatch.setattr(
+        svc, "_open_raw",
+        lambda pool, source=None: families.append(pool.family) or _CountingSocket(),
+    )
+
+    svc.prepare()                            # no ping6 node -> v6 pool disabled
+    assert socket.AF_INET in families
+    assert socket.AF_INET6 not in families   # v6 left untouched
+
+    families.clear()
+    svc.enable_v6(True)
+    svc.prepare()                            # now the v6 unbound socket opens too
+    assert socket.AF_INET6 in families
 
 
 async def test_ensure_socket_opens_when_prepare_skipped(monkeypatch):
     # If prepare() is never called, the first check still opens AND attaches the reader.
     svc = ping.PingService()
-    monkeypatch.setattr(svc, "_open_raw", lambda source=None: _CountingSocket())
+    monkeypatch.setattr(svc, "_open_raw", lambda *a: _CountingSocket())
     loop = asyncio.get_running_loop()
     adds: list[int] = []
     monkeypatch.setattr(loop, "add_reader", lambda fd, *a: adds.append(fd))
     monkeypatch.setattr(loop, "remove_reader", lambda fd: None)
 
-    svc._ensure_socket(None)
-    assert svc._socks.get(None) is not None and None in svc._registered and len(adds) == 1
+    svc._ensure_socket(svc._v4, None)
+    assert svc._v4.socks.get(None) is not None and None in svc._v4.registered and len(adds) == 1
 
 
 # --- #70: source-keyed socket pool ------------------------------------------------------
@@ -659,21 +731,21 @@ async def test_socket_for_falls_back_to_unbound_when_bind_fails(monkeypatch, cap
     # the pre-opened unbound socket, warning once (#70).
     svc = ping.PingService()
     unbound = _CountingSocket()
-    svc._socks[None] = unbound
-    svc._registered.add(None)
+    svc._v4.socks[None] = unbound
+    svc._v4.registered.add(None)
 
-    def boom(source=None):
+    def boom(pool=None, source=None):
         if source is not None:
             raise PermissionError("operation not permitted")
         return unbound
 
     monkeypatch.setattr(svc, "_open_raw", boom)
     with caplog.at_level(logging.WARNING, logger="psysmon.checks.ping"):
-        sock = svc._socket_for("203.0.113.5")
+        sock = svc._socket_for(svc._v4, "203.0.113.5")
     assert sock is unbound and "203.0.113.5" in caplog.text
 
     caplog.clear()
-    assert svc._socket_for("203.0.113.5") is unbound  # still falls back
+    assert svc._socket_for(svc._v4, "203.0.113.5") is unbound  # still falls back
     assert "203.0.113.5" not in caplog.text           # but warns only once
 
 
@@ -682,20 +754,20 @@ async def test_socket_for_does_not_retry_a_known_bad_source(monkeypatch):
     # _open_raw attempt — _warned_unbindable is load-bearing, not just cosmetic (#70 review).
     svc = ping.PingService()
     unbound = _CountingSocket()
-    svc._socks[None] = unbound
-    svc._registered.add(None)
+    svc._v4.socks[None] = unbound
+    svc._v4.registered.add(None)
     opens: list = []
 
-    def boom(source=None):
+    def boom(pool=None, source=None):
         opens.append(source)
         if source is not None:
             raise PermissionError("operation not permitted")
         return unbound
 
     monkeypatch.setattr(svc, "_open_raw", boom)
-    svc._socket_for("203.0.113.5")  # first: attempts the bind, fails, records it
-    svc._socket_for("203.0.113.5")  # second: must NOT attempt _open_raw again
-    svc._socket_for("203.0.113.5")
+    svc._socket_for(svc._v4, "203.0.113.5")  # first: attempts the bind, fails, records it
+    svc._socket_for(svc._v4, "203.0.113.5")  # second: must NOT attempt _open_raw again
+    svc._socket_for(svc._v4, "203.0.113.5")
     assert opens == ["203.0.113.5"]  # exactly one bind attempt for the dead source
 
 
@@ -704,7 +776,7 @@ async def test_prune_closes_dropped_bound_sockets(monkeypatch):
     # still-configured sources are kept (#70 review).
     svc = ping.PingService()
     svc.set_sources(["203.0.113.5", "203.0.113.9"])
-    monkeypatch.setattr(svc, "_open_raw", lambda source=None: _CountingSocket())
+    monkeypatch.setattr(svc, "_open_raw", lambda *a: _CountingSocket())
     loop = asyncio.get_running_loop()
     removes: list[int] = []
     monkeypatch.setattr(loop, "add_reader", lambda fd, *a: None)
@@ -712,30 +784,54 @@ async def test_prune_closes_dropped_bound_sockets(monkeypatch):
 
     svc.prepare()
     for src in (None, "203.0.113.5", "203.0.113.9"):
-        svc._ensure_socket(src)
-    dropped = svc._socks["203.0.113.9"]
+        svc._ensure_socket(svc._v4, src)
+    dropped = svc._v4.socks["203.0.113.9"]
 
     svc.prune(["203.0.113.5"])  # 203.0.113.9 no longer configured
-    assert set(svc._socks) == {None, "203.0.113.5"}  # unbound + the kept source remain
+    assert set(svc._v4.socks) == {None, "203.0.113.5"}  # unbound + the kept source remain
     assert dropped.closed is True and dropped.fileno() in removes
-    assert "203.0.113.9" not in svc._registered
+    assert "203.0.113.9" not in svc._v4.registered
+
+
+async def test_prune6_closes_dropped_v6_sources(monkeypatch):
+    # On reload, a ping6 bound v6 source the new config dropped is closed via prune6 (#24); the v6
+    # unbound default + still-configured v6 sources are kept, and the v4 pool is untouched.
+    svc = ping.PingService()
+    svc.enable_v6(True)
+    svc.set_sources6(["2001:db8::5", "2001:db8::9"])
+    monkeypatch.setattr(svc, "_open_raw", lambda *a: _CountingSocket())
+    loop = asyncio.get_running_loop()
+    removes: list[int] = []
+    monkeypatch.setattr(loop, "add_reader", lambda fd, *a: None)
+    monkeypatch.setattr(loop, "remove_reader", lambda fd: removes.append(fd))
+
+    svc.prepare()
+    for src in (None, "2001:db8::5", "2001:db8::9"):
+        svc._ensure_socket(svc._v6, src)
+    dropped = svc._v6.socks["2001:db8::9"]
+
+    svc.prune6(["2001:db8::5"])
+    assert set(svc._v6.socks) == {None, "2001:db8::5"}
+    assert dropped.closed is True and dropped.fileno() in removes
+    assert "2001:db8::9" not in svc._v6.registered
+    assert svc._v4.socks.get(None) is not None  # prune6 leaves the v4 pool alone
 
 
 async def test_close_iterates_the_whole_pool(monkeypatch):
     svc = ping.PingService()
     svc.set_sources(["203.0.113.5"])
-    monkeypatch.setattr(svc, "_open_raw", lambda source=None: _CountingSocket())
+    monkeypatch.setattr(svc, "_open_raw", lambda *a: _CountingSocket())
     loop = asyncio.get_running_loop()
     removes: list[int] = []
     monkeypatch.setattr(loop, "add_reader", lambda fd, *a: None)
     monkeypatch.setattr(loop, "remove_reader", lambda fd: removes.append(fd))
 
     svc.prepare()                       # unbound + the bound source = 2 sockets
-    svc._ensure_socket(None)            # register both readers
-    svc._ensure_socket("203.0.113.5")
-    socks = list(svc._socks.values())
+    svc._ensure_socket(svc._v4, None)            # register both readers
+    svc._ensure_socket(svc._v4, "203.0.113.5")
+    socks = list(svc._v4.socks.values())
     svc.close()
-    assert svc._socks == {} and svc._registered == set()
+    assert svc._v4.socks == {} and svc._v4.registered == set()
     assert all(s.closed for s in socks) and len(removes) == 2  # every socket closed + unwired
 
 
@@ -806,4 +902,4 @@ async def test_ping_no_dns_propagates():
     ctx = base.CheckContext(resolver=FakeResolver(default=None), timeout_s=2.0)
     svc = ping.PingService()
     assert await base.perform(svc.check, node(), ctx) == Status.NO_DNS
-    assert svc._socks == {}  # never reached socket creation.
+    assert svc._v4.socks == {}  # never reached socket creation.

@@ -45,8 +45,11 @@ _FACILITIES = frozenset(
 )
 
 # Check-type keywords in the original dispatch order, prefix-matched like the C strncmp.
-# A None value marks a legacy type that is dropped in the rewrite (warn + skip).
+# A None value marks a type the legacy parser does not handle (warn + skip). The v6 ping
+# keywords MUST precede "ping": otherwise "ping6"/"pingv6" prefix-match "ping" and silently
+# become IPv4 ping. IPv6 ping is modern-config-only (#24), so they map to None (warn + redirect).
 _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
+    ("ping6", None), ("pingv6", None), ("icmp6", None),  # before "ping"! (#24)
     ("ping", CheckType.PING),
     ("pop3", CheckType.POP3),
     ("imap", None),
@@ -63,6 +66,10 @@ _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
 
 # Types whose stanza may open a `{` child block (the original's ping-like parse branch).
 _PING_LIKE = frozenset({CheckType.PING, CheckType.SMTP})
+
+# Legacy IPv6 ping keywords: recognized only to warn + point at the modern config (#24), never
+# routed (the legacy grammar stays IPv4-only). Listed before "ping" in _TYPE_KEYWORDS above.
+_V6_PING_KEYWORDS = frozenset({"ping6", "pingv6", "icmp6"})
 
 # Hard cap on `{` nesting depth. Real dependency trees are only a handful deep; anything past
 # this is malformed/pathological, and recursing further risks Python's RecursionError surfacing
@@ -197,7 +204,10 @@ class _Parser:
         host = tokens[0]
         ctype, keyword = _match_type(tokens[1])
         if ctype is None:
-            if keyword is not None:
+            if keyword in _V6_PING_KEYWORDS:
+                self._warn(lineno, f"IPv6 ping ({keyword!r}) needs the modern object{{}} config; "
+                           "legacy is IPv4-only — skipping (#24)")
+            elif keyword is not None:
                 self._warn(lineno, f"unsupported check type {keyword!r}; skipping")
             else:
                 self._warn(lineno, f"invalid check type {tokens[1]!r}; skipping")

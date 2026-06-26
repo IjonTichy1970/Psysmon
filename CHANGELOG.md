@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-06-26 — IMAP/TLS mail checks & richer group defaults
+
 ### Added
 - **IMAP and TLS mail checks** — new `imap`, `pop3s`, and `imaps` check types in the modern
   `object{}` config. `imap` reads the IMAP greeting (and performs an optional `LOGIN` when
@@ -352,7 +354,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/IjonTichy1970/Psysmon/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.5.0...v0.6.0

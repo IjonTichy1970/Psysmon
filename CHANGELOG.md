@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **IMAP and TLS mail checks** — new `imap`, `pop3s`, and `imaps` check types in the modern
+  `object{}` config. `imap` reads the IMAP greeting (and performs an optional `LOGIN` when
+  `username`/`password` are set); `pop3s` and `imaps` run POP3/IMAP over **implicit TLS**. The TLS
+  checks verify reachability, not the certificate (a self-signed or soon-to-expire cert still reads
+  up; certificate-expiry monitoring is tracked separately). A `pop3s`/`imap`/`imaps` line in a
+  legacy `sysmon.conf` is skipped with a pointer to the modern format — and `pop3s` can no longer
+  silently prefix-match to plaintext `pop3`
+  ([#88](https://github.com/IjonTichy1970/Psysmon/issues/88)).
 - **More `group {}` default settings** — a modern-config `group "NAME" { ... }` block can now carry
   `contact`, `contact_on`, `numfailures`, `queuetime`, and `send_pings`/`min_pings` as shared
   defaults (previously only `source`), so a policy is set once for a whole group instead of being

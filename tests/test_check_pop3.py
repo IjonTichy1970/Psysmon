@@ -162,7 +162,7 @@ async def test_default_port_used(check_ctx, monkeypatch):
 
     captured: dict[str, int] = {}
 
-    async def fake_open_connection(ip, port, ctx):
+    async def fake_open_connection(ip, port, ctx, *, tls=False, server_hostname=None):
         captured["port"] = port
 
         class _Reader:

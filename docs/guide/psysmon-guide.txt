@@ -71,8 +71,8 @@ Introduction
 
 PSYSMON is a dependency-aware network monitoring daemon -- a modern Python rewrite of
 Jared Mauch's C sysmon. It periodically checks hosts and services (ping/ping6, TCP, UDP,
-SMTP, POP3, DNS, HTTP/HTTPS), pages you when something goes down and again when it
-recovers, and writes a live status page.
+SMTP, POP3/POP3S, IMAP/IMAPS, DNS, HTTP/HTTPS), pages you when something goes down and
+again when it recovers, and writes a live status page.
 
 The core idea: dependency suppression
 -------------------------------------
@@ -669,22 +669,30 @@ This table covers the structural attributes. An object body can also carry per-o
 override attributes -- queuetime, numfailures, send_pings / min_pings, group, contact_on,
 and source -- documented under Per-object overrides below.
 
-Check types (type keyword): ping, ping6, tcp, udp, smtp, pop3, dns, http, https. ping is
-an ICMP (IPv4) echo; ping6 is an ICMPv6 (IPv6) echo that resolves the host's AAAA record
-(pingv6/icmp6 are accepted aliases). For legacy familiarity, authdns is accepted as an
-alias for dns and www for http. Default ports: smtp 25, pop3 110, dns 53, http 80, https
-443 (ping and ping6 have none; tcp/udp require an explicit port).
+Check types (type keyword): ping, ping6, tcp, udp, smtp, pop3, pop3s, imap, imaps, dns,
+http, https. ping is an ICMP (IPv4) echo and ping6 an ICMPv6 (IPv6) echo over the host's
+AAAA record (pingv6/icmp6 are accepted aliases); imap is an IMAP greeting check
+(optional LOGIN), and pop3s/imaps are the implicit-TLS variants of POP3/IMAP. For legacy
+familiarity, authdns is an alias for dns and www for http. Default ports: smtp 25, pop3
+110, pop3s 995, imap 143, imaps 993, dns 53, http 80, https 443 (ping and ping6 have
+none; tcp/udp require an explicit port).
 
 Required fields per type -- an object missing a required field is warned and skipped; the
 rest of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| ping, ping6, smtp | host, type |
+| ping, ping6, smtp, imap, imaps | host, type |
 | tcp, udp | host, type, port |
 | http, https | host, type, url, urltext |
-| pop3 | host, type, username, password |
+| pop3, pop3s | host, type, username, password |
 | dns | host, type, dns-query, contact |
+
+Mail checks. imap reads the IMAP greeting (up on a ready server); add username/password
+and it also does a LOGIN (a rejected credential reads Bad Auth). pop3s and imaps speak
+their protocol over implicit TLS. The TLS checks verify *reachability*, not the
+certificate -- the handshake must succeed, but a self-signed or soon-to-expire cert still
+reads up. pop3/pop3s require credentials; imap/imaps take them optionally.
 
 Dependencies and the graph
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

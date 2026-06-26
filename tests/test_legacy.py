@@ -137,6 +137,18 @@ def test_legacy_ping6_not_misrouted_to_ipv4_ping():
     assert len(ok.roots) == 1 and ok.roots[0].check_type is CheckType.PING
 
 
+def test_legacy_mail_tls_types_redirect_to_modern():
+    # imap/imaps/pop3s in a legacy config are skipped with a modern-config pointer; "pop3s" must
+    # NOT silently prefix-match to plaintext "pop3" (#88).
+    for kw in ("pop3s", "imaps", "imap"):
+        res = parse(f"h.example.net {kw} u p label noc@x\n")
+        assert res.roots == []
+        assert any("modern" in w and "#88" in w for w in res.warnings)
+    # plain pop3 still works — pop3s didn't shadow it the wrong way.
+    ok = parse("h.example.net pop3 user secret label noc@x\n")
+    assert len(ok.roots) == 1 and ok.roots[0].check_type is CheckType.POP3
+
+
 def test_deferred_dns_keeps_unresolvable_host():
     # The parser never resolves DNS, so even a bogus name yields a node (the C dropped it).
     res = parse("does-not-exist.invalid ping does-not-exist.invalid noc@x\n")

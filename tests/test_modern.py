@@ -396,8 +396,47 @@ def test_host_attr_not_unknown():
 
 
 def test_dropped_types_skip():
-    dropped = parse('object x { ip "h"; type imap; };\n')
+    dropped = parse('object x { ip "h"; type nntp; };\n')  # imap is no longer dropped (#88)
     assert dropped.roots == [] and any("not supported" in w for w in dropped.warnings)
+
+
+def test_mail_tls_types_recognized():
+    # imap / pop3s / imaps build the right node with the right default port (#88).
+    res = parse(
+        'object a { host "p3s.example.net"; type pop3s; username "u"; password "p"; };\n'
+        'object b { host "im.example.net"; type imap; };\n'
+        'object c { host "ims.example.net"; type imaps; };\n'
+    )
+    assert res.warnings == []
+    by = {n.hostname: n for n in res.roots}
+    assert by["p3s.example.net"].check_type is CheckType.POP3S and by["p3s.example.net"].port == 995
+    assert by["im.example.net"].check_type is CheckType.IMAP and by["im.example.net"].port == 143
+    assert by["ims.example.net"].check_type is CheckType.IMAPS and by["ims.example.net"].port == 993
+
+
+def test_pop3s_requires_credentials():
+    res = parse('object x { host "h.example.net"; type pop3s; };\n')
+    assert res.roots == []
+    assert any("pop3s needs 'username' and 'password'" in w for w in res.warnings)
+
+
+def test_imap_banner_only_builds_without_credentials():
+    res = parse('object x { host "h.example.net"; type imap; };\n')
+    assert len(res.roots) == 1 and res.warnings == []
+    assert res.roots[0].username == "" and res.roots[0].password == ""
+
+
+def test_imap_optional_credentials_applied():
+    res = parse('object x { host "h.example.net"; type imaps; username "u"; password "p"; };\n')
+    n = res.roots[0]
+    assert n.username == "u" and n.password == "p"
+
+
+def test_imap_partial_credentials_warn_and_ignored():
+    # Only one of username/password -> warn + ignore both; the object still builds (banner check).
+    res = parse('object x { host "h.example.net"; type imap; username "u"; };\n')
+    assert len(res.roots) == 1 and res.roots[0].username == ""
+    assert any("imap auth needs both" in w for w in res.warnings)
 
 
 def test_ping6_type_recognized():

@@ -41,6 +41,7 @@ _TYPE_KW: dict[CheckType, str] = {
     CheckType.UDP: "udp",
     CheckType.SMTP: "smtp",
     CheckType.POP3: "pop3",
+    CheckType.POP3S: "pop3s", CheckType.IMAP: "imap", CheckType.IMAPS: "imaps",  # #88
     CheckType.DNS: "dns",
     CheckType.HTTP: "http",
     CheckType.HTTPS: "https",
@@ -183,9 +184,13 @@ class _Serializer:
         if node.check_type in (CheckType.HTTP, CheckType.HTTPS):
             self._attr("url", node.url)
             self._attr("urltext", node.url_text)
-        elif node.check_type is CheckType.POP3:
+        elif node.check_type in (CheckType.POP3, CheckType.POP3S):
             self._attr("username", node.username)
             self._attr("password", node.password)
+        elif node.check_type in (CheckType.IMAP, CheckType.IMAPS):
+            if node.username and node.password:  # IMAP creds are optional (the LOGIN check) (#88)
+                self._attr("username", node.username)
+                self._attr("password", node.password)
         elif node.check_type is CheckType.DNS:
             self._attr("dns-query", node.username)  # legacy stores the query name in `username`
         if node.label:

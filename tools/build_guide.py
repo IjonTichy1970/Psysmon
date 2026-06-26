@@ -171,7 +171,7 @@ def gen_status() -> str:
         Status.X500_WEDGED: "The service is wedged / stuck (legacy X.500 condition).",
         Status.DEGRADED: "Loss-tolerant ping got some replies but fewer than `min_pings` — "
                         "reachable but lossy. Does not reset an outage; pages only with "
-                        "`--page-on-degraded`. (psysmon addition, #22.)",
+                        "`--page-on-degraded`. (psysmon addition.)",
     }
     rows = ["| Code | Status text | Meaning |", "|---|---|---|"]
     for st in Status:

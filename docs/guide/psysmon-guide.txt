@@ -335,7 +335,7 @@ ICMP ping opens a raw socket, so the daemon must run as root. Unlike the origina
 sysmon, which was a setuid binary, the Python daemon is simply launched as a root
 process -- via sudo or a service manager. It opens the raw socket at startup and, per the
 current deploy choice, keeps root for the process lifetime (a privilege-drop option is
-planned (tracked on GitHub (https://github.com/IjonTichy1970/Psysmon/issues/2))).
+planned but not yet enabled).
 
 The non-ping checks (TCP, UDP, DNS, SMTP, POP3, HTTP/HTTPS) do not need root -- only ICMP
 ping does. If pings always report hosts as down, the usual cause is not running as root;
@@ -2179,7 +2179,7 @@ matches the running code.
 | 11 | Bad Auth | Authentication was attempted and rejected (bad credentials). |
 | 12 | Bad Resp | The server responded, but not as expected (e.g. a DNS reply that is malformed or from the wrong source; an HTTP body missing the expected text). |
 | 13 | Wedged | The service is wedged / stuck (legacy X.500 condition). |
-| 14 | Degraded | Loss-tolerant ping got some replies but fewer than min_pings -- reachable but lossy. Does not reset an outage; pages only with --page-on-degraded. (psysmon addition, #22.) |
+| 14 | Degraded | Loss-tolerant ping got some replies but fewer than min_pings -- reachable but lossy. Does not reset an outage; pages only with --page-on-degraded. (psysmon addition.) |
 
 Up, degraded, and reachable
 ---------------------------

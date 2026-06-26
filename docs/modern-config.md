@@ -175,7 +175,7 @@ globally (`config contact_on …` / `--contact-on`); a per-object value override
 
 An object with no `contact` address never pages regardless of `contact_on`.
 
-### Outbound bind source — `source` (#70)
+### Outbound bind source — `source`
 
 `source` controls which local address a check's probes go out from. The resolution, per object, is:
 
@@ -216,7 +216,7 @@ attributes (`host`/`ip`, `type`, `port`, `url`/`urltext`, `username`/`password`,
 block. A per-object value always wins over the group default; `send_pings`/`min_pings` inherit as
 an atomic pair (a member that sets either keeps its own ping-count config). The per-object
 `group "NAME"` membership attribute keeps working with or without a matching block (a block-less
-group is just a display label, #20), and group/object declaration order doesn't matter — defaults
+group is just a display label), and group/object declaration order doesn't matter — defaults
 are resolved after the whole file is read. (One wrinkle: a `dns` object's *required* `contact` must
 be set on the object itself — the required-field check runs at parse time, before group defaults
 are applied, so a group `contact` won't satisfy it.)

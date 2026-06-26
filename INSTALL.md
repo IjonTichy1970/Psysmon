@@ -111,8 +111,7 @@ instead of flapping (add `--page-on-degraded` to alert on it; the default 1/1 is
 ICMP ping needs a raw socket, so run PSYSMON **as root**. (Unlike the original C `sysmon`, which
 was a setuid binary, the Python daemon is simply run as a root process — via `sudo` or a service
 manager. It opens the raw socket at startup and, per the current deploy choice, keeps root for
-the process lifetime; see issue
-[#2](https://github.com/IjonTichy1970/Psysmon/issues/2).)
+the process lifetime — a privilege-drop option is planned but not yet enabled.)
 
 **Foreground (for a first test):**
 

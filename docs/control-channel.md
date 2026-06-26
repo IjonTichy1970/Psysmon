@@ -3,7 +3,7 @@
 psysmon can expose an **opt-in** network channel for querying live status and performing runtime
 actions — acknowledge an alert, attach a note, trigger a reload — without editing the config. It
 is a security-first replacement for sysmon 0.93's cleartext tcp/1345 protocol (which leaked stored
-credentials and had auth-bypass bugs); see issue #69 for the history.
+credentials and had auth-bypass bugs).
 
 > **Off by default.** Nothing listens unless you enable it. When enabled it binds **`127.0.0.1`**
 > (loopback only) on port **`2026`**, and **refuses to start on a non-loopback address unless TLS

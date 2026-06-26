@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-25 — IPv6 ping & multi-parent dependencies
+
 ### Added
 - **IPv6 ping (`ping6`)** — a monitored object can now be pinged over **ICMPv6** with `type ping6`
   (aliases `pingv6`/`icmp6`) in the modern `object{}` config. It resolves the host's **AAAA** record
@@ -329,7 +331,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/IjonTichy1970/Psysmon/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.4.0...v0.5.0

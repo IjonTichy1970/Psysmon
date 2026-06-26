@@ -56,6 +56,8 @@ address; an absent contact means **syslog only, no page**.
 | `https` | `https  url  url_text  label  [contact]` |
 | `pop3` | `pop3  username  password  label  [contact]` |
 | `authdns` (DNS) | `authdns  name  contact` |
+| `ssh` | `ssh  [port]  label  [contact]` |
+| `mysql` | `mysql  [port]  label  [contact]` |
 
 Notes confirmed from the parser:
 
@@ -66,8 +68,12 @@ Notes confirmed from the parser:
 - **`pop3`** takes a `username` and `password`, then the `label`.
 - **`authdns`** is special: it takes the DNS `name` to look up and then a **required** `contact` —
   a legacy authdns stanza with no contact is rejected. It has **no** `label` field.
+- **`ssh`/`mysql`** take an **optional** leading numeric port: a field after the type that parses as
+  a port (1–65535) is the port, otherwise it's the `label` (so a purely-numeric label isn't
+  expressible here — use a descriptive one, or set the port in the modern format).
 - Default ports are applied automatically where they exist (smtp `25`, pop3 `110`, authdns/DNS
-  `53`, www/http `80`, https `443`); ping has none, and tcp/udp require an explicit port.
+  `53`, www/http `80`, https `443`, ssh `22`, mysql `3306`); ping has none, and tcp/udp require an
+  explicit port.
 
 A trailing `{` opens a dependency block (next section).
 
@@ -279,19 +285,21 @@ override** attributes — `queuetime`, `numfailures`, `send_pings` / `min_pings`
 `contact_on`, and `source` — documented under [Per-object overrides](#per-object-overrides) below.
 
 **Check types** (`type` keyword): `ping`, `ping6`, `tcp`, `udp`, `smtp`, `pop3`, `pop3s`, `imap`,
-`imaps`, `dns`, `http`, `https`. `ping` is an ICMP (IPv4) echo and **`ping6`** an ICMPv6 (IPv6) echo
-over the host's **AAAA** record (`pingv6`/`icmp6` are accepted aliases); **`imap`** is an IMAP
-greeting check (optional LOGIN), and **`pop3s`/`imaps`** are the implicit-TLS variants of POP3/IMAP.
-For legacy familiarity, `authdns` is an alias for `dns` and `www` for `http`. Default ports: smtp
-`25`, pop3 `110`, pop3s `995`, imap `143`, imaps `993`, dns `53`, http `80`, https `443` (ping and
-ping6 have none; tcp/udp require an explicit `port`).
+`imaps`, `dns`, `http`, `https`, `ssh`, `mysql`. `ping` is an ICMP (IPv4) echo and **`ping6`** an
+ICMPv6 (IPv6) echo over the host's **AAAA** record (`pingv6`/`icmp6` are accepted aliases);
+**`imap`** is an IMAP greeting check (optional LOGIN), and **`pop3s`/`imaps`** are the implicit-TLS
+variants of POP3/IMAP. **`ssh`** reads the server's `SSH-` identification banner and **`mysql`** reads
+the MySQL/MariaDB handshake packet — both are protocol-aware reachability checks (not logins). For
+legacy familiarity, `authdns` is an alias for `dns` and `www` for `http`. Default ports: smtp `25`,
+pop3 `110`, pop3s `995`, imap `143`, imaps `993`, dns `53`, http `80`, https `443`, ssh `22`, mysql
+`3306` (ping and ping6 have none; tcp/udp require an explicit `port`).
 
 **Required fields per type** — an object missing a required field is warned and skipped; the rest
 of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `ping6`, `smtp`, `imap`, `imaps` | `host`, `type` |
+| `ping`, `ping6`, `smtp`, `imap`, `imaps`, `ssh`, `mysql` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
 | `http`, `https` | `host`, `type`, `url`, `urltext` |
 | `pop3`, `pop3s` | `host`, `type`, `username`, `password` |
@@ -380,7 +388,7 @@ per-type default differs by check type, and this is a common source of confusion
 - **ping and ping6 (ICMP/ICMPv6) are unbound by default.** The kernel routes each probe by
   destination, **regardless of `config source_ip`** (which is IPv4 anyway). This matches a plain
   `ping`/`ping6` with no `-I` and is right for hosts reached over a VPN or a dynamic interface.
-- **All other checks** (tcp/udp/smtp/pop3/dns) default to the global **`config source_ip`** (the
+- **All other checks** (e.g. tcp/udp/smtp/pop3/imap/dns/ssh/mysql) default to the global **`config source_ip`** (the
   ACL-egress address), or unbound if none is set.
 
 Set `source` to:

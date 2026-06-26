@@ -39,7 +39,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 
-from psysmon.checks import base, dns, http, imap, pop3, smtp, tcp, udp
+from psysmon.checks import base, dns, http, imap, mysql, pop3, smtp, ssh, tcp, udp
 from psysmon.checks.ping import PingService
 from psysmon.config.model import SOURCE_AUTO, CheckType, Node, NodeState, is_ping_type, type_to_name
 from psysmon.config.settings import Settings
@@ -72,6 +72,8 @@ _CHECKERS: dict[CheckType, base.Checker] = {
     CheckType.DNS: dns.check,
     CheckType.HTTP: http.check,
     CheckType.HTTPS: http.check,
+    CheckType.SSH: ssh.check,      # SSH identification-banner check (#96)
+    CheckType.MYSQL: mysql.check,  # MySQL/MariaDB initial-handshake check (#97)
 }
 
 # runner(node, ctx) -> status code; the seam between scheduling and check execution.

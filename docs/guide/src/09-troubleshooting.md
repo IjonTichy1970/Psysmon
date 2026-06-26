@@ -31,7 +31,7 @@ of probes reads `Degraded`, not `Unpingable` (see the loss-tolerant ping questio
 
 This is expected, and it changed in 0.4.0. **Ping is now unbound by default** and ignores the
 global `config source_ip` — the kernel routes each ICMP probe by destination. `source_ip` still
-binds the *connection* checks (tcp/udp/smtp/pop3/dns) for firewall-ACL egress, but no longer
+binds the *connection* checks (e.g. tcp/udp/smtp/pop3/imap/dns/ssh/mysql) for firewall-ACL egress, but no longer
 binds ping.
 
 If pings to a VPN host were succeeding before only because `source_ip` pinned them to the right

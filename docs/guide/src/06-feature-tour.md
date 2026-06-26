@@ -314,6 +314,33 @@ Default ports: `pop3s` 995, `imap` 143, `imaps` 993.
 
 ---
 
+## Service-protocol checks — `ssh`, `mysql`
+
+Two protocol-aware reachability checks that go beyond a bare TCP connect — they confirm the service
+actually speaks its protocol, catching a port-forwarder, a wedged daemon, or an unrelated service
+sitting on the port:
+
+- **`ssh`** reads the server's identification banner (`SSH-2.0-OpenSSH_…`). Up on an `SSH-` line;
+  anything else is a bad response, an immediate close is *No Response*.
+- **`mysql`** reads the MySQL/MariaDB initial handshake packet (sent in the clear on connect, before
+  any TLS upgrade). Up on a valid handshake — or an error packet such as *"Too many connections"*,
+  which still means the server is speaking MySQL and responding.
+
+Both default their port (`ssh` 22, `mysql` 3306) and take an **optional override**: `port 2222;` in
+the modern format, or an optional leading port positionally in legacy (`host ssh 2222 label`).
+Neither is a login or authentication test.
+
+```
+object db-primary {
+    host "198.51.100.9"; type mysql;        # default port 3306
+};
+object jump-host {
+    host "203.0.113.4"; type ssh; port 2222;
+};
+```
+
+---
+
 ## Grouping — `group` and the `group { }` scope **(modern config only)**
 
 A `group "name"` attribute labels an object; the status views then list objects under per-group
@@ -372,7 +399,7 @@ The per-type default differs:
   and **ignore the global `config source_ip`** (which is IPv4 anyway). This is the right behavior
   for hosts reached over a VPN or a dynamic interface, and it matches a plain `ping`/`ping6` with
   no `-I`.
-- **All other checks** (tcp/udp/smtp/pop3/dns) default to the global `config source_ip` (the
+- **All other checks** (e.g. tcp/udp/smtp/pop3/imap/dns/ssh/mysql) default to the global `config source_ip` (the
   ACL-egress address), or unbound if none is set.
 
 Set `source` to:
@@ -450,6 +477,7 @@ control-channel documentation.
 | Dependency suppression | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
 | Multi-parent dependencies (any-path) | — (single parent) | Yes (multiple `dep`) | — (structure is config-only) |
 | IPv6 ping + mail checks (`ping6` / `imap` / `pop3s` / `imaps`) | Yes | Yes | — (config-only) |
+| Protocol-aware service checks (`ssh` / `mysql`) | Yes | Yes | — (config-only) |
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |

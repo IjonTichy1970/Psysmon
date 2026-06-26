@@ -35,6 +35,8 @@ class CheckType(StrEnum):
     DNS = "dns"  # authoritative DNS query (legacy "authdns")
     HTTP = "http"  # legacy "www" content check
     HTTPS = "https"
+    SSH = "ssh"  # SSH identification-banner check (#96)
+    MYSQL = "mysql"  # MySQL/MariaDB initial-handshake check (#97)
 
 
 # Default port per type (None = not applicable or supplied explicitly in config).
@@ -51,6 +53,8 @@ DEFAULT_PORT: dict[CheckType, int | None] = {
     CheckType.DNS: 53,
     CheckType.HTTP: 80,
     CheckType.HTTPS: 443,
+    CheckType.SSH: 22,
+    CheckType.MYSQL: 3306,
 }
 
 # type_to_name() display strings from the original lib.c (used in the status file).
@@ -67,6 +71,8 @@ _DISPLAY_NAME: dict[CheckType, str] = {
     CheckType.DNS: "authdns",
     CheckType.HTTP: "www",
     CheckType.HTTPS: "https",
+    CheckType.SSH: "ssh",
+    CheckType.MYSQL: "mysql",
 }
 
 

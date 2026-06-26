@@ -122,20 +122,22 @@ Inside the block, attributes are `key value;` pairs.
 | `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (OR / any-path) |
 
 **Check types** (the `type` keyword): `ping`, `ping6`, `tcp`, `udp`, `smtp`, `pop3`, `pop3s`,
-`imap`, `imaps`, `dns`, `http`, `https`. `ping` is an ICMP (IPv4) echo and **`ping6`** an ICMPv6
-(IPv6) echo over the host's **AAAA** record (`pingv6`/`icmp6` are accepted aliases). **`imap`** is
-an IMAP greeting check (with an optional LOGIN — see below); **`pop3s`/`imaps`** are the
-implicit-TLS variants of POP3/IMAP (TLS from connect). For legacy familiarity, `authdns` is an
-alias for `dns` and `www` for `http`. Default ports: smtp `25`, pop3 `110`, pop3s `995`, imap
-`143`, imaps `993`, dns `53`, http `80`, https `443` (ping and ping6 have none; tcp/udp require an
-explicit `port`).
+`imap`, `imaps`, `dns`, `http`, `https`, `ssh`, `mysql`. `ping` is an ICMP (IPv4) echo and
+**`ping6`** an ICMPv6 (IPv6) echo over the host's **AAAA** record (`pingv6`/`icmp6` are accepted
+aliases). **`imap`** is an IMAP greeting check (with an optional LOGIN — see below); **`pop3s`/`imaps`**
+are the implicit-TLS variants of POP3/IMAP (TLS from connect). **`ssh`** reads the server's `SSH-`
+identification banner and **`mysql`** reads the MySQL/MariaDB handshake packet — both protocol-aware
+reachability checks (not logins). For legacy familiarity, `authdns` is an alias for `dns` and `www`
+for `http`. Default ports: smtp `25`, pop3 `110`, pop3s `995`, imap `143`, imaps `993`, dns `53`,
+http `80`, https `443`, ssh `22`, mysql `3306` (ping and ping6 have none; tcp/udp require an explicit
+`port`).
 
 **Required fields per type** — an object missing a required field is warned and skipped; the rest
 of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `ping6`, `smtp`, `imap`, `imaps` | `host`, `type` |
+| `ping`, `ping6`, `smtp`, `imap`, `imaps`, `ssh`, `mysql` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
 | `http`, `https` | `host`, `type`, `url`, `urltext` |
 | `pop3`, `pop3s` | `host`, `type`, `username`, `password` |
@@ -187,7 +189,7 @@ The per-type default differs:
   destination, *regardless of `config source_ip`* (which is IPv4 anyway). This is the right
   behavior for hosts reached over a VPN or a dynamic interface (nothing to track when the local
   address changes), and it matches a plain `ping`/`ping6` with no `-I`.
-- **all other checks** (tcp/udp/smtp/pop3/dns) default to the global **`config source_ip`** (the
+- **all other checks** (e.g. tcp/udp/smtp/pop3/imap/dns/ssh/mysql) default to the global **`config source_ip`** (the
   ACL-egress address), or unbound if none is set.
 
 Set `source` to:

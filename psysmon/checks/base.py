@@ -130,6 +130,11 @@ async def perform(checker: Checker, node: Node, ctx: CheckContext) -> int:
         return Status.TIMED_OUT
     except socket.gaierror:
         return Status.NO_DNS
+    except ValueError:
+        # readline() raises ValueError (wrapped LimitOverrunError) when a peer floods bytes with no
+        # newline past the buffer limit. Such a never-greeting flood is a bad response, not a crash
+        # — this guards the line-reading banner checks (smtp/pop3/imap/ssh).
+        return Status.BAD_RESPONSE
     except OSError as exc:
         return map_oserror(exc)
 

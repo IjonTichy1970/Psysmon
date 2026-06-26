@@ -95,6 +95,25 @@ def test_to_modern_emits_mail_tls_types():
     }
 
 
+def test_to_modern_emits_ssh_mysql():
+    # to_modern must serialize the ssh/mysql types and round-trip a non-default port (#96/#97).
+    roots = [
+        Node(hostname="s.example.net", check_type=CheckType.SSH),
+        Node(hostname="s2.example.net", check_type=CheckType.SSH, port=2222),
+        Node(hostname="m.example.net", check_type=CheckType.MYSQL, port=3307),
+    ]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert "type ssh;" in text and "type mysql;" in text
+    assert "port 2222;" in text and "port 3307;" in text
+    by_host = {n.hostname: n for n in parse_modern(text).roots}
+    assert by_host["s.example.net"].check_type is CheckType.SSH
+    assert by_host["s.example.net"].port == 22  # default omitted in text; modern reapplies it
+    assert by_host["s2.example.net"].port == 2222
+    assert by_host["m.example.net"].check_type is CheckType.MYSQL
+    assert by_host["m.example.net"].port == 3307
+
+
 def test_default_ports_omitted_tcp_udp_kept():
     _, _, text, _ = _roundtrip(PER_TYPE)
     # tcp/udp have no default port -> always emitted; smtp/pop3/dns/http/https default -> omitted.

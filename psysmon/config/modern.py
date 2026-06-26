@@ -201,9 +201,13 @@ _OBJECT_ATTRS = frozenset({
     "queuetime", "send_pings", "min_pings", "numfailures", "group", "contact_on",  # overrides
     "source",                                                    # outbound bind source (#70)
 })
-# Settings a `group "NAME" { ... }` block may carry (#70). Today just `source`; the block is a
-# scope so future per-group defaults slot in here. Unknown keys in a group block warn + ignore.
-_GROUP_ATTRS = frozenset({"source"})
+# Shared default settings a `group "NAME" { ... }` block may carry (#70/#82), inherited by member
+# objects that don't set the field (the per-object value wins). Object-IDENTITY attributes
+# (host/ip/type/port/url/username/password/dns-query/desc) stay out — they name a single object.
+# Unknown keys in a group block warn + ignore.
+_GROUP_ATTRS = frozenset({
+    "source", "contact", "contact_on", "numfailures", "queuetime", "send_pings", "min_pings",
+})
 
 
 class _Parser:
@@ -226,8 +230,11 @@ class _Parser:
         # objects in declaration order + a name index; deps resolved into a forest at the end.
         self._objects: list[tuple[str, Node, str | None, int]] = []
         self._object_index: dict[str, Node] = {}
-        # per-group default settings from `group "NAME" { ... }` blocks (#70), resolved onto each
-        # member object's fields after all statements parse (so group/object order is free).
+        # The attribute keys each object explicitly declared, so a group default fills only the
+        # fields a member left unset (the per-object value always wins). Keyed by object name.
+        self._object_attr_keys: dict[str, set[str]] = {}
+        # per-group default settings from `group "NAME" { ... }` blocks (#70/#82), resolved onto
+        # each member object's fields after all statements parse (so group/object order is free).
         self._group_defaults: dict[str, dict[str, str]] = {}
         self.root_name: str | None = None
         self.root_line = 0
@@ -235,7 +242,7 @@ class _Parser:
     def parse_top(self) -> ParseResult:
         while self._i < len(self._toks):
             self._statement()
-        self._resolve_group_sources()
+        self._resolve_group_defaults()
         roots = self._build_forest()
         return ParseResult(roots=roots, overrides=self.overrides, warnings=self.warnings)
 
@@ -592,18 +599,28 @@ class _Parser:
             return
         self._object_index[name] = node
         self._objects.append((name, node, dep_names, line))
+        self._object_attr_keys[name] = set(attrs)  # which fields a group default may NOT override
 
     def _add_group(self, line: int, name: str, attrs: dict[str, tuple[int, list[Token]]]) -> None:
-        """Record a ``group "NAME" { ... }`` block's default settings (#70)."""
+        """Record a ``group "NAME" { ... }`` block's default settings (#70/#82).
+
+        Values are kept raw and validated when applied to a member (see
+        :meth:`_resolve_group_defaults`), so a bad value warns naming the affected object and the
+        per-object validation path is reused. The one exception is ``source``: its *syntax* is
+        validated here (a bad IP warns once at the group), while its *family* is checked per member.
+        Unknown / object-identity attributes warn and are ignored.
+        """
         if not name:
             self._warn(line, "group has an empty name; skipping")
             return
         resolved = {key: self._subst(kl, toks[0].value) if toks else "" for key, (kl, toks) in
                     attrs.items()}
-        settings: dict[str, str] = {}
-        if "source" in resolved:
-            src = self._parse_source(line, f"group '{name}'", resolved["source"])
-            if src is not None:
+        settings = {key: val for key, val in resolved.items() if key in _GROUP_ATTRS}
+        if "source" in settings:
+            src = self._parse_source(line, f"group '{name}'", settings["source"])
+            if src is None:
+                del settings["source"]  # invalid IP/auto — already warned; don't store
+            else:
                 settings["source"] = src
         for key, (kl, _toks) in attrs.items():
             if key not in _GROUP_ATTRS:
@@ -819,22 +836,39 @@ class _Parser:
             return f"object '{name}': check type '{type_kw}' is not supported; skipping"
         return f"object '{name}': invalid type '{type_kw}'; skipping"
 
-    def _resolve_group_sources(self) -> None:
-        """Inherit each object's ``source`` from its ``group`` block's default when the object set
-        none (#70). Per-object ``source`` (already on the node) wins; a group with no ``source``
-        default, or membership in a group with no block (a plain display label, #20), leaves the
-        object's source unset (it then falls back to the engine's per-type default)."""
-        for _name, node, _dep, line in self._objects:
-            if node.source is None and node.group:
-                grp = self._group_defaults.get(node.group)
-                if grp and "source" in grp:
-                    src = grp["source"]
-                    if self._source_family_ok(node, src):
-                        node.source = src
-                    else:
-                        self._warn(line, f"object '{node.hostname}': group '{node.group}' source "
-                                   f"{src} is the wrong family for a {node.check_type.value} "
-                                   "check; leaving unbound")
+    def _resolve_group_defaults(self) -> None:
+        """Apply each group's default settings to a member that didn't set the field (#70/#82).
+
+        The per-object value always wins (it is applied at build time); a group default fills only
+        the fields a member left unset. ``source`` (with a per-member family check) and ``contact``
+        are applied directly; the rest reuse the per-object override path, so a bad group value
+        warns naming the affected object and is ignored. ``send_pings``/``min_pings`` inherit as an
+        atomic pair (a member that sets either keeps its own ping-count config). A group with no
+        block (a plain display label, #20) contributes nothing.
+        """
+        for name, node, _dep, line in self._objects:
+            if not node.group:
+                continue
+            grp = self._group_defaults.get(node.group)
+            if not grp:
+                continue
+            specified = self._object_attr_keys.get(name, set())
+            inherited = {k: v for k, v in grp.items() if k not in specified}
+            if "send_pings" in specified or "min_pings" in specified:
+                inherited.pop("send_pings", None)  # object's ping-count config wins as a pair
+                inherited.pop("min_pings", None)
+            if "source" in inherited:
+                src = inherited.pop("source")  # syntax already validated in _add_group
+                if self._source_family_ok(node, src):
+                    node.source = src
+                else:
+                    self._warn(line, f"object '{name}': group '{node.group}' source "
+                               f"{src} is the wrong family for a {node.check_type.value} "
+                               "check; leaving unbound")
+            if "contact" in inherited:
+                node.contact = inherited.pop("contact")  # plain string; _apply_overrides skips it
+            if inherited:
+                self._apply_overrides(line, name, node, inherited)
 
     def _build_forest(self) -> list[Node]:
         """Resolve each object's ``dep`` edges into the ``Node.children`` DAG (multi-parent, #62).

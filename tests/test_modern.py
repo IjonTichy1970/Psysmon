@@ -742,6 +742,106 @@ def test_group_block_invalid_source_warns_and_drops():
     assert any("source" in w for w in res.warnings)
 
 
+def test_group_default_policy_settings_inherited():
+    # A group can carry contact / contact_on / numfailures / queuetime as shared defaults (#82),
+    # applied to a member that doesn't set them.
+    res = parse(
+        'group "core" {\n'
+        '  contact "noc@example.net"; contact_on down; numfailures 4; queuetime 30;\n'
+        '}\n'
+        'object gw { ip "192.0.2.1"; type ping; group "core"; };\n'
+    )
+    assert res.warnings == []
+    n = res.roots[0]
+    assert n.contact == "noc@example.net"
+    assert n.contact_on == "down"
+    assert n.max_down == 4
+    assert n.interval == 30.0
+
+
+def test_group_default_ping_pair_inherited():
+    res = parse(
+        'group "lossy" { send_pings 5; min_pings 3; }\n'
+        'object gw { ip "192.0.2.1"; type ping; group "lossy"; };\n'
+    )
+    assert res.warnings == []
+    n = res.roots[0]
+    assert n.send_pings == 5 and n.min_pings == 3
+
+
+def test_per_object_value_wins_over_group_policy_default():
+    res = parse(
+        'group "core" { numfailures 4; contact "noc@example.net"; }\n'
+        'object gw { ip "192.0.2.1"; type ping; group "core"; numfailures 9; };\n'
+    )
+    n = res.roots[0]
+    assert n.max_down == 9                 # the per-object numfailures wins
+    assert n.contact == "noc@example.net"  # the unset field still inherits
+
+
+def test_group_ping_pair_inherits_atomically():
+    # A member that sets EITHER ping-count leg keeps its own config — it does not mix in the
+    # group's other leg (#82).
+    res = parse(
+        'group "lossy" { send_pings 5; min_pings 3; }\n'
+        'object gw { ip "192.0.2.1"; type ping; group "lossy"; send_pings 2; };\n'
+    )
+    n = res.roots[0]
+    assert n.send_pings == 2 and n.min_pings is None  # object's send; group's min NOT inherited
+
+
+def test_group_policy_default_order_independent():
+    # An object declared before its group block still inherits a policy default (deferred pass).
+    res = parse(
+        'object gw { ip "192.0.2.1"; type ping; group "late"; };\n'
+        'group "late" { numfailures 7; }\n'
+    )
+    assert res.roots[0].max_down == 7
+
+
+def test_group_invalid_policy_value_warns_and_ignored():
+    # A bad group default warns (naming the object by its DECLARED name, not its hostname) and the
+    # member keeps the global default.
+    res = parse(
+        'group "core" { numfailures 0; }\n'
+        'object gw { ip "192.0.2.1"; type ping; group "core"; };\n'
+    )
+    assert res.roots[0].max_down == 2  # global default; the group's invalid value was ignored
+    assert any("object 'gw'" in w and "numfailures" in w for w in res.warnings)
+    assert not any("192.0.2.1" in w for w in res.warnings)  # named 'gw', not the IP
+
+
+def test_group_ping_pair_single_leg_inherited():
+    # A group that sets only send_pings applies that leg; min_pings stays at the global default.
+    res = parse(
+        'group "lossy" { send_pings 5; }\n'
+        'object gw { ip "192.0.2.1"; type ping; group "lossy"; };\n'
+    )
+    n = res.roots[0]
+    assert n.send_pings == 5 and n.min_pings is None
+
+
+def test_per_object_empty_contact_wins_over_group_contact():
+    # Declaring contact "" explicitly opts out of paging even when the group sets a contact (#82).
+    res = parse(
+        'group "core" { contact "noc@example.net"; }\n'
+        'object gw { ip "192.0.2.1"; type ping; group "core"; contact ""; };\n'
+    )
+    assert res.roots[0].contact == ""  # the explicit empty wins; group default not applied
+
+
+def test_group_identity_attrs_warn_and_ignored():
+    # Object-identity attributes in a group make no sense as defaults — still warn + ignore (#82).
+    res = parse(
+        'group "core" { host "192.0.2.99"; type tcp; port 80; }\n'
+        'object gw { ip "192.0.2.1"; type ping; group "core"; };\n'
+    )
+    n = res.roots[0]
+    assert n.hostname == "192.0.2.1" and n.check_type is CheckType.PING and n.port == 0
+    for attr in ("host", "type", "port"):
+        assert any(attr in w and "isn't supported yet" in w for w in res.warnings)
+
+
 def test_group_block_empty_is_harmless():
     res = parse(
         'group "g" { }\n'

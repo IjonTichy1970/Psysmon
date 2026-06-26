@@ -77,6 +77,8 @@ _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
     ("authdns", CheckType.DNS),
     ("radius", None),
     ("https", CheckType.HTTPS),
+    ("ssh", CheckType.SSH),        # #96
+    ("mysql", CheckType.MYSQL),    # #97
 )
 
 # Types whose stanza may open a `{` child block: the original's ping-like branch (ping, smtp) plus
@@ -123,6 +125,16 @@ def _match_type(token: str) -> tuple[CheckType | None, str | None]:
         if token.startswith(keyword):
             return ctype, keyword
     return None, None
+
+
+def _as_port(token: str) -> int | None:
+    """``token`` as a port number if it is an integer in 1..65535, else None — used to detect the
+    optional leading port for ssh/mysql (#96/#97); a non-numeric token is the label instead."""
+    try:
+        port = int(token)
+    except ValueError:
+        return None
+    return port if 1 <= port <= 65535 else None
 
 
 class _Parser:
@@ -310,6 +322,22 @@ class _Parser:
                 return None
             node.username = tokens[2]  # name to look up
             node.contact = tokens[3]
+        elif ctype in (CheckType.SSH, CheckType.MYSQL):
+            # Optional leading numeric port (#96/#97): `host ssh [PORT] label [contact]`. A field
+            # after the type that parses as a port (1..65535) is the port; otherwise it's the label
+            # (the default port from DEFAULT_PORT already applies). A purely-numeric label can't be
+            # expressed here — use a descriptive label, or set the port in the modern format.
+            idx = 2
+            port = _as_port(tokens[2])
+            if port is not None:
+                node.port = port
+                idx = 3
+            if n <= idx:
+                self._warn(lineno, f"{ctype} needs a label; skipping")
+                return None
+            node.label = tokens[idx]
+            if n > idx + 1:
+                node.contact = tokens[idx + 1]
         else:  # ping-like: ping, smtp (a trailing '{' was already stripped by parse_block)
             node.label = tokens[2]
             if n > 3:

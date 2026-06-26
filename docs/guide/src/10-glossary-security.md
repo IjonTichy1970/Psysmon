@@ -93,7 +93,7 @@ a whole group. Precedence is **per-object > group default > global
 route) even when a group default or `source_ip` would otherwise bind it — useful for hosts reached
 over a VPN or a dynamic interface. Note: **ping and ping6 are unbound by default** and ignore the
 global `source_ip`; only an explicit per-object/group `source` binds them. Connection checks
-(tcp/udp/smtp/pop3/dns) default to `source_ip`. A `source`'s family must match its check (IPv6 for
+(e.g. tcp/udp/smtp/pop3/imap/dns/ssh/mysql) default to `source_ip`. A `source`'s family must match its check (IPv6 for
 `ping6`, IPv4 otherwise), and HTTP/HTTPS checks are always unbound. See
 [Configuration](04-configuration.md).
 

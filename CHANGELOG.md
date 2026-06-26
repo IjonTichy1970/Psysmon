@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **SSH and MySQL protocol-aware checks** — new `ssh` and `mysql` check types (both config formats).
+  `ssh` reads the server's `SSH-` identification banner; `mysql` reads the MySQL/MariaDB initial
+  handshake packet (a valid handshake **or** an error packet like "Too many connections" counts as up
+  — the server is speaking the protocol). Both go beyond a bare TCP connect (catching a port-forwarder
+  or wedged daemon), default their port (22 / 3306), and take an optional override — `port 2222;` in
+  the modern format, or an optional leading port positionally in legacy (`host ssh 2222 label`).
+  Neither is a login/auth test
+  ([#96](https://github.com/IjonTichy1970/Psysmon/issues/96),
+  [#97](https://github.com/IjonTichy1970/Psysmon/issues/97)).
 - **Global `config` directives in legacy configs** — the legacy `sysmon.conf` format now accepts the
   same global `config` directives as the modern format, so a drop-in legacy config can set them in
   the file instead of only on the command line: `contact_on`, `source_ip`, `queuetime`,

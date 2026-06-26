@@ -45,6 +45,8 @@ _TYPE_KW: dict[CheckType, str] = {
     CheckType.DNS: "dns",
     CheckType.HTTP: "http",
     CheckType.HTTPS: "https",
+    CheckType.SSH: "ssh",      # #96
+    CheckType.MYSQL: "mysql",  # #97
 }
 
 # Settings field -> (modern `config` keyword, emit-kind), in a fixed output order. `numfailures`

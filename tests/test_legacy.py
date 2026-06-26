@@ -743,6 +743,33 @@ def test_config_control_not_swallowed_by_prefix():
     assert res.warnings == []
 
 
+def test_legacy_ssh_mysql_optional_port():
+    # ssh/mysql take an optional leading numeric port; the default applies otherwise (#96/#97).
+    a = parse("a.example.net ssh edge noc@x\n").roots[0]
+    assert a.check_type is CheckType.SSH and a.port == 22
+    assert a.label == "edge" and a.contact == "noc@x"
+    b = parse("b.example.net ssh 2222 alt noc@x\n").roots[0]
+    assert b.check_type is CheckType.SSH and b.port == 2222 and b.label == "alt"
+    c = parse("c.example.net mysql primary noc@x\n").roots[0]
+    assert c.check_type is CheckType.MYSQL and c.port == 3306 and c.label == "primary"
+    d = parse("d.example.net mysql 3307 alt-db noc@x\n").roots[0]
+    assert d.port == 3307 and d.label == "alt-db"
+    e = parse("e.example.net ssh just-label\n").roots[0]  # 3 tokens: default port, no contact
+    assert e.port == 22 and e.label == "just-label" and e.contact == ""
+    # numeric-label caveat: a bare-number first field (in range) is the PORT, not the label
+    f = parse("f.example.net ssh 8080 mylabel\n").roots[0]
+    assert f.port == 8080 and f.label == "mylabel"
+    # an out-of-range "port" falls through to the label
+    g = parse("g.example.net ssh 99999 noc@x\n").roots[0]
+    assert g.port == 22 and g.label == "99999" and g.contact == "noc@x"
+
+
+def test_legacy_ssh_port_without_label_skips():
+    res = parse("h.example.net ssh 2222\n")  # a port but no label is incomplete
+    assert res.roots == []
+    assert any("needs a label" in w for w in res.warnings)
+
+
 # --- format detection -----------------------------------------------------------------
 
 def test_detect_legacy(sample_config_text):

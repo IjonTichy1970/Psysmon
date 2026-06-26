@@ -192,6 +192,8 @@ _TYPE_KEYWORDS = {
     "dns": CheckType.DNS, "authdns": CheckType.DNS,
     "http": CheckType.HTTP, "www": CheckType.HTTP,
     "https": CheckType.HTTPS,
+    "ssh": CheckType.SSH,        # SSH banner check (#96)
+    "mysql": CheckType.MYSQL,    # MySQL/MariaDB handshake check (#97)
 }
 _DROPPED_TYPES = frozenset({"nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
 # Object attributes the parser understands; anything else (a typo, or a not-yet-supported key)

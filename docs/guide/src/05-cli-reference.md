@@ -62,9 +62,10 @@ psysmon -f /etc/psysmon.conf --status-file /var/www/psysmon/status.html --show-u
 How PSYSMON identifies itself and sources its outbound traffic.
 
 - `--source-ip IP` — outbound bind source for connection checks (the address your firewall ACLs
-  see). This is IPv4 and applies to TCP/UDP/SMTP/POP3/DNS/HTTP checks; **ping is unbound by
-  default** and ignores it. The source can also be set per object or group in the modern config
-  (`source`); see [Configuration](04-configuration.html).
+  see). This is IPv4 and applies to TCP/UDP/SMTP/POP3/DNS checks; **HTTP/HTTPS are not bound**
+  (httpx has no per-request source bind) and **ping is unbound by default** — both ignore it. The
+  source can also be set per object or group in the modern config (`source`); see
+  [Configuration](04-configuration.html).
 - `--hostname NAME` — the hostname shown in alert emails and the status-page title.
 
 ```bash

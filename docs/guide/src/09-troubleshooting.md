@@ -10,10 +10,10 @@ status word on the page, see [Status codes](08-status-codes.md); for the complet
 ### Every ping fails / a host reads "Unpingable" / I get a permission error at startup
 
 Raw ICMP (and ICMPv6, for `ping6`) needs privilege. psysmon opens its raw sockets at startup, which
-requires **root or the `CAP_NET_RAW` capability** on Linux; without it the daemon can't open the
-unbound ping/ping6 socket and surfaces a clean startup error. (Ping is a Linux feature — raw
-ICMP/ICMPv6 demux relies on the event loop's `add_reader`, which isn't available on the Windows
-event loop.)
+requires **root or the `CAP_NET_RAW` capability** on Linux; without it the daemon logs a warning
+that it isn't running as root and ICMP ping will fail — it keeps running, and the affected hosts
+then read `Unpingable`. (Ping is a Linux feature — raw ICMP/ICMPv6 demux relies on the event loop's
+`add_reader`, which isn't available on the Windows event loop.)
 
 Fixes:
 

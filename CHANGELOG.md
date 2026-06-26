@@ -40,6 +40,16 @@ All notable changes to this project are documented here. The format is based on
   a `ping6` host unbound). A host above any such directive inherits the global/CLI default, and a
   config using none of them is unchanged ([#95](https://github.com/IjonTichy1970/Psysmon/issues/95)).
 
+### Changed
+- Bumped the packaging *Development Status* classifier to **4 - Beta** (from Pre-Alpha) to match the
+  feature-complete, shipping-releases state.
+- Documentation-accuracy pass over the guide, README, and INSTALL ahead of the release: corrected
+  the `--source-ip` scope (HTTP/HTTPS are not source-bound), the legacy format's supported check
+  types and `ping6` dependency/`{ }` support, the legacy `config control*` / `hostname` / `sender`
+  directive availability, and the missing-root startup behavior (the daemon warns and keeps
+  running); filled in the legacy positional-field table and the default-port list. No runtime
+  behavior changed.
+
 ## [0.8.0] — 2026-06-26 — IMAP/TLS mail checks & richer group defaults
 
 ### Added

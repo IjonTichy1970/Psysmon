@@ -160,15 +160,19 @@ def gen_status() -> str:
         Status.TIMED_OUT: "The connection attempt timed out with no response.",
         Status.NO_DNS: "The hostname did not resolve (no DNS record / lookup failed).",
         Status.UNPINGABLE: "No ICMP echo reply within the retry budget (ping only).",
-        Status.THROTTLED: "Rate-limited / throttled by the service.",
-        Status.NO_AUTH: "Authentication was required but not provided.",
+        Status.THROTTLED: "Rate-limited / throttled by the service. "
+                          "(Legacy code; not emitted by current checks.)",
+        Status.NO_AUTH: "Authentication was required but not provided. "
+                       "(Legacy code; not emitted by current checks.)",
         Status.NO_RESPONSE: "Connected, but the server sent no (valid) response.",
-        Status.IN_PROGRESS: "A connection is still in progress (transient).",
+        Status.IN_PROGRESS: "A connection is still in progress (transient). "
+                           "(Legacy code; not emitted by current checks.)",
         Status.BAD_AUTH: "Authentication was attempted and rejected (bad credentials).",
         Status.BAD_RESPONSE: "The server responded, but not as expected (e.g. a DNS reply that "
                             "is malformed or from the wrong source; an HTTP body missing the "
                             "expected text).",
-        Status.X500_WEDGED: "The service is wedged / stuck (legacy X.500 condition).",
+        Status.X500_WEDGED: "The service is wedged / stuck (legacy X.500 condition). "
+                           "(Legacy code; not emitted by current checks.)",
         Status.DEGRADED: "Loss-tolerant ping got some replies but fewer than `min_pings` — "
                         "reachable but lossy. Does not reset an outage; pages only with "
                         "`--page-on-degraded`. (psysmon addition.)",

@@ -36,6 +36,7 @@ from .model import DEFAULT_PORT, CheckType, Node
 # CheckType -> the modern `type` keyword to emit (the aliases www/authdns are input-only).
 _TYPE_KW: dict[CheckType, str] = {
     CheckType.PING: "ping",
+    CheckType.PING6: "ping6",  # #24 — round-trips through the modern parser's ping6 keyword
     CheckType.TCP: "tcp",
     CheckType.UDP: "udp",
     CheckType.SMTP: "smtp",

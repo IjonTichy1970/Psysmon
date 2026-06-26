@@ -121,7 +121,8 @@ config statusfile html "/var/www/psysmon/status.html";
   browser auto-refresh (`--status-refresh SECONDS`). Suppressed hosts are hidden by default; use
   `--show-up` to list up hosts too. All dynamic content is HTML-escaped.
 - **Text table** — a flat variant (`--status-format text`).
-- **JSON** — all nodes, each with a `suppressed` flag, for dashboards and automation.
+- **JSON** — all nodes, each with a `suppressed` flag and a `down_parents` list (which of a node's
+  dependency parents are currently down — empty when fully healthy), for dashboards and automation.
 
 When objects have a [`group`](04-configuration.md#group-scopes) set (modern format), the HTML page
 lists them under per-group headings (with an "Ungrouped" bucket) and the JSON carries a `group`
@@ -260,6 +261,30 @@ Values are `down`, `up`, `both`, `none`. An object with no `contact` never pages
 
 ---
 
+## IPv6 ping — `ping6` **(modern config only)**
+
+Monitor a host over IPv6 with `type ping6`, an ICMPv6 echo. It behaves exactly like `ping` — it
+gates dependent children, honors loss-tolerant `send_pings` / `min_pings`, needs the same
+raw-socket privilege (root or `CAP_NET_RAW`), and pages the same way — but it resolves the host's
+**AAAA** record and sends ICMPv6 echoes:
+
+```
+object v6-gw {
+    host "gw.example.net"; type ping6; contact "noc@example.net";
+};
+```
+
+`ping6` is **AAAA-only**: a host with no AAAA record reads `No dns entry` (a resolution failure)
+rather than silently falling back to IPv4. The two families are independent — give the same host
+both a `ping` and a `ping6` object to watch each separately. A per-object `source` for a `ping6`
+check must be an **IPv6** address (`source "2001:db8::5";`); `pingv6` and `icmp6` are accepted
+aliases for the type keyword.
+
+> The legacy `sysmon.conf` format stays IPv4-only: a `ping6` line there is skipped with a warning
+> pointing you to the modern format.
+
+---
+
 ## Grouping — `group` and the `group { }` scope **(modern config only)**
 
 A `group "name"` attribute labels an object; the status views then list objects under per-group
@@ -306,21 +331,25 @@ object auth-ns {
 ## Per-object / per-group outbound source — `source` **(modern config only)**
 
 `source` controls which local address a check's probes go out from. Resolution per object is:
-**per-object `source` › the object's group `source` › the per-type default › unbound.** It is
-**IPv4-only** (an IPv6 `source` is rejected at load).
+**per-object `source` › the object's group `source` › the per-type default › unbound.** The
+source's family must match the check — a `ping6` object takes an IPv6 source, every other check an
+IPv4 one.
 
 The per-type default differs:
 
-- **Ping (ICMP) is unbound by default** — it routes each probe by destination and **ignores the
-  global `config source_ip`**. This is the right behavior for hosts reached over a VPN or a dynamic
-  interface, and it matches a plain `ping` with no `-I`.
+- **Ping and ping6 (ICMP/ICMPv6) are unbound by default** — they route each probe by destination
+  and **ignore the global `config source_ip`** (which is IPv4 anyway). This is the right behavior
+  for hosts reached over a VPN or a dynamic interface, and it matches a plain `ping`/`ping6` with
+  no `-I`.
 - **All other checks** (tcp/udp/smtp/pop3/dns) default to the global `config source_ip` (the
   ACL-egress address), or unbound if none is set.
 
 Set `source` to:
 
-- an **IPv4 address** (`source "203.0.113.5";`) — bind this object's probes to that local address;
-  works for ping too (e.g. to pin a stable VPN local address) and for the connection checks.
+- an **IP address** (`source "203.0.113.5";`) — bind this object's probes to that local address;
+  works for ping too (e.g. to pin a stable VPN local address) and for the connection checks. The
+  family must match the check: a `ping6` object takes an IPv6 source (`source "2001:db8::5";`),
+  every other check an IPv4 one.
 - **`auto`** (`source auto;`) — keep this object **unbound** (route by destination) even when a
   group default or `config source_ip` would otherwise bind it. This is the explicit opt-out.
 

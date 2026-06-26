@@ -34,7 +34,9 @@ DEFAULT_TIMEOUT_S = 10.0
 class Resolver(Protocol):
     """Resolves a hostname to an IP string, or ``None`` on failure."""
 
-    async def resolve(self, hostname: str) -> str | None: ...
+    async def resolve(
+        self, hostname: str, family: socket.AddressFamily = socket.AF_INET
+    ) -> str | None: ...
 
 
 @dataclass(slots=True)
@@ -54,9 +56,15 @@ class NoDnsError(Exception):
 Checker = Callable[[Node, CheckContext], Awaitable[int]]
 
 
-async def resolve(node: Node, ctx: CheckContext) -> str:
-    """Resolve ``node.hostname`` to an IP, raising :class:`NoDnsError` on failure."""
-    ip = await ctx.resolver.resolve(node.hostname)
+async def resolve(
+    node: Node, ctx: CheckContext, *, family: socket.AddressFamily = socket.AF_INET
+) -> str:
+    """Resolve ``node.hostname`` to an IP, raising :class:`NoDnsError` on failure.
+
+    ``family`` selects the address family — ``AF_INET`` by default, so every existing caller
+    resolves IPv4 unchanged; the IPv6 ping path passes ``AF_INET6`` for AAAA resolution.
+    """
+    ip = await ctx.resolver.resolve(node.hostname, family)
     if not ip:
         raise NoDnsError(node.hostname)
     return ip

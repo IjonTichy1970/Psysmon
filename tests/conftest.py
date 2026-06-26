@@ -46,7 +46,9 @@ class FakeResolver:
         self._mapping = mapping or {}
         self._default = default
 
-    async def resolve(self, hostname: str) -> str | None:
+    async def resolve(
+        self, hostname: str, family: socket.AddressFamily = socket.AF_INET
+    ) -> str | None:
         return self._mapping.get(hostname, self._default)
 
 

@@ -125,6 +125,18 @@ def test_invalid_type_warns():
     assert any("invalid check type" in w for w in res.warnings)
 
 
+def test_legacy_ping6_not_misrouted_to_ipv4_ping():
+    # "ping6"/"pingv6" must NOT prefix-match "ping" and silently become IPv4 ping; they are
+    # skipped with a pointer to the modern config (the legacy grammar stays IPv4-only, #24).
+    for kw in ("ping6", "pingv6", "icmp6"):
+        res = parse(f"h.example.net {kw} h.example.net noc@x\n")
+        assert res.roots == []  # NOT a v4 ping node
+        assert any("modern" in w and "#24" in w for w in res.warnings)
+    # A plain "ping" still works — the new keywords didn't shadow it.
+    ok = parse("h.example.net ping h.example.net noc@x\n")
+    assert len(ok.roots) == 1 and ok.roots[0].check_type is CheckType.PING
+
+
 def test_deferred_dns_keeps_unresolvable_host():
     # The parser never resolves DNS, so even a bogus name yields a node (the C dropped it).
     res = parse("does-not-exist.invalid ping does-not-exist.invalid noc@x\n")

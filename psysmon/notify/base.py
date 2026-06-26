@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from psysmon import timefmt
-from psysmon.config.model import CheckType, Node, NodeState
+from psysmon.config.model import Node, NodeState, is_ping_type
 from psysmon.engine.state import PageIntent
 from psysmon.status import errtostr
 
@@ -33,7 +33,7 @@ def render_message(
     template: str, node: Node, state: NodeState, *, myname: str, now_wall: float
 ) -> str:
     """Expand a ``PMESG``-style template into a page body."""
-    is_ping = node.check_type is CheckType.PING
+    is_ping = is_ping_type(node.check_type)
     tokens = {
         "m": myname,
         "h": node.hostname + ("" if is_ping else "'s"),

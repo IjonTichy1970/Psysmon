@@ -7,12 +7,24 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- **IPv6 ping (`ping6`)** — a monitored object can now be pinged over **ICMPv6** with `type ping6`
+  (aliases `pingv6`/`icmp6`) in the modern `object{}` config. It resolves the host's **AAAA** record
+  and sends ICMPv6 echoes from a parallel raw-socket pool that shares the existing anti-forgery
+  (id/seq + nonce) demux; a per-object/group **IPv6 `source`** can bind the egress address, and
+  `ping6` gates dependent children exactly like IPv4 `ping`. A `source` of the wrong family for its
+  check is warned and ignored. The legacy `sysmon.conf` format stays IPv4-only — a `ping6` line
+  there is skipped with a pointer to the modern config (previously it was silently misread as IPv4
+  `ping`) ([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)).
 - **Multi-parent dependencies** — a modern-config `object{}` may now declare **multiple `dep`
   edges**, forming a dependency DAG. Suppression is **OR / any-path**: a node stays reachable (and
   keeps being checked) as long as *any* of its parent paths is up, and is suppressed only when
   *all* of them are down — so a host dual-homed behind two routers keeps being monitored when one
   uplink fails. Cycles (including a self-`dep`) and unknown edges warn and are dropped; a non-ping
   parent contributes no path ([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)).
+- **`down_parents` in the JSON status** — each node's JSON entry now lists which of its dependency
+  parents are currently down (`"down_parents": [...]`), so a *partially-degraded* node (up via one
+  path but with a down parent — now possible with multiple `dep`s) is visible instead of looking
+  fully healthy. Derived for display, empty when healthy ([#81](https://github.com/IjonTichy1970/Psysmon/issues/81)).
 
 ### Fixed
 - A failed config reload (a malformed tree, or any unforeseen error while rebuilding the monitored

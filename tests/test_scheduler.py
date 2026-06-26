@@ -505,6 +505,16 @@ def test_multi_parent_mixed_ping_and_non_ping_uses_the_ping_path():
     assert not any("non-ping parent" in w for w in sched.warnings)  # no spurious warning
 
 
+def test_ping6_parent_gates_children_like_ping():
+    # A ping6 parent opens a dependency gate exactly like an IPv4 ping parent (is_ping_type, not a
+    # PING-only special-case): its child is gated by it, with no "non-ping parent" warning (#24).
+    c = node("c", CheckType.TCP)
+    a = node("a", CheckType.PING6, children=[c])
+    sched, _ = make([a], ScriptedRunner({}), ManualClock())
+    assert {s.node.hostname for s in _sched_of(sched, "c").gate} == {"a"}
+    assert not any("non-ping parent" in w for w in sched.warnings)
+
+
 def test_all_non_ping_parents_drops_with_warning():
     # c deps only x (tcp): no ping path at all -> dropped + warned (path-relative non-ping rule).
     c = node("c", CheckType.TCP)
@@ -599,6 +609,38 @@ def test_reload_keeps_live_config_when_flatten_fails():
     assert raised
     assert sched._scheduled is old_scheduled       # the live set is unchanged
     assert all(s.alive for s in sched._scheduled)  # old objects were NOT retired into a blind spot
+
+
+def test_down_parents_reports_a_down_parent_of_a_reachable_child():
+    # A multi-parent child up via one path, with the other parent down, is "partially degraded":
+    # still reachable (#62), but node_states() reports the down parent (#81).
+    sched, _ = _dag_two_parents(ScriptedRunner({}), ManualClock())
+    a_s, b_s, c_s = _sched_of(sched, "a"), _sched_of(sched, "b"), _sched_of(sched, "c")
+    a_s.checked, a_s.state.lastcheck = True, Status.UNPINGABLE  # a down
+    b_s.checked, b_s.state.lastcheck = True, Status.OK          # b up
+    states = {nd.hostname: st for nd, st in sched.node_states()}
+    assert states["c"].down_parents == ["a"]  # the one down parent is reported
+    assert sched._eligible(c_s) is True        # c is still reachable via b
+    assert states["a"].down_parents == []      # a root has no parents
+
+
+def test_down_parents_excludes_up_and_unchecked_parents():
+    sched, _ = _dag_two_parents(ScriptedRunner({}), ManualClock())
+    a_s, b_s = _sched_of(sched, "a"), _sched_of(sched, "b")
+    a_s.checked, a_s.state.lastcheck = True, Status.OK
+    b_s.checked, b_s.state.lastcheck = True, Status.OK
+    assert {nd.hostname: st for nd, st in sched.node_states()}["c"].down_parents == []  # both up
+    a_s.checked = False  # an UNCHECKED parent is unknown, not "down"
+    assert {nd.hostname: st for nd, st in sched.node_states()}["c"].down_parents == []
+
+
+def test_down_parents_is_not_persisted():
+    # down_parents is derived/display-only and must never reach the savestate carry.
+    sched, _ = _dag_two_parents(ScriptedRunner({}), ManualClock())
+    a_s = _sched_of(sched, "a")
+    a_s.checked, a_s.state.lastcheck = True, Status.UNPINGABLE
+    sched.node_states()  # populate the field
+    assert all("down_parents" not in rec for rec in sched.export_state())
 
 
 async def test_degraded_does_not_page_by_default_through_scheduler():
@@ -989,14 +1031,18 @@ async def test_no_global_source_leaves_non_ping_unbound():
 
 
 def test_scheduler_collects_bound_ping_sources_for_the_pool():
-    # The scheduler hands the PingService the distinct BOUND ping sources to pre-open; `auto`,
-    # unset, and non-ping nodes contribute none (#70).
+    # The scheduler hands the PingService the distinct BOUND ping sources to pre-open, split by
+    # family: a ping6 node's IPv6 source feeds the v6 pool, not the v4 collection (#70/#24).
+    # `auto`, unset, and non-ping nodes contribute none.
     clock = ManualClock()
     roots = [
         Node(hostname="a", check_type=CheckType.PING, source="203.0.113.5"),
         Node(hostname="b", check_type=CheckType.PING, source=SOURCE_AUTO),
         Node(hostname="c", check_type=CheckType.PING),
         Node(hostname="d", check_type=CheckType.TCP, port=80, source="198.51.100.9"),
+        Node(hostname="e", check_type=CheckType.PING6, source="2001:db8::5"),
     ]
     sched, _ = make(roots, ScriptedRunner(), clock, source_ip="192.0.2.1")
-    assert sched.ping_service._configured_sources == frozenset({"203.0.113.5"})
+    assert sched.ping_service._v4.configured == frozenset({"203.0.113.5"})
+    assert sched.ping_service._v6.configured == frozenset({"2001:db8::5"})
+    assert sched.ping_service._v6.enabled is True  # a ping6 node enables the v6 pool

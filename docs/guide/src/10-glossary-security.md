@@ -91,10 +91,11 @@ globally with `-n` / `--no-notify`.
 a whole group. Precedence is **per-object > group default > global
 `config source_ip`**. `source auto` forces the target to stay **unbound** (the kernel picks the
 route) even when a group default or `source_ip` would otherwise bind it — useful for hosts reached
-over a VPN or a dynamic interface. Note: **ping is unbound by default** and ignores the global
-`source_ip`; only an explicit per-object/group `source` binds ping. Connection checks
-(tcp/udp/smtp/pop3/dns) default to `source_ip`. The `source` value is **IPv4-only**, and HTTP/HTTPS
-checks are always unbound. See [Configuration](04-configuration.md).
+over a VPN or a dynamic interface. Note: **ping and ping6 are unbound by default** and ignore the
+global `source_ip`; only an explicit per-object/group `source` binds them. Connection checks
+(tcp/udp/smtp/pop3/dns) default to `source_ip`. A `source`'s family must match its check (IPv6 for
+`ping6`, IPv4 otherwise), and HTTP/HTTPS checks are always unbound. See
+[Configuration](04-configuration.md).
 
 **savestate**
 : Optional on-disk persistence of live monitoring state, so a restart or upgrade doesn't forget

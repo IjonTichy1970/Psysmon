@@ -395,11 +395,17 @@ def test_host_attr_not_unknown():
     assert not any("isn't supported yet" in w for w in res.warnings)
 
 
-def test_dropped_and_deferred_types_skip():
+def test_dropped_types_skip():
     dropped = parse('object x { ip "h"; type imap; };\n')
     assert dropped.roots == [] and any("not supported" in w for w in dropped.warnings)
-    v6 = parse('object x { ip "h"; type ping6; };\n')
-    assert v6.roots == [] and any("#24" in w for w in v6.warnings)
+
+
+def test_ping6_type_recognized():
+    # ping6 (and its pingv6/icmp6 aliases) build a PING6 node — no longer deferred (#24).
+    for kw in ("ping6", "pingv6", "icmp6"):
+        res = parse(f'object x {{ ip "h"; type {kw}; }};\n')
+        assert res.warnings == []
+        assert len(res.roots) == 1 and res.roots[0].check_type is CheckType.PING6
 
 
 def test_unknown_object_attribute_warns_but_keeps_object():
@@ -781,12 +787,40 @@ def test_group_block_name_is_var_substituted():
     assert res.roots[0].source == "192.0.2.9" and res.warnings == []
 
 
-def test_source_ipv6_is_rejected():
-    # The bind stack is IPv4-only; an IPv6 source could never bind, so reject it at load (#24).
-    for v6 in ("::1", "fe80::1", "2001:db8::5"):
+def test_source_family_must_match_check():
+    # A source of the wrong family for the check is warned + left unbound (#24): a v6 source on a
+    # v4 check, or a v4 source on a ping6 check.
+    for v6 in ("::1", "2001:db8::5"):
         res = parse(f'object x {{ ip "h"; type tcp; port 80; source "{v6}"; }};\n')
         assert res.roots[0].source is None
-        assert any("IPv6" in w for w in res.warnings)
+        assert any("wrong family" in w for w in res.warnings)
+    res = parse('object x { ip "h"; type ping; source "2001:db8::5"; };\n')
+    assert res.roots[0].source is None and any("wrong family" in w for w in res.warnings)
+    res = parse('object x { ip "h"; type ping6; source "192.0.2.1"; };\n')
+    assert res.roots[0].source is None and any("wrong family" in w for w in res.warnings)
+
+
+def test_source_ipv6_accepted_for_ping6():
+    # ping6 binds an IPv6 source — the v6 source the old code rejected outright is now valid (#24).
+    for v6 in ("2001:db8::9", "::1"):
+        res = parse(f'object x {{ ip "h"; type ping6; source "{v6}"; }};\n')
+        assert res.roots[0].source == v6 and res.warnings == []
+
+
+def test_group_source_family_must_match_member():
+    # A group's source default is family-checked per member (#24): a v6 group source on a v4
+    # (ping) member is warned + left unbound; a v4 group source on a ping6 member likewise.
+    res = parse(
+        'group "$G" { source "2001:db8::9"; }\n'
+        'object x { ip "h"; type ping; group "$G"; };\n'
+    )
+    assert res.roots[0].source is None and any("wrong family" in w for w in res.warnings)
+
+    res = parse(
+        'group "$H" { source "192.0.2.9"; }\n'
+        'object y { ip "h"; type ping6; group "$H"; };\n'
+    )
+    assert res.roots[0].source is None and any("wrong family" in w for w in res.warnings)
 
 
 def test_source_rejects_non_ip_tokens():

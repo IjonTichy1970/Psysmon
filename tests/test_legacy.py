@@ -398,14 +398,15 @@ def test_config_savestate():
 # --- post-rewrite global directives backported to legacy (#93) ------------------------
 
 def test_config_backport_globals():
-    """The post-rewrite globals the legacy parser used to drop are now honored, landing in the
-    same Settings fields as the modern parser (#93)."""
+    """The post-rewrite GLOBAL directives land in the same Settings overrides as the modern parser
+    (#93). contact_on / queuetime / send_pings / min_pings are position-dependent (sticky) in legacy
+    now (#95), so they do NOT appear in overrides — they snapshot into nodes (tested separately)."""
     cfg = (
-        "config contact_on down\n"
+        "config contact_on down\n"  # sticky (#95) -> not in overrides
         "config source_ip 192.0.2.10\n"
-        "config queuetime 2.5\n"
-        "config send_pings 3\n"
-        "config min_pings 2\n"
+        "config queuetime 2.5\n"  # sticky (#95)
+        "config send_pings 3\n"  # sticky (#95)
+        "config min_pings 2\n"  # sticky (#95)
         "config maxqueued 50\n"
         "config statesave_interval 30\n"
         "config state_max_age 600\n"
@@ -421,11 +422,7 @@ def test_config_backport_globals():
     res = parse(cfg, numfailures=2)
     assert res.warnings == []
     assert res.overrides == {
-        "contact_on": "down",
         "source_ip": "192.0.2.10",
-        "interval_s": 2.5,
-        "send_pings": 3,
-        "min_pings": 2,
         "max_concurrency": 50,
         "statesave_s": 30,
         "state_max_age_s": 600,
@@ -441,14 +438,13 @@ def test_config_backport_globals():
 
 
 def test_config_backport_matches_modern():
-    """The same global `config` line yields identical overrides in both parsers (#93)."""
+    """The same GLOBAL `config` line yields identical overrides in both parsers (#93). The sticky
+    directives (contact_on/queuetime/send_pings/min_pings) are intentionally excluded — they are
+    per-node in legacy but global in modern (#95)."""
     from psysmon.config.modern import parse as mparse
 
     cases = [
-        ("contact_on up", "contact_on up;"),
         ("source_ip 198.51.100.5", "source_ip 198.51.100.5;"),
-        ("queuetime 45", "queuetime 45;"),
-        ("send_pings 4", "send_pings 4;"),
         ("control", "control;"),
         ("control_port 9999", "control_port 9999;"),
         ("page_on_degraded", "page_on_degraded;"),
@@ -477,13 +473,17 @@ def test_config_every_global_matches_modern():
             return "down"
         return "x.example.net"  # string globals
 
+    # contact_on / queuetime / send_pings / min_pings are POSITION-DEPENDENT (sticky) in legacy now
+    # (#95) — per-node, not global — so they diverge from modern's top-level global and are excluded
+    # from this global drift guard (their sticky behavior is covered separately).
+    sticky = {"contact_on", "queuetime", "send_pings", "min_pings"}
     names = (
         set(modern._INT_DIRECTIVES)
         | set(modern._FLOAT_DIRECTIVES)
         | set(modern._STR_DIRECTIVES)
         | set(modern._FLAG_DIRECTIVES)
         | {"contact_on"}
-    )
+    ) - sticky
     for name in sorted(names):
         line = f"config {name} {value_for(name)}".rstrip()
         lr = parse(line + "\n")
@@ -492,18 +492,21 @@ def test_config_every_global_matches_modern():
         assert lr.warnings == [], f"{name}: {lr.warnings}"
 
 
-def test_config_numeric_extra_token_warns_like_modern():
-    res = parse("config send_pings 3 4\n")  # int global with an extra token
-    assert res.overrides["send_pings"] == 3
+def test_config_sticky_extra_token_warns():
+    # The sticky directives warn on extra tokens like the modern parser (#95); the first value
+    # still snapshots into a subsequently-parsed node.
+    res = parse("config send_pings 3 4\nh.example.net ping lbl noc@x\n")
+    assert res.roots[0].send_pings == 3
     assert any("takes one value" in w for w in res.warnings)
 
 
-def test_config_numeric_invalid_value_skips():
-    r1 = parse("config queuetime abc\n")  # float global, bad value
-    assert "interval_s" not in r1.overrides
+def test_config_sticky_invalid_value_leaves_default():
+    # A bad value warns; the running sticky default is unchanged (the next node stays unset).
+    r1 = parse("config queuetime abc\nh.example.net ping a noc@x\n")
+    assert r1.roots[0].interval is None
     assert any("number" in w for w in r1.warnings)
-    r2 = parse("config send_pings xyz\n")  # int global, bad value
-    assert "send_pings" not in r2.overrides
+    r2 = parse("config send_pings xyz\nh.example.net ping b noc@x\n")
+    assert r2.roots[0].send_pings is None
     assert any("integer" in w for w in r2.warnings)
 
 
@@ -564,10 +567,155 @@ def test_config_old_style_block_unchanged():
 
 
 def test_config_contact_on_validates():
-    assert parse("config contact_on none\n").overrides["contact_on"] == "none"
-    bad = parse("config contact_on sometimes\n")
-    assert bad.overrides["contact_on"] == "both"  # invalid -> both, like the modern parser
+    # contact_on is sticky (#95): a valid value snapshots into a following node; bad -> "both".
+    ok = parse("config contact_on none\nh.example.net ping a noc@x\n").roots[0]
+    assert ok.contact_on == "none"
+    bad = parse("config contact_on sometimes\nh.example.net ping b noc@x\n")
+    assert bad.roots[0].contact_on == "both"  # invalid -> both, like the modern parser
     assert any("contact_on" in w for w in bad.warnings)
+
+
+def test_config_sticky_directives_are_position_dependent():
+    """source / contact_on / send_pings / min_pings / queuetime snapshot the running value into each
+    subsequently-parsed node, like numfailures; a node before any directive stays unset (#95)."""
+    cfg = (
+        "before.example.net ping b noc@x\n"
+        "config contact_on down\n"
+        "config queuetime 45\n"
+        "config send_pings 3\n"
+        "config min_pings 2\n"
+        "config source 192.0.2.10\n"
+        "after.example.net ping a noc@x\n"
+        "config contact_on up\n"
+        "later.example.net ping l noc@x\n"
+    )
+    res = parse(cfg, numfailures=2)
+    assert res.warnings == []
+    nodes = {n.hostname: n for n in res.roots}
+    before = nodes["before.example.net"]
+    assert before.contact_on == "" and before.source is None and before.interval is None
+    assert before.send_pings is None and before.min_pings is None
+    after = nodes["after.example.net"]
+    assert after.contact_on == "down" and after.interval == 45.0
+    assert after.send_pings == 3 and after.min_pings == 2
+    assert after.source == "192.0.2.10"
+    # the running value retargets the hosts below the second directive
+    assert nodes["later.example.net"].contact_on == "up"
+
+
+def test_config_sticky_is_file_position_not_block_scoped():
+    """The locked nesting rule (#95): the running value flows into nested {} children, and a value
+    set inside a block is NOT restored on block close — file-position sticky, like numfailures."""
+    cfg = (
+        "config contact_on down\n"
+        "parent.example.net ping p noc@x {\n"
+        "config contact_on up\n"  # set INSIDE the block
+        "child.example.net ping c noc@x\n"
+        "}\n"
+        "after.example.net ping a noc@x\n"
+    )
+    res = parse(cfg)
+    parent = res.roots[0]
+    assert parent.contact_on == "down"  # set before the block
+    assert parent.children[0].contact_on == "up"  # the in-block change flows into the child
+    assert res.roots[1].contact_on == "up"  # ...and is NOT restored when the block closes
+
+
+def test_config_sticky_source_family_checked_per_node():
+    """A sticky source is family-checked at each node (#95): a v4 source binds v4 checks but leaves
+    a ping6 node unbound (with a warning); a v6 source binds ping6; `auto` always passes."""
+    res = parse(
+        "config source 192.0.2.5\n"
+        "v4.example.net ping v4 noc@x\n"
+        "v6.example.net ping6 v6 noc@x\n"
+    )
+    nodes = {n.hostname: n for n in res.roots}
+    assert nodes["v4.example.net"].source == "192.0.2.5"
+    assert nodes["v6.example.net"].source is None  # family mismatch -> unbound
+    assert any("family" in w for w in res.warnings)
+    assert parse("config source auto\nh.example.net ping6 v6 noc@x\n").roots[0].source == "auto"
+    v6src = parse("config source 2001:db8::5\nh.example.net ping6 v6 noc@x\n").roots[0]
+    assert v6src.source == "2001:db8::5"
+
+
+def test_config_sticky_source_bad_value_ignored():
+    res = parse("config source not-an-ip\nh.example.net ping a noc@x\n")
+    assert res.roots[0].source is None  # bad source ignored
+    assert any("source must be an IP" in w for w in res.warnings)
+
+
+def test_config_no_sticky_directives_is_byte_identical():
+    """Back-compat: a config using none of the sticky directives leaves every snapshotted field at
+    its unset sentinel (#95 is additive)."""
+    res = parse("a.example.net ping lbl noc@x\nb.example.net tcp 80 web noc@x\n")
+    for n in res.roots:
+        assert n.contact_on == "" and n.source is None
+        assert n.send_pings is None and n.min_pings is None and n.interval is None
+
+
+def test_config_sticky_numeric_validation():
+    """Sticky numeric directives reject the values the modern parser does (#95) — a non-finite or
+    non-positive queuetime would poison the scheduler heap; send_pings/min_pings need >= 1."""
+    for bad in ("nan", "inf", "-5", "0"):
+        res = parse(f"config queuetime {bad}\nh.example.net ping a noc@x\n")
+        assert res.roots[0].interval is None, bad
+        assert any("queuetime" in w for w in res.warnings), bad
+    assert parse("config queuetime 30\nh.example.net ping a noc@x\n").roots[0].interval == 30.0
+    for bad in ("0", "-3"):
+        res = parse(f"config send_pings {bad}\nh.example.net ping a noc@x\n")
+        assert res.roots[0].send_pings is None, bad
+        assert any("send_pings must be >= 1" in w for w in res.warnings), bad
+
+
+def test_config_sticky_contact_on_source_extra_token_warns():
+    # every sticky directive warns on extra tokens (parity within the family) (#95)
+    r1 = parse("config contact_on down up\nh.example.net ping a noc@x\n")
+    assert r1.roots[0].contact_on == "down"
+    assert any("takes one value" in w for w in r1.warnings)
+    r2 = parse("config source 192.0.2.1 9.9.9.9\nh.example.net ping a noc@x\n")
+    assert r2.roots[0].source == "192.0.2.1"
+    assert any("takes one value" in w for w in r2.warnings)
+
+
+def test_config_sticky_values_round_trip_through_convert():
+    """Sticky source/contact_on/queuetime/send_pings/min_pings survive a to_modern round-trip
+    (#95 — convert must emit node.source, not just the #93 global source_ip)."""
+    from psysmon.config.convert import to_modern
+    from psysmon.config.modern import parse as mparse
+
+    res = parse(
+        "config contact_on down\n"
+        "config queuetime 45\n"
+        "config send_pings 3\n"
+        "config min_pings 2\n"
+        "config source 192.0.2.10\n"
+        "h.example.net tcp 80 web noc@x\n"
+    )
+    text, warns = to_modern(res)
+    assert warns == []
+    back = mparse(text).roots[0]
+    assert back.contact_on == "down" and back.interval == 45.0
+    assert back.send_pings == 3 and back.min_pings == 2
+    assert back.source == "192.0.2.10"
+
+
+def test_config_sticky_and_numfailures_coexist():
+    # numfailures and the new sticky directives are independent running values.
+    res = parse(
+        "config numfailures 5\nconfig contact_on down\nh.example.net ping a noc@x\n", numfailures=2
+    )
+    n = res.roots[0]
+    assert n.max_down == 5 and n.contact_on == "down"
+
+
+def test_config_sticky_directives_do_not_leak_into_overrides():
+    # a sticky directive sets per-node state, never the global overrides dict (#95).
+    res = parse(
+        "config contact_on down\nconfig send_pings 3\nconfig source 192.0.2.1\n"
+        "h.example.net ping a noc@x\n"
+    )
+    for key in ("contact_on", "send_pings", "interval_s", "source"):
+        assert key not in res.overrides
 
 
 def test_config_flag_extra_token_warns():

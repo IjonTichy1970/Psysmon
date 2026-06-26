@@ -22,6 +22,14 @@ All notable changes to this project are documented here. The format is based on
   credentials (a `host imap label` line is a banner check; `host imap user pass label` authenticates)
   — and the original C `sysmon`'s always-authenticated `imap` line parses unchanged
   ([#94](https://github.com/IjonTichy1970/Psysmon/issues/94)).
+- **Per-host settings in legacy configs via sticky `config` directives** — `config source`,
+  `config contact_on`, `config send_pings`/`min_pings`, and `config queuetime` are now
+  **position-dependent** in the legacy format (like `config numfailures` always has been): the value
+  is snapshotted into every host parsed below it, until the next change, giving per-host control to a
+  grammar that has no per-object attribute syntax. The running value flows into nested `{ }` children
+  and is not reset on block close; `config source` is family-checked at each host (a v4 source leaves
+  a `ping6` host unbound). A host above any such directive inherits the global/CLI default, and a
+  config using none of them is unchanged ([#95](https://github.com/IjonTichy1970/Psysmon/issues/95)).
 
 ## [0.8.0] — 2026-06-26 — IMAP/TLS mail checks & richer group defaults
 

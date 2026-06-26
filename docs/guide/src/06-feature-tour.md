@@ -453,21 +453,21 @@ control-channel documentation.
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |
-| Paging policy (`contact_on`) — global | Yes (`config contact_on`) | Yes (`config contact_on`) | `--contact-on` |
-| Paging policy (`contact_on`) — per object | No | Yes | No |
+| Paging policy (`contact_on`) — global | Yes (sticky `config contact_on`) | Yes (`config contact_on`) | `--contact-on` |
+| Paging policy (`contact_on`) — per object | Range-scoped (sticky `config`) | Yes | No |
 | SMTP email notifier | Yes | Yes | `--smtp-host` / `--smtp-port` / `--mail-from` / `-n` |
 | Status output (HTML / text / JSON) | Yes | Yes | `--status-file` / `--status-format` / `--show-up` / `--status-refresh` |
 | Status-page logo auto-deploy | Yes | Yes | — (follows `statusfile`) |
 | Object grouping on status views | No | Yes (`group`) | No |
-| Loss-tolerant ping + Degraded — global | Yes (`config send_pings` / `min_pings`) | Yes (`config send_pings` / `min_pings`) | `--send-pings` / `--min-pings` |
-| Loss-tolerant ping — per object | No | Yes (`send_pings` / `min_pings`) | No |
+| Loss-tolerant ping + Degraded — global | Yes (sticky `config send_pings` / `min_pings`) | Yes (`config send_pings` / `min_pings`) | `--send-pings` / `--min-pings` |
+| Loss-tolerant ping — per object | Range-scoped (sticky `config`) | Yes (`send_pings` / `min_pings`) | No |
 | Page on degraded | Yes (`config page_on_degraded`) | Yes (`config page_on_degraded`) | `--page-on-degraded` |
 | State persistence (savestate) | Yes | Yes | `--state-file` / `--state-save-interval` / `--state-max-age` |
 | Leveled syslog logging | Yes | Yes | `--log-level` / `-v` / `-vv` / `--heartbeat` / `--dnslog` / `--slow-check` / `--syslog-facility` |
-| Per-object check cadence (`queuetime`) | No (global only) | Yes | `--interval` (global only) |
-| Per-object page threshold (`numfailures`) | No (global only) | Yes | `--numfailures` (global only) |
+| Per-object check cadence (`queuetime`) | Range-scoped (sticky `config queuetime`) | Yes | `--interval` (global only) |
+| Per-object page threshold (`numfailures`) | Range-scoped (sticky `config numfailures`) | Yes | `--numfailures` (global only) |
 | DNS check query name (`dns-query`) | Yes (positional) | Yes (`dns-query`) | — |
-| Per-object / per-group `source` | No | Yes | No (global `--source-ip` only) |
+| Per-object / per-group `source` | Range-scoped (sticky `config source`) | Yes | No (global `--source-ip` only) |
 | Control channel (`psysmonctl` / `psysmon-token`) | Enable via `config control` or CLI | Enable via `config control` or CLI | `--control` / `--control-bind` / `--control-port` / `--control-token-file` / `--control-tls-cert` / `--control-tls-key` |
 
 See [CLI reference](05-cli-reference.md) and [Appendix A](90-appendices.md) for the complete flag

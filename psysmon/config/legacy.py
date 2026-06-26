@@ -38,9 +38,11 @@ settings overrides (to feed :func:`psysmon.config.settings.merge`), and collecte
 
 from __future__ import annotations
 
+import ipaddress
+import math
 from dataclasses import dataclass, field
 
-from psysmon.config.model import CONTACT_ON_CHOICES, DEFAULT_PORT, CheckType, Node
+from psysmon.config.model import CONTACT_ON_CHOICES, DEFAULT_PORT, SOURCE_AUTO, CheckType, Node
 
 # Valid syslog facilities (from match_facility in loadconfig.c); "none" disables logging.
 _FACILITIES = frozenset(
@@ -130,6 +132,15 @@ class _Parser:
         self._lines = list(enumerate(lines, start=1))
         self._pos = 0
         self.numfailures = numfailures
+        # Position-dependent ("sticky") per-object defaults (#95): each snapshots into every
+        # subsequently-parsed node, exactly like numfailures. Seeded to each Node field's "unset"
+        # sentinel so a node parsed before any such directive inherits the global default at check
+        # time (the engine falls back to the Settings value when the per-node field is unset).
+        self.contact_on = ""
+        self.source: str | None = None
+        self.send_pings: int | None = None
+        self.min_pings: int | None = None
+        self.interval: float | None = None
         self.overrides: dict[str, object] = {}
         self.warnings: list[str] = []
 
@@ -232,7 +243,19 @@ class _Parser:
             return None
 
         n = len(tokens)
-        node = Node(hostname=host, check_type=ctype, max_down=self.numfailures)
+        # Snapshot the position-dependent defaults in effect at this point in the file (#95) — the
+        # numfailures precedent, generalized. Unset sentinels (default) leave each field inheriting
+        # the global at check time, so a config with no sticky directives is byte-identical.
+        node = Node(
+            hostname=host,
+            check_type=ctype,
+            max_down=self.numfailures,
+            contact_on=self.contact_on,
+            send_pings=self.send_pings,
+            min_pings=self.min_pings,
+            interval=self.interval,
+            source=self._source_for(ctype, lineno),
+        )
         default_port = DEFAULT_PORT.get(ctype)
         if default_port is not None:
             node.port = default_port
@@ -342,11 +365,30 @@ class _Parser:
                 self.overrides["numfailures"] = value
         elif directive.startswith("sleeptime"):
             self._warn(lineno, "config sleeptime is obsolete; ignored (use --interval)")
-        # --- post-rewrite globals (#93): exact-match against the shared modern tables. Exact (not
-        # prefix) match is deliberate so `control_bind`/`control_port`/... are never swallowed by
-        # the `control` flag. Existing directives above are caught first, so they never reach here.
+        # --- per-object "sticky" directives (#95): position-dependent, snapshotted into each
+        # subsequently-parsed node (like numfailures above), NOT written to the global overrides.
+        # Intercepted BEFORE the #93 global tables below, since send_pings/min_pings/queuetime also
+        # live in those tables (for the *modern* format's global use). A node parsed before any of
+        # these inherits the global Settings default at check time.
         elif directive == "contact_on":
-            self._set_contact_on(lineno, tokens[2])
+            self._set_contact_on(lineno, self._one_value(lineno, "contact_on", tokens))
+        elif directive == "source":
+            self._set_sticky_source(lineno, self._one_value(lineno, "source", tokens))
+        elif directive == "queuetime":
+            value = self._to_float(lineno, self._one_value(lineno, "queuetime", tokens))
+            if value is not None and self._valid_interval(lineno, value):
+                self.interval = value
+        elif directive == "send_pings":
+            value = self._sticky_count(lineno, "send_pings", tokens)
+            if value is not None:
+                self.send_pings = value
+        elif directive == "min_pings":
+            value = self._sticky_count(lineno, "min_pings", tokens)
+            if value is not None:
+                self.min_pings = value
+        # --- post-rewrite GLOBAL directives (#93): exact-match against the shared modern tables.
+        # Exact (not prefix) match is deliberate so `control_bind`/`control_port`/... are never
+        # swallowed by the `control` flag. Existing directives above are caught first.
         elif directive in _INT_DIRECTIVES:
             self._set_global_int(lineno, _INT_DIRECTIVES[directive], directive, tokens)
         elif directive in _FLOAT_DIRECTIVES:
@@ -425,31 +467,82 @@ class _Parser:
             self._warn(lineno, f"expected a number, got {token!r}; skipping")
             return None
 
-    def _set_global_int(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
-        """Apply a post-rewrite int global (#93), warning on extra tokens like the modern parser
-        (the original directives keep their pre-existing lenient single-token behavior)."""
+    def _one_value(self, lineno: int, name: str, tokens: list[str]) -> str:
+        """The single config value token, warning on extra tokens like the modern parser."""
         if len(tokens) > 3:
             self._warn(lineno, f"config {name} takes one value; using the first")
-        value = self._to_int(lineno, tokens[2])
+        return tokens[2]
+
+    def _set_global_int(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
+        """Apply a post-rewrite int GLOBAL (#93), warning on extra tokens like the modern parser."""
+        value = self._to_int(lineno, self._one_value(lineno, name, tokens))
         if value is not None:
             self.overrides[field_name] = value
 
     def _set_global_float(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
-        """Apply a post-rewrite float global (e.g. ``queuetime`` -> ``interval_s``, #93)."""
-        if len(tokens) > 3:
-            self._warn(lineno, f"config {name} takes one value; using the first")
-        value = self._to_float(lineno, tokens[2])
+        """Apply a post-rewrite float GLOBAL from the shared tables (#93)."""
+        value = self._to_float(lineno, self._one_value(lineno, name, tokens))
         if value is not None:
             self.overrides[field_name] = value
 
     def _set_contact_on(self, lineno: int, value: str) -> None:
-        """``config contact_on`` — validated like the modern parser (#93)."""
+        """``config contact_on`` is POSITION-DEPENDENT in legacy (#95): a running per-node default
+        snapshotted into subsequently-parsed nodes (like numfailures), not a global. Validated like
+        the modern parser (an unknown value falls back to ``both``)."""
         if value in CONTACT_ON_CHOICES:
-            self.overrides["contact_on"] = value
+            self.contact_on = value
         else:
             self._warn(lineno, f"unknown contact_on {value!r} "
                        f"(want {'/'.join(CONTACT_ON_CHOICES)}); using both")
-            self.overrides["contact_on"] = "both"
+            self.contact_on = "both"
+
+    def _set_sticky_source(self, lineno: int, value: str) -> None:
+        """``config source <ip|auto>`` (#95): a position-dependent per-node bind snapshotted into
+        subsequently-parsed nodes. Syntax is validated here (an IP literal or ``auto``); the family
+        is checked per node at snapshot time (:meth:`_source_for`). A bad value warns and leaves the
+        running source unchanged."""
+        val = value.strip().strip('"')
+        if val.lower() == SOURCE_AUTO:
+            self.source = SOURCE_AUTO
+            return
+        try:
+            ipaddress.ip_address(val)
+        except ValueError:
+            self._warn(lineno, f"source must be an IP address or 'auto', got {value!r}; ignoring")
+            return
+        self.source = val
+
+    def _source_for(self, ctype: CheckType, lineno: int) -> str | None:
+        """The sticky ``source`` (#95) resolved for a node of this check type, family-checked here
+        where the check type is known: a ``ping6`` node wants an IPv6 source, every other check an
+        IPv4 one (``auto``/unset always pass). A mismatch warns and leaves the node unbound."""
+        src = self.source
+        if src is None or src == SOURCE_AUTO:
+            return src
+        want_version = 6 if ctype is CheckType.PING6 else 4
+        if ipaddress.ip_address(src).version != want_version:
+            self._warn(lineno, f"source {src!r} family does not match {ctype}; leaving unbound")
+            return None
+        return src
+
+    def _valid_interval(self, lineno: int, value: float) -> bool:
+        """``queuetime`` must be a positive, finite number — mirror the modern parser, since a
+        non-finite or non-positive interval would poison the scheduler heap (#95)."""
+        if value > 0 and math.isfinite(value):
+            return True
+        self._warn(lineno, f"config queuetime must be a positive number, got {value!r}; ignoring")
+        return False
+
+    def _sticky_count(self, lineno: int, name: str, tokens: list[str]) -> int | None:
+        """A loss-tolerant ping count (send_pings/min_pings): a positive int, like modern (#95). The
+        send/min relationship is clamped at check time, so only the >= 1 floor is enforced here."""
+        value = self._to_int(lineno, self._one_value(lineno, name, tokens))
+        if value is None:
+            return None
+        if value < 1:
+            self._warn(lineno, f"config {name} must be >= 1, got {value}; ignoring")
+            return None
+        return value
 
     def _set_global_str(self, lineno: int, field_name: str, name: str, tokens: list[str]) -> None:
         """Apply a post-rewrite string global (#93). Path-like values join the remaining tokens and

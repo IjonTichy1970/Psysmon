@@ -107,12 +107,23 @@ router.example.net  ping  edge-router  noc@example.net  {
 Here `web`, `db`, and `sw` are suppressed when `router` is down; `host1` is additionally suppressed
 when `sw` is down.
 
-### `config numfailures` is position-dependent
+### Position-dependent ("sticky") `config` directives {#sticky-config-directives}
 
-`config numfailures N` sets how many consecutive failed checks a host must accumulate before it
-pages. In the **legacy** format this directive is **position-dependent**: its current value is
-snapshotted into every stanza parsed **after** it. It is a running value, not last-wins — change it
-again partway down the file and only the stanzas below the second change get the new value.
+A family of `config` directives is **position-dependent** in the legacy format: the current value is
+snapshotted into every host parsed **after** it (a running value, not last-wins). This is how the
+legacy grammar — which has no per-object attribute syntax — gives you **per-host** control. The
+family:
+
+| Directive | Sets, per host | Value |
+|---|---|---|
+| `config numfailures` | consecutive-failure page threshold | integer |
+| `config queuetime` | check interval | seconds |
+| `config send_pings` / `config min_pings` | loss-tolerant ping echo / required-reply counts | integer |
+| `config contact_on` | paging-transition policy | `down`\|`up`\|`both`\|`none` |
+| `config source` | outbound bind address | an IP, or `auto` (stay unbound) |
+
+Each applies to the hosts **below** it until the next change; a host parsed *before* any of them
+inherits the global default (the built-in default or the matching CLI flag). Example:
 
 ```
 config numfailures 2
@@ -120,14 +131,23 @@ config numfailures 2
 router.example.net  ping  edge-router  noc@example.net        # threshold 2
 
 config numfailures 5
+config contact_on   down
 
-flaky.example.net   ping  flaky-link    noc@example.net        # threshold 5
-host2.example.net   ping  host-2        noc@example.net        # threshold 5 (still)
+flaky.example.net   ping  flaky-link    noc@example.net        # threshold 5, pages on down only
+host2.example.net   ping  host-2        noc@example.net        # threshold 5 (still), down only
 ```
 
-> This positional behavior is unique to the legacy format. In the modern format `config numfailures`
-> is a plain global default and you set per-object thresholds with a `numfailures` attribute — the
-> converter relies on this distinction (see [migration](#3-legacy-vs-modern-and-migration)).
+**Nesting rule:** the running value is **file-position sticky, not block-scoped**. It flows down into
+nested `{ }` children, and a value set *inside* a block is **not** restored when the block closes — it
+keeps applying to the hosts after the block. (`config source` is additionally **family-checked at
+each host**: a v4 source binds the IPv4 checks but leaves a `ping6` host unbound, with a warning;
+`auto` always passes.)
+
+> This positional behavior is specific to the legacy format. In the modern `object{}` format these
+> are per-object **attributes** on each object (and most also have a global `config` form) — the
+> converter relies on the distinction (see [migration](#3-legacy-vs-modern-and-migration)). To set
+> one of these as a file-wide default in legacy, put the directive at the **top** of the file (every
+> host below inherits it); the true `Settings` global stays settable via the matching CLI flag.
 
 ### `config` directives (legacy) {#config-directives-legacy}
 
@@ -149,15 +169,13 @@ prefix-matched (like the C `strncmp`); the later, post-rewrite globals are match
 | `config statusfile` | `html`\|`text` `path` | Status-output format and path |
 | `config sleeptime` | — | **Obsolete; ignored** with a warning (use `--interval`) |
 
-**Post-rewrite globals** — the legacy format now also accepts every global the modern format does,
-so a drop-in `sysmon.conf` can set them in the file too (previously these were reachable only on the
-command line):
+**Post-rewrite globals** — the legacy format also accepts the global `config` directives the modern
+format does, so a drop-in `sysmon.conf` can set them in the file too (previously CLI-only).
+`contact_on`, `queuetime`, `send_pings`/`min_pings`, and `source` are **not** here — they're the
+position-dependent per-host directives above ([Sticky directives](#sticky-config-directives)):
 
 | Directive | Value | Effect |
 |---|---|---|
-| `config contact_on` | `down`\|`up`\|`both`\|`none` | Default paging-transition policy |
-| `config queuetime` | seconds | Default per-host check interval |
-| `config send_pings` / `config min_pings` | integer | Loss-tolerant ping echo / required-reply counts |
 | `config page_on_degraded` | — (flag) | Page on a degraded (lossy) ping |
 | `config source_ip` | address | Default outbound bind for the connection checks |
 | `config hostname` | name | Org hostname shown in alerts and the status title |
@@ -489,7 +507,7 @@ effect only at startup. To change a global, restart the daemon. See
 | Spaces in values | No (whitespace-split) | Yes (quoted strings) |
 | Dependency parents | ping/smtp only | any type via `dep` |
 | `numfailures` | Position-dependent | Global default + per-object attribute |
-| Per-object interval / ping counts / `source` / `contact_on` | No (per-object); globals via `config` | Per-object attributes |
+| Per-object interval / ping counts / `source` / `contact_on` | Range-scoped (sticky `config`, see above) | Per-object attributes |
 | Variables / reuse | No | `set` / `$var` |
 | Control channel in file | Yes (`config control_*`) | `config control_*` |
 | Org identity / mail-from in file | Yes (`config hostname` / `sender`) | `config hostname` / `sender` |

@@ -173,9 +173,9 @@ readable by the operator account that drives the client, and by no one else.
 
 ### Cleartext credentials in config files
 
-The POP3 service check authenticates with a username and password, and those credentials are
-stored **in cleartext in the config file** (the modern config's `username` / `password`
-attributes). There is no secret store or encryption-at-rest today.
+The POP3/POP3S checks (and an IMAP/IMAPS check given credentials) authenticate with a username and
+password, and those credentials are stored **in cleartext in the config file** (the modern config's
+`username` / `password` attributes). There is no secret store or encryption-at-rest today.
 
 Practical guidance:
 

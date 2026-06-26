@@ -1,10 +1,16 @@
 # PSYSMON
 
+[![CI](https://github.com/IjonTichy1970/Psysmon/actions/workflows/ci.yml/badge.svg)](https://github.com/IjonTichy1970/Psysmon/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/IjonTichy1970/Psysmon)](https://github.com/IjonTichy1970/Psysmon/releases)
+[![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![User Guide](https://img.shields.io/badge/docs-User%20Guide-blue)](https://ijontichy1970.github.io/Psysmon/)
+
 **PSYSMON** (Python Sysmon) is a modern reimplementation of **sysmon**, a network-monitoring
 daemon that pings hosts, checks services, and alerts you when things break — with
 **dependency-aware** monitoring so an upstream outage raises one alert instead of a flood.
 
-> **Status: early development.** This is a from-scratch Python 3.11+ rewrite of the original C
+> **Status: active development.** This is a from-scratch Python 3.11+ rewrite of the original C
 > `sysmon` by **Jared Mauch** — the network monitor he developed from **1996** to its final
 > release, **0.93** (2014) — based on that 0.93 release. It preserves sysmon's battle-tested
 > monitoring and alerting behavior while modernizing the engine, fixing long-standing bugs, making
@@ -53,7 +59,8 @@ core-router            ping        ← if this is DOWN …
        └─ pop3         pop3
 ```
 
-Nesting (`{ }` in the config) encodes "reachable only if the parent is up."
+Nesting (`{ }` in the config) encodes "reachable only if the parent is up"; an object can also
+depend on **several** parents, staying monitored while *any* path is up.
 
 ## Configuration (legacy format)
 
@@ -113,9 +120,11 @@ HTML/JSON status output) and shipping releases — see the
 [issue tracker](https://github.com/IjonTichy1970/Psysmon/issues). A modern `object{}` config
 format with a legacy→modern converter has landed
 ([#3](https://github.com/IjonTichy1970/Psysmon/issues/3); see
-[docs/modern-config.md](docs/modern-config.md)); planned enhancements include operator annotations
-([#20](https://github.com/IjonTichy1970/Psysmon/issues/20)) and IPv6 ping
-([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)).
+[docs/modern-config.md](docs/modern-config.md)), along with a secure opt-in control channel
+([#69](https://github.com/IjonTichy1970/Psysmon/issues/69)), operator acknowledgements & grouping
+([#20](https://github.com/IjonTichy1970/Psysmon/issues/20)), and multi-parent dependencies
+([#62](https://github.com/IjonTichy1970/Psysmon/issues/62)). IPv6 ping
+([#24](https://github.com/IjonTichy1970/Psysmon/issues/24)) is in progress.
 
 ## Heritage
 

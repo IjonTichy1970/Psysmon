@@ -75,6 +75,17 @@ def test_to_modern_emits_ping6():
     assert len(reparsed.roots) == 1 and reparsed.roots[0].check_type is CheckType.PING6
 
 
+def test_to_modern_http_reachability_omits_urltext():
+    # An http node with no match text (url_text=None) round-trips as a reachability probe: the
+    # converter must NOT emit a urltext attribute, and the modern parser re-reads it as None (#104).
+    roots = [Node(hostname="web.example.net", check_type=CheckType.HTTP, url="/health")]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert 'url "/health";' in text and "urltext" not in text
+    n = parse_modern(text).roots[0]
+    assert n.check_type is CheckType.HTTP and n.url == "/health" and n.url_text is None
+
+
 def test_to_modern_pop3_banner_omits_credentials():
     # A credential-less pop3/pop3s node now round-trips as a banner check: the converter must NOT
     # emit empty username/password (mail creds are optional — #101, mirroring imap).

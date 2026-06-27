@@ -695,10 +695,12 @@ class _Parser:
                 return None, []
             node.port = port
         elif ctype in (CheckType.HTTP, CheckType.HTTPS):
-            if not resolved.get("url") or not resolved.get("urltext"):
-                self._warn(line, f"object '{name}': {type_kw} needs 'url' and 'urltext'; skipping")
+            if not resolved.get("url"):
+                self._warn(line, f"object '{name}': {type_kw} needs 'url'; skipping")
                 return None, []
-            node.url, node.url_text = resolved["url"], resolved["urltext"]
+            node.url = resolved["url"]
+            if "urltext" in resolved:  # optional (#104); url_text stays None when absent
+                node.url_text = resolved["urltext"]
         elif ctype in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS):
             # The mail checks are banner checks; an authenticated probe runs only if BOTH
             # credentials are given (optional creds — #88 for imap/imaps, #101 for pop3/pop3s).

@@ -353,13 +353,29 @@ def test_dep_can_reference_a_later_object():
 def test_object_missing_required_field_skipped():
     assert any("no 'host'" in w for w in parse('object x { type ping; };\n').warnings)
     assert any("needs a 'port'" in w for w in parse('object x { ip "h"; type tcp; };\n').warnings)
-    assert any("'url' and 'urltext'" in w
+    assert any("https needs 'url'" in w
                for w in parse('object x { ip "h"; type https; };\n').warnings)
     assert any("invalid type" in w
                for w in parse('object x { ip "h"; type frobnicate; };\n').warnings)
     # all of the above produced no node
     for cfg in ('object x { type ping; };\n', 'object x { ip "h"; type tcp; };\n'):
         assert parse(cfg).roots == []
+
+
+def test_http_urltext_optional_reachability():
+    # url without urltext -> a reachability probe (url_text stays None), not a skip (#104).
+    res = parse('object x { host "h.example.net"; type http; url "/health"; };\n')
+    assert len(res.roots) == 1 and res.warnings == []
+    n = res.roots[0]
+    assert n.check_type is CheckType.HTTP and n.url == "/health" and n.url_text is None
+    # with urltext -> a content check (url_text set)
+    content = parse('object y { host "h2.example.net"; type https; url "/"; urltext "OK"; };\n')
+    assert content.roots[0].url_text == "OK"
+
+
+def test_http_still_requires_url():
+    res = parse('object x { host "h.example.net"; type http; };\n')
+    assert res.roots == [] and any("http needs 'url'" in w for w in res.warnings)
 
 
 # --- #76: `host` is the preferred synonym for `ip` -------------------------------------

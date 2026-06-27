@@ -116,7 +116,7 @@ Inside the block, attributes are `key value;` pairs.
 | `port` | integer | tcp/udp (**required**); others optional | 1–65535; omitted ⇒ the type default |
 | `desc` | `"text"` | optional | Display label |
 | `contact` | `"addr"` | dns (**required**, non-empty); others optional | Notification address; where optional, an absent/empty contact ⇒ syslog only (no page) |
-| `url` + `urltext` | `"path"`, `"substring"` | http/https (**required**) | Path to GET, and a substring the body must contain |
+| `url` + `urltext` | `"path"`, `"substring"` | url: http/https (**required**); `urltext` optional | Path to GET; `urltext` is a substring the body must contain — omit it for a reachability probe (any HTTP response = up) |
 | `username` + `password` | `"u"`, `"p"` | pop3/pop3s/imap/imaps (optional) | Mail credentials; omitted ⇒ a banner-only check |
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
 | `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (OR / any-path) |
@@ -139,7 +139,7 @@ of the config still loads:
 |---|---|
 | `ping`, `ping6`, `smtp`, `pop3`, `pop3s`, `imap`, `imaps`, `ssh`, `mysql` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
-| `http`, `https` | `host`, `type`, `url`, `urltext` |
+| `http`, `https` | `host`, `type`, `url` |
 | `dns` | `host`, `type`, `dns-query`, `contact` |
 
 **Mail checks.** `imap` reads the IMAP greeting and is *up* on a ready server; set
@@ -149,6 +149,12 @@ are *reachability* checks — the handshake must succeed, but the certificate is
 a self-signed or soon-to-expire cert still reads up (certificate-*expiry* monitoring is a separate,
 planned check). `pop3`/`pop3s`/`imap`/`imaps` all take `username`/`password` **optionally** — a
 banner-only reachability check without them, an authenticated probe with them.
+
+**HTTP checks.** `http`/`https` GET the `url`. With a `urltext`, the check is *up* only on a `2xx`
+whose body contains that substring (a content check). **Without** a `urltext` it is a protocol-aware
+reachability probe: any HTTP response — including an error status like `401`/`403`/`5xx` — is *up*,
+because the server is reachable and speaking HTTP (only a connect/timeout/non-HTTP failure is down).
+`https` verifies the certificate, so even a reachability probe requires a valid TLS handshake.
 
 ### Per-object overrides (psysmon extensions)
 

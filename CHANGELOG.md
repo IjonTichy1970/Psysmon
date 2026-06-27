@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Changed
+- **`urltext` is now optional for `http`/`https` checks.** Without it, the check is a protocol-aware
+  reachability probe (like `mysql`): any HTTP response — including an error status such as
+  `401`/`403`/`5xx` — counts as up, so you can monitor "is the web server answering?" without a
+  stable match string or a test page. With a `urltext` it behaves exactly as before (a `2xx` whose
+  body contains the text). `https` still verifies the certificate, so a reachability probe requires
+  a valid TLS handshake. In the legacy format the 4-token `host www url label` form is the
+  reachability probe; existing `url url_text label` lines are unchanged
+  ([#104](https://github.com/IjonTichy1970/Psysmon/issues/104)).
 - **POP3/POP3S credentials are now optional**, matching `imap`/`imaps`. Without `username`/`password`,
   the check is a protocol-aware banner probe (a `+OK` ready greeting = up) instead of being skipped —
   so a host with no test mailbox no longer has to fall back to a bare `tcp 110` check. With both

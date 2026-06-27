@@ -53,8 +53,8 @@ address; an absent contact means **syslog only, no page**.
 | `smtp` | `smtp  label  [contact]` |
 | `tcp` | `tcp  port  label  [contact]` |
 | `udp` | `udp  port  label  [contact]` |
-| `www` (HTTP) | `www  url  url_text  label  [contact]` |
-| `https` | `https  url  url_text  label  [contact]` |
+| `www` (HTTP) | `www  url  [url_text]  label  [contact]` |
+| `https` | `https  url  [url_text]  label  [contact]` |
 | `pop3` | `pop3  [username  password]  label  [contact]` |
 | `pop3s` | `pop3s  [username  password]  label  [contact]` |
 | `imap` | `imap  [username  password]  label  [contact]` |
@@ -67,8 +67,12 @@ Notes confirmed from the parser:
 
 - **`label`** is the original "message" field — a human-readable description.
 - **`tcp`/`udp`** require a numeric `port` (a non-numeric or non-positive port skips the stanza).
-- **`www`/`https`** take a `url` (the path to GET) and `url_text` (a substring that must appear in
-  the response body), then the `label`.
+- **`www`/`https`** take a `url` (the path to GET) and an **optional** `url_text` (a substring the
+  response body must contain), then the `label`. Omit `url_text` for a **reachability** check, where
+  any HTTP response — even a `401`/`403`/`5xx` — counts as up. Positionally, the 4-token
+  `host www url label` form is the reachability probe; a 5th field is read as `url_text`, so a
+  reachability check that *also* needs a contact must use the modern format. (For `https` the TLS
+  handshake must still succeed — the certificate is validated.)
 - **`pop3`/`pop3s`/`imap`/`imaps`** take an **optional** `username`/`password` pair — a plain
   reachability/banner check when omitted, an authenticated probe when supplied — then the `label`.
 - **`authdns`** is special: it takes the DNS `name` to look up and then a **required** `contact` —
@@ -280,7 +284,7 @@ Inside an object body, attributes are `key value;` pairs:
 | `port` | integer | tcp/udp (**required**); others optional | 1–65535; omitted ⇒ the type default |
 | `desc` | `"text"` | optional | Display label (the legacy `label`) |
 | `contact` | `"addr"` | dns (**required**); others optional | Notification address; absent/empty ⇒ syslog only, no page |
-| `url` + `urltext` | `"path"`, `"substring"` | http/https (**required**) | Path to GET, and a substring the body must contain |
+| `url` + `urltext` | `"path"`, `"substring"` | url: http/https (**required**); `urltext` optional | Path to GET; `urltext` is a substring the body must contain — omit it for a reachability probe (any HTTP response = up) |
 | `username` + `password` | `"u"`, `"p"` | pop3/pop3s/imap/imaps (optional) | Mail credentials; omitted ⇒ a banner-only check |
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
 | `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (any-path) |
@@ -306,7 +310,7 @@ of the config still loads:
 |---|---|
 | `ping`, `ping6`, `smtp`, `imap`, `imaps`, `ssh`, `mysql` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
-| `http`, `https` | `host`, `type`, `url`, `urltext` |
+| `http`, `https` | `host`, `type`, `url` |
 | `pop3`, `pop3s` | `host`, `type`, `username`, `password` |
 | `dns` | `host`, `type`, `dns-query`, `contact` |
 

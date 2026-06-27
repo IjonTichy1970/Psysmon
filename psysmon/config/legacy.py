@@ -14,8 +14,8 @@ Faithfully reproduces ``loadconfig.c``/``parseline``:
 * **``numfailures`` is position-dependent** — its current value snapshots into each
   subsequently-parsed node's ``max_down`` (a running value, not last-wins).
 * Per-type field positions exactly as in C (ping/ping6/smtp: label[,contact][,``{``];
-  tcp/udp: port,label[,contact]; www/https: url,url_text,label[,contact];
-  pop3/pop3s: user,pass,label[,contact]; imap/imaps: label[,contact] (banner) or
+  tcp/udp: port,label[,contact]; www/https: url,label[,contact] (reachability) or
+  url,url_text,label[,contact] (content); pop3/pop3s/imap/imaps: label[,contact] (banner) or
   user,pass,label[,contact] (auth); authdns: name,contact).
 * Dropped legacy types (nntp, radius, umichx500, ...) -> warn and skip; never hard-fail.
 * Keyword matching is prefix-based, like the original ``strncmp`` (so ``tcpfoo`` matches
@@ -289,12 +289,20 @@ class _Parser:
             if n >= 5:
                 node.contact = tokens[4]
         elif ctype in (CheckType.HTTP, CheckType.HTTPS):
-            if n < 5:
-                self._warn(lineno, f"{ctype} needs url, match-text and label; skipping")
+            # match-text (url_text) is OPTIONAL (#104). The 4-token form `host www url label` is a
+            # reachability probe (no match text; url_text stays None). 5+ tokens keep the original
+            # `url url_text label [contact]` meaning, so existing configs are unchanged — a
+            # reachability check that also wants a contact isn't expressible positionally (a 5-token
+            # line reads the middle field as url_text); use the modern format for that.
+            if n < 4:
+                self._warn(lineno, f"{ctype} needs a url and label; skipping")
                 return None
-            node.url, node.url_text, node.label = tokens[2], tokens[3], tokens[4]
-            if n >= 6:
-                node.contact = tokens[5]
+            if n == 4:
+                node.url, node.label = tokens[2], tokens[3]
+            else:
+                node.url, node.url_text, node.label = tokens[2], tokens[3], tokens[4]
+                if n >= 6:
+                    node.contact = tokens[5]
         elif ctype in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS):
             # The mail checks mirror each other: credentials are OPTIONAL (#88 imap, #101 pop3). A
             # short line (`host pop3 label [contact]`) is a banner-only check; a full

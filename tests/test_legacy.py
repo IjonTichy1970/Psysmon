@@ -160,6 +160,17 @@ def test_legacy_pop3_family_optional_credentials():
     assert (auth.username, auth.password, auth.label) == ("mu", "mp", "label")
 
 
+def test_legacy_http_urltext_optional():
+    # urltext is optional (#104): the 4-token `host www url label` form is a reachability probe
+    # (no url_text); 5+ tokens keep the original url,url_text,label[,contact] meaning.
+    reach = parse("web.example.net www /health webdesc\n").roots[0]  # 4 tokens: url + label
+    assert reach.check_type is CheckType.HTTP and reach.url == "/health"
+    assert reach.url_text is None and reach.label == "webdesc" and not reach.contact
+    content = parse("web.example.net www /health OK weblabel noc@x\n").roots[0]  # 6 tokens: content
+    assert (content.url, content.url_text, content.label, content.contact) == (
+        "/health", "OK", "weblabel", "noc@x")
+
+
 def test_legacy_imap_optional_credentials():
     # imap/imaps mirror modern's optional credentials (#94): a short line is banner-only, a full
     # pop3-style line authenticates.

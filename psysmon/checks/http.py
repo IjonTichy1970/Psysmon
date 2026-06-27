@@ -1,10 +1,12 @@
-"""HTTP / HTTPS content check (Milestone 6).
+"""HTTP / HTTPS content or reachability check (Milestone 6; reachability mode #104).
 
-GET ``{scheme}://{hostname}:{port}{url}`` and require both a 2xx status and that
-``node.url_text`` appears in the response body. For HTTPS, certificate verification is ON by
-default (the original did none). TLS failure, non-2xx, or missing text all map to
-``Status.BAD_RESPONSE`` to stay within the legacy code set; connection refused/timeout map
-as usual.
+GET ``{scheme}://{hostname}:{port}{url}``. If ``node.url_text`` is set, require both a 2xx status
+and that the text appears in the response body (a content check). If it is ``None`` (no match text
+configured), **any** HTTP response — including an error status such as 401/403/5xx — is *up*,
+because the server is reachable and speaking HTTP (a protocol-aware reachability probe, like the
+mysql check). For HTTPS, certificate verification is ON by default (the original did none), so even
+a reachability probe still requires a valid TLS handshake. A TLS failure, a content-check miss, or a
+non-HTTP response map to ``Status.BAD_RESPONSE``; connection refused/timeout map as usual.
 
 Note: ``ctx.source_ip`` is NOT applied to HTTP checks — httpx offers no per-request source
 bind, and production configs use no http/https check types, so this is acceptable.
@@ -34,7 +36,7 @@ def _client(ctx: CheckContext) -> httpx.AsyncClient:
 
 
 async def check(node: Node, ctx: CheckContext) -> int:
-    """GET the node's URL; OK on 2xx + matching body text, else a failure status."""
+    """GET the node's URL; OK on 2xx + matching body text, or — with no urltext — any HTTP reply."""
     # First step (per the base contract): resolve via the shared DnsCache so an
     # unresolvable host surfaces as NO_DNS rather than being misclassified when httpx's own
     # resolution fails. We still GET by hostname so HTTPS cert verification / SNI / Host
@@ -51,6 +53,8 @@ async def check(node: Node, ctx: CheckContext) -> int:
         return Status.CONN_REFUSED
     except httpx.HTTPError:
         return Status.BAD_RESPONSE
+    if node.url_text is None:
+        return Status.OK  # reachability mode: any HTTP response means the server speaks HTTP (#104)
     if response.status_code in range(200, 300) and node.url_text in response.text:
         return Status.OK
     return Status.BAD_RESPONSE

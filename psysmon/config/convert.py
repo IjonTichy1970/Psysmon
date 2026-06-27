@@ -185,7 +185,8 @@ class _Serializer:
             self._line(f"  port {node.port};")
         if node.check_type in (CheckType.HTTP, CheckType.HTTPS):
             self._attr("url", node.url)
-            self._attr("urltext", node.url_text)
+            if node.url_text is not None:  # urltext is optional (#104); None = a reachability probe
+                self._attr("urltext", node.url_text)
         elif node.check_type in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS):
             if node.username and node.password:  # mail creds are optional (#88 imap, #101 pop3)
                 self._attr("username", node.username)

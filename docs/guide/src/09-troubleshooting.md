@@ -184,7 +184,7 @@ unsupported, so the rest of the config still comes up. Check syslog (raise verbo
 `config loglevel debug` / `-vv`) for the specific warning. Common causes:
 
 - An object missing a **required field** for its type (e.g. a `tcp`/`udp` object with no `port`,
-  an `http`/`https` object without `url` + `urltext`) is warned and skipped.
+  an `http`/`https` object with no `url`) is warned and skipped.
 - A **dropped check type** (`nntp`, `pop2`, `umichx500`, `radius`, `bootp`, `snmp`) warns
   and skips — these aren't in scope for the rewrite.
 - **A per-object `source` whose family doesn't match its check** (an IPv6 `source` on a v4 check, or

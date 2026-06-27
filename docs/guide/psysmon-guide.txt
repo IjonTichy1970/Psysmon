@@ -993,7 +993,7 @@ This is the canonical mapping table (Appendix C points here).
 | label / "message" | desc "text"; | |
 | contact | contact "addr"; | |
 | url, url_text (www/https) | url "path";, urltext "substring"; | |
-| username, password (pop3/pop3s, imap/imaps) | username "u";, password "p"; | Required for pop3/pop3s; optional for imap/imaps |
+| username, password (pop3/pop3s, imap/imaps, ftp/ftps) | username "u";, password "p"; | Optional for all (omit => a banner-only check) |
 | name (authdns) | dns-query "name"; | |
 | { ... } child nesting | dep "parent"; on the child | Legacy ping/ping6/smtp parents become named edges |
 | config numfailures N (positional) | per-object numfailures N; | Resolved onto each object, not replayed as a global |
@@ -1142,7 +1142,7 @@ www / http and https
     # legacy  -- url, match-text, label  (no spaces in url_text)
     api.example.net  https  /health  OK  api-health  noc@example.net
 
-    # modern  -- url + urltext required for http/https
+    # modern  -- url required; urltext optional (omit for a reachability probe)
     object api {
         host    "api.example.net";
         type    https;
@@ -1757,9 +1757,9 @@ verified, so a self-signed or near-expiry cert still reads up.
 
 Default ports: pop3s 995, imap 143, imaps 993.
 
-    The legacy sysmon.conf format accepts these too, positionally: host pop3s user pass label,
-    host imaps user pass label, and host imap label (banner) or host imap user pass label
-    (authenticated) -- credentials are optional for imap/imaps, required for pop3s.
+    The legacy sysmon.conf format accepts these too, positionally: host pop3s label (banner) or
+    host pop3s user pass label (authenticated), and likewise for imap/imaps -- credentials are
+    optional for all of pop3/pop3s/imap/imaps.
 
 ---
 
@@ -2308,11 +2308,11 @@ fully-down ancestor freezes its subtree. See Feature tour -> dependency suppress
 Troubleshooting.
 
 Which codes a given check can produce depends on the check type -- e.g. Unpingable comes
-only from a ping check (ping or ping6); Bad Auth from the authenticated mail checks
-(pop3/pop3s, and imap/imaps when credentials are set) on a rejected login; and Bad Resp
-from a server that answers but not as expected -- DNS (malformed/wrong-source reply),
-HTTP (body missing the expected text), or a mail check (a bad greeting or reply). See
-the Feature tour for what each check verifies.
+only from a ping check (ping or ping6); Bad Auth from the mail/FTP checks
+(pop3/pop3s/imap/imaps/ftp/ftps) when credentials are set, on a rejected login; and Bad
+Resp from a server that answers but not as expected -- DNS (malformed/wrong-source
+reply), HTTP (a content check whose body is missing the expected text), or a mail/FTP
+check (a bad greeting or reply). See the Feature tour for what each check verifies.
 
 
 ########################################################################################
@@ -2518,15 +2518,15 @@ or unsupported, so the rest of the config still comes up. Check syslog (raise ve
 with config loglevel debug / -vv) for the specific warning. Common causes:
 
 - An object missing a required field for its type (e.g. a tcp/udp object with no port,
-an http/https object without url + urltext) is warned and skipped. - A dropped check
-type (nntp, pop2, umichx500, radius, bootp, snmp) warns and skips -- these aren't in
-scope for the rewrite. - A per-object source whose family doesn't match its check (an
-IPv6 source on a v4 check, or a v4 source on ping6) is warned and left unbound -- the
-object still loads and is checked, just on the kernel's default route. - ping6, imap,
-imaps, and pop3s are accepted in both the legacy and modern formats (they are no longer
-redirected to the modern config); pop3s/imaps are never silently downgraded to plaintext
-pop3/imap. - An unknown dep target, a dependency cycle, or a duplicate object name each
-warn and degrade gracefully (the object becomes a root, or the duplicate is skipped).
+an http/https object with no url) is warned and skipped. - A dropped check type (nntp,
+pop2, umichx500, radius, bootp, snmp) warns and skips -- these aren't in scope for the
+rewrite. - A per-object source whose family doesn't match its check (an IPv6 source on a
+v4 check, or a v4 source on ping6) is warned and left unbound -- the object still loads
+and is checked, just on the kernel's default route. - ping6, imap, imaps, and pop3s are
+accepted in both the legacy and modern formats (they are no longer redirected to the
+modern config); pop3s/imaps are never silently downgraded to plaintext pop3/imap. - An
+unknown dep target, a dependency cycle, or a duplicate object name each warn and degrade
+gracefully (the object becomes a root, or the duplicate is skipped).
 
 The full required-fields and check-type tables are in Configuration.
 
@@ -2722,15 +2722,15 @@ needs to be readable by the operator account that drives the client, and by no o
 Cleartext credentials in config files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The POP3/POP3S checks (and an IMAP/IMAPS check given credentials) authenticate with a
-username and password, and those credentials are stored in cleartext in the config file
-(the modern config's username / password attributes). There is no secret store or
-encryption-at-rest today.
+When the pop3/pop3s/imap/imaps/ftp/ftps checks are given a username and password (all
+optional -- without them the check is a banner-only probe), those credentials are stored
+in cleartext in the config file (the modern config's username / password attributes).
+There is no secret store or encryption-at-rest today.
 
 Practical guidance:
 
 - Treat the config file as a secret. Restrict its permissions (e.g. owned by the root
-account that starts the daemon, not group/world-readable) so the stored POP3 credentials
+account that starts the daemon, not group/world-readable) so the stored credentials
 aren't exposed to other local users. - Prefer a dedicated, low-privilege mailbox account
 for monitoring rather than a credential that grants access to anything sensitive. - Note
 that the status output never exposes these credentials -- neither the status page nor the

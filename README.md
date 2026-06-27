@@ -21,9 +21,10 @@ daemon that pings hosts, checks services, and alerts you when things break — w
 ## What it does
 
 - **Pings** hosts (ICMP, and IPv6 via **ICMPv6**) and checks **TCP**, **UDP/DNS**, **SMTP**,
-  **POP3**/**IMAP** and their **TLS** variants (`pop3s`/`imaps`), clean **DNS** (authoritative)
-  and **HTTP/HTTPS-content** checks, plus protocol-aware **SSH** (identification banner) and
-  **MySQL/MariaDB** (server handshake) checks.
+  **POP3**/**IMAP** and their **TLS** variants (`pop3s`/`imaps`), clean **DNS** (authoritative),
+  and **HTTP/HTTPS** (content-match or reachability) checks, plus protocol-aware **SSH**
+  (identification banner), **MySQL/MariaDB** (server handshake), and **FTP/FTPS** (control-channel
+  banner + optional login) checks.
 - **Dependency suppression:** monitored objects form a dependency graph. A child host/service is
   only checked while it's reachable through a parent (a ping target — typically the upstream
   router); give it **several parents** and it stays monitored while *any* path is up. When the

@@ -307,9 +307,9 @@ object mail-imaps {
 
 Default ports: `pop3s` 995, `imap` 143, `imaps` 993.
 
-> The legacy `sysmon.conf` format accepts these too, positionally: `host pop3s user pass label`,
-> `host imaps user pass label`, and `host imap label` (banner) or `host imap user pass label`
-> (authenticated) — credentials are optional for `imap`/`imaps`, required for `pop3s`.
+> The legacy `sysmon.conf` format accepts these too, positionally: `host pop3s label` (banner) or
+> `host pop3s user pass label` (authenticated), and likewise for `imap`/`imaps` — credentials are
+> optional for all of `pop3`/`pop3s`/`imap`/`imaps`.
 
 ---
 

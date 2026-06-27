@@ -53,7 +53,7 @@ async def test_resolve_passes_family_to_resolver():
 
 
 async def test_open_check_connection_wraps_tls_for_implicit_tls_types(monkeypatch):
-    # pop3s/imaps connect over TLS (SNI = the hostname); plaintext types don't (#88).
+    # pop3s/imaps/ftps connect over TLS (SNI = the hostname); plaintext types don't (#88, #102).
     captured: dict = {}
 
     async def fake_open(ip, port, ctx, *, tls=False, server_hostname=None):
@@ -76,6 +76,12 @@ async def test_open_check_connection_wraps_tls_for_implicit_tls_types(monkeypatc
     ):
         pass
     assert captured == {"tls": True, "sni": "mx.example.net"}
+
+    async with base.open_check_connection(
+        Node(hostname="ftp.example.net", check_type=CheckType.FTPS), ctx
+    ):
+        pass
+    assert captured == {"tls": True, "sni": "ftp.example.net"}  # ftps also implicit-TLS (#102)
 
     async with base.open_check_connection(
         Node(hostname="mx.example.net", check_type=CheckType.IMAP), ctx

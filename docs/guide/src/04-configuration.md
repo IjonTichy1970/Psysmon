@@ -549,7 +549,7 @@ This is the canonical mapping table ([Appendix C](90-appendices.md) points here)
 | `label` / "message" | `desc "text";` | |
 | `contact` | `contact "addr";` | |
 | `url`, `url_text` (www/https) | `url "path";`, `urltext "substring";` | |
-| `username`, `password` (pop3/pop3s, imap/imaps) | `username "u";`, `password "p";` | Required for pop3/pop3s; optional for imap/imaps |
+| `username`, `password` (pop3/pop3s, imap/imaps, ftp/ftps) | `username "u";`, `password "p";` | Optional for all (omit ⇒ a banner-only check) |
 | `name` (authdns) | `dns-query "name";` | |
 | `{ … }` child nesting | `dep "parent";` on the child | Legacy ping/ping6/smtp parents become named edges |
 | `config numfailures N` (positional) | per-object `numfailures N;` | Resolved onto each object, not replayed as a global |
@@ -721,7 +721,7 @@ api.example.net  https  /health  OK  api-health  noc@example.net
 ```
 
 ```
-# modern  — url + urltext required for http/https
+# modern  — url required; urltext optional (omit for a reachability probe)
 object api {
     host    "api.example.net";
     type    https;

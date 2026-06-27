@@ -466,6 +466,20 @@ def test_imap_partial_credentials_warn_and_ignored():
     assert any("imap auth needs both" in w for w in res.warnings)
 
 
+def test_ftp_types_recognized_with_optional_credentials():
+    # ftp/ftps build with the right default port and optional credentials (banner vs login) (#102).
+    res = parse(
+        'object a { host "ftp.example.net"; type ftp; };\n'
+        'object b { host "ftps.example.net"; type ftps; username "u"; password "p"; };\n'
+    )
+    assert res.warnings == []
+    by = {n.hostname: n for n in res.roots}
+    ftpn, ftps = by["ftp.example.net"], by["ftps.example.net"]
+    assert ftpn.check_type is CheckType.FTP and ftpn.port == 21 and ftpn.username == ""  # banner
+    assert ftps.check_type is CheckType.FTPS and ftps.port == 990
+    assert (ftps.username, ftps.password) == ("u", "p")
+
+
 def test_ping6_type_recognized():
     # ping6 (and its pingv6/icmp6 aliases) build a PING6 node — no longer deferred (#24).
     for kw in ("ping6", "pingv6", "icmp6"):

@@ -160,6 +160,19 @@ def test_legacy_pop3_family_optional_credentials():
     assert (auth.username, auth.password, auth.label) == ("mu", "mp", "label")
 
 
+def test_legacy_ftp_optional_credentials():
+    # ftp/ftps mirror the mail checks (#102): banner-only short line, authenticated full line; and
+    # ftps is NOT prefix-shadowed by ftp (ordered like pop3s before pop3).
+    banner = parse("ftp.example.net ftp control-banner noc@x\n").roots[0]  # 4 tokens: label+contact
+    assert banner.check_type is CheckType.FTP and banner.port == 21
+    assert not banner.username and banner.label == "control-banner" and banner.contact == "noc@x"
+    auth = parse("ftp.example.net ftp ftpuser ftppass label noc@x\n").roots[0]  # 6 tokens: auth
+    assert (auth.username, auth.password, auth.label) == ("ftpuser", "ftppass", "label")
+    sec = parse("ftp.example.net ftps fu fp label\n").roots[0]  # 5 tokens: auth, over TLS
+    assert sec.check_type is CheckType.FTPS and sec.port == 990
+    assert (sec.username, sec.password) == ("fu", "fp")
+
+
 def test_legacy_http_urltext_optional():
     # urltext is optional (#104): the 4-token `host www url label` form is a reachability probe
     # (no url_text); 5+ tokens keep the original url,url_text,label[,contact] meaning.

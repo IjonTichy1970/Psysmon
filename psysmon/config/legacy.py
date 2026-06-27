@@ -79,6 +79,8 @@ _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
     ("https", CheckType.HTTPS),
     ("ssh", CheckType.SSH),        # #96
     ("mysql", CheckType.MYSQL),    # #97
+    ("ftps", CheckType.FTPS),      # before "ftp"! (TLS) (#102)
+    ("ftp", CheckType.FTP),
 )
 
 # Types whose stanza may open a `{` child block: the original's ping-like branch (ping, smtp) plus
@@ -303,10 +305,11 @@ class _Parser:
                 node.url, node.url_text, node.label = tokens[2], tokens[3], tokens[4]
                 if n >= 6:
                     node.contact = tokens[5]
-        elif ctype in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS):
-            # The mail checks mirror each other: credentials are OPTIONAL (#88 imap, #101 pop3). A
-            # short line (`host pop3 label [contact]`) is a banner-only check; a full
-            # `host pop3 user pass label [contact]` line adds an authenticated probe. The original
+        elif ctype in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS,
+                       CheckType.FTP, CheckType.FTPS):
+            # The mail/ftp checks mirror each other: credentials are OPTIONAL (#88 imap, #101 pop3,
+            # #102 ftp). A short line (`host ftp label [contact]`) is a banner-only check; a full
+            # `host ftp user pass label [contact]` line adds an authenticated probe. The original
             # C pop3/imap required user/pass, so that always-auth form is the 5-/6-token case here
             # and parses identically.
             if n < 5:

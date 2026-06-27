@@ -194,6 +194,7 @@ _TYPE_KEYWORDS = {
     "https": CheckType.HTTPS,
     "ssh": CheckType.SSH,        # SSH banner check (#96)
     "mysql": CheckType.MYSQL,    # MySQL/MariaDB handshake check (#97)
+    "ftp": CheckType.FTP, "ftps": CheckType.FTPS,    # FTP 220-banner + optional login (#102)
 }
 _DROPPED_TYPES = frozenset({"nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
 # Object attributes the parser understands; anything else (a typo, or a not-yet-supported key)
@@ -701,9 +702,10 @@ class _Parser:
             node.url = resolved["url"]
             if "urltext" in resolved:  # optional (#104); url_text stays None when absent
                 node.url_text = resolved["urltext"]
-        elif ctype in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS):
-            # The mail checks are banner checks; an authenticated probe runs only if BOTH
-            # credentials are given (optional creds — #88 for imap/imaps, #101 for pop3/pop3s).
+        elif ctype in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS,
+                       CheckType.FTP, CheckType.FTPS):
+            # The mail/ftp checks are banner checks; an authenticated probe runs only if BOTH
+            # credentials are given (optional creds — #88 imap, #101 pop3, #102 ftp).
             # A partial pair is a config slip: warn and fall back to the banner check.
             u, p = resolved.get("username"), resolved.get("password")
             if u and p:

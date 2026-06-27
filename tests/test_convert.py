@@ -136,6 +136,22 @@ def test_to_modern_emits_ssh_mysql():
     assert by_host["m.example.net"].port == 3307
 
 
+def test_to_modern_emits_ftp_types():
+    # to_modern serializes ftp/ftps (not KeyError), carrying optional creds; default ports omitted.
+    roots = [
+        Node(hostname="ftp.example.net", check_type=CheckType.FTP),
+        Node(hostname="ftps.example.net", check_type=CheckType.FTPS, username="u", password="p"),
+    ]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert "type ftp;" in text and "type ftps;" in text
+    assert "port 21;" not in text and "port 990;" not in text  # defaults omitted
+    by = {n.hostname: n for n in parse_modern(text).roots}
+    ftpn, ftps = by["ftp.example.net"], by["ftps.example.net"]
+    assert ftpn.check_type is CheckType.FTP and ftpn.username == ""
+    assert (ftps.username, ftps.password) == ("u", "p")
+
+
 def test_default_ports_omitted_tcp_udp_kept():
     _, _, text, _ = _roundtrip(PER_TYPE)
     # tcp/udp have no default port -> always emitted; smtp/pop3/dns/http/https default -> omitted.

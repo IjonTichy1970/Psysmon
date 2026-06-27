@@ -313,9 +313,9 @@ Default ports: `pop3s` 995, `imap` 143, `imaps` 993.
 
 ---
 
-## Service-protocol checks — `ssh`, `mysql`
+## Service-protocol checks — `ssh`, `mysql`, `ftp`
 
-Two protocol-aware reachability checks that go beyond a bare TCP connect — they confirm the service
+Protocol-aware reachability checks that go beyond a bare TCP connect — they confirm the service
 actually speaks its protocol, catching a port-forwarder, a wedged daemon, or an unrelated service
 sitting on the port:
 
@@ -324,10 +324,15 @@ sitting on the port:
 - **`mysql`** reads the MySQL/MariaDB initial handshake packet (sent in the clear on connect, before
   any TLS upgrade). Up on a valid handshake — or an error packet such as *"Too many connections"*,
   which still means the server is speaking MySQL and responding.
+- **`ftp`** reads the FTP control-channel `220` greeting (up on a `220` ready reply; a `421` or other
+  reply is a bad response). Add `username`/`password` and it also performs FTP's two-step `USER` →
+  `PASS` login (a rejected credential reads *Bad Auth*); without them it's a banner-only check.
+  **`ftps`** runs the same check over implicit TLS (port 990).
 
-Both default their port (`ssh` 22, `mysql` 3306) and take an **optional override**: `port 2222;` in
-the modern format, or an optional leading port positionally in legacy (`host ssh 2222 label`).
-Neither is a login or authentication test.
+`ssh`/`mysql` default their port (22 / 3306) and take an **optional override**: `port 2222;` in the
+modern format, or an optional leading port positionally in legacy (`host ssh 2222 label`); `ftp`/`ftps`
+default to 21 / 990 (override via the modern `port`). `ssh` and `mysql` are never a login test; `ftp`
+is a login only when you give it credentials.
 
 ```
 object db-primary {
@@ -335,6 +340,9 @@ object db-primary {
 };
 object jump-host {
     host "203.0.113.4"; type ssh; port 2222;
+};
+object vendor-ftp {
+    host "198.51.100.7"; type ftp;          # 220-banner check, port 21
 };
 ```
 
@@ -476,7 +484,7 @@ control-channel documentation.
 | Dependency suppression | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
 | Multi-parent dependencies (any-path) | — (single parent) | Yes (multiple `dep`) | — (structure is config-only) |
 | IPv6 ping + mail checks (`ping6` / `imap` / `pop3s` / `imaps`) | Yes | Yes | — (config-only) |
-| Protocol-aware service checks (`ssh` / `mysql`) | Yes | Yes | — (config-only) |
+| Protocol-aware service checks (`ssh` / `mysql` / `ftp` / `ftps`) | Yes | Yes | — (config-only) |
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |

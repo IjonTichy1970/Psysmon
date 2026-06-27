@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **FTP and FTPS checks** — new `ftp` and `ftps` check types (both config formats). `ftp` reads the
+  FTP control-channel `220` greeting — catching a port-forwarder or a wedged daemon that a bare
+  `tcp 21` connect can't — and with `username`/`password` also performs FTP's two-step `USER`/`PASS`
+  login (anonymous or credentialed); `ftps` runs the same check over **implicit TLS** (port 990,
+  reachability-only like the other TLS checks). Credentials are optional (a banner-only check
+  without them); default ports 21 / 990, with an optional override in the modern format
+  ([#102](https://github.com/IjonTichy1970/Psysmon/issues/102)).
+
 ### Changed
 - **`urltext` is now optional for `http`/`https` checks.** Without it, the check is a protocol-aware
   reachability probe (like `mysql`): any HTTP response — including an error status such as

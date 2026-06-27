@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-06-26 — SPDX license metadata
+
 ### Changed
 - Modernized the packaging license metadata to the SPDX form (PEP 639): `license` is now the
   `GPL-2.0-or-later` expression string and the deprecated GPL license *classifier* was removed
@@ -441,7 +443,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/IjonTichy1970/Psysmon/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.7.0...v0.8.0

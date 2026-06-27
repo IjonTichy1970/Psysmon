@@ -46,6 +46,20 @@ async def test_immediate_close_is_no_response(check_ctx, tcp_server):
     assert await telnet.check(node(port=port), check_ctx) == Status.NO_RESPONSE
 
 
+async def test_silent_but_open_times_out(tcp_server):
+    # A server that accepts and holds the connection open but never speaks reads as Timed Out (the
+    # documented limitation: a conformant-yet-quiet telnetd is indistinguishable from a dead port).
+    async def silent_open(reader, writer):
+        try:
+            await reader.read()  # block until the peer (the check) gives up and closes -> EOF
+        finally:
+            writer.close()
+
+    port = await tcp_server(silent_open)
+    ctx = base.CheckContext(resolver=FakeResolver(), timeout_s=0.3)
+    assert await base.perform(telnet.check, node(port=port), ctx) == Status.TIMED_OUT
+
+
 async def test_default_port_used(check_ctx, monkeypatch):
     # port=0 must fall back to the telnet default (23).
     from psysmon.config.model import DEFAULT_PORT

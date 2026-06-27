@@ -31,8 +31,8 @@ from psysmon.status import Status
 
 DEFAULT_TIMEOUT_S = 10.0
 
-# Check types that speak their protocol over implicit TLS (TLS from connect, not STARTTLS) (#88).
-_IMPLICIT_TLS = frozenset({CheckType.POP3S, CheckType.IMAPS})
+# Check types that speak their protocol over implicit TLS (TLS from connect, not STARTTLS).
+_IMPLICIT_TLS = frozenset({CheckType.POP3S, CheckType.IMAPS, CheckType.FTPS})  # #88, #102
 
 
 def _tls_context() -> ssl.SSLContext:
@@ -133,7 +133,7 @@ async def perform(checker: Checker, node: Node, ctx: CheckContext) -> int:
     except ValueError:
         # readline() raises ValueError (wrapped LimitOverrunError) when a peer floods bytes with no
         # newline past the buffer limit. Such a never-greeting flood is a bad response, not a crash
-        # — this guards the line-reading banner checks (smtp/pop3/imap/ssh).
+        # — this guards the line-reading banner checks (smtp/pop3/imap/ssh/ftp).
         return Status.BAD_RESPONSE
     except OSError as exc:
         return map_oserror(exc)

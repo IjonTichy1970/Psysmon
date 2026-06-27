@@ -492,32 +492,42 @@ notification address; an absent contact means syslog only, no page.
 | smtp | smtp  label  [contact] |
 | tcp | tcp  port  label  [contact] |
 | udp | udp  port  label  [contact] |
-| www (HTTP) | www  url  url_text  label  [contact] |
-| https | https  url  url_text  label  [contact] |
-| pop3 | pop3  username  password  label  [contact] |
-| pop3s | pop3s  username  password  label  [contact] |
+| www (HTTP) | www  url  [url_text]  label  [contact] |
+| https | https  url  [url_text]  label  [contact] |
+| pop3 | pop3  [username  password]  label  [contact] |
+| pop3s | pop3s  [username  password]  label  [contact] |
 | imap | imap  [username  password]  label  [contact] |
 | imaps | imaps  [username  password]  label  [contact] |
 | authdns (DNS) | authdns  name  contact |
 | ssh | ssh  [port]  label  [contact] |
 | mysql | mysql  [port]  label  [contact] |
+| ftp | ftp  [username  password]  label  [contact] |
+| ftps | ftps  [username  password]  label  [contact] |
+| telnet | telnet  [port]  label  [contact] |
 
 Notes confirmed from the parser:
 
 - label is the original "message" field -- a human-readable description. - tcp/udp
 require a numeric port (a non-numeric or non-positive port skips the stanza). -
-www/https take a url (the path to GET) and url_text (a substring that must appear in the
-response body), then the label. - pop3 takes a username and password, then the label. -
-pop3s mirrors pop3 (credentials required); imap/imaps take an optional username/password
-pair -- a plain reachability/banner check when omitted, a LOGIN when supplied -- then the
+www/https take a url (the path to GET) and an optional url_text (a substring the
+response body must contain), then the label. Omit url_text for a reachability check,
+where any HTTP response -- even a 401/403/5xx -- counts as up. Positionally, the 4-token
+host www url label form is the reachability probe; a 5th field is read as url_text, so a
+reachability check that *also* needs a contact must use the modern format. (For https
+the TLS handshake must still succeed -- the certificate is validated.) -
+pop3/pop3s/imap/imaps take an optional username/password pair -- a plain
+reachability/banner check when omitted, an authenticated probe when supplied -- then the
 label. - authdns is special: it takes the DNS name to look up and then a required
 contact -- a legacy authdns stanza with no contact is rejected. It has no label field. -
-ssh/mysql take an optional leading numeric port: a field after the type that parses as a
-port (1-65535) is the port, otherwise it's the label (so a purely-numeric label isn't
-expressible here -- use a descriptive one, or set the port in the modern format). -
-Default ports are applied automatically where they exist (smtp 25, pop3 110, pop3s 995,
-imap 143, imaps 993, authdns/DNS 53, www/http 80, https 443, ssh 22, mysql 3306);
-ping/ping6 have none, and tcp/udp require an explicit port.
+ssh/mysql/telnet take an optional leading numeric port: a field after the type that
+parses as a port (1-65535) is the port, otherwise it's the label (so a purely-numeric
+label isn't expressible here -- use a descriptive one, or set the port in the modern
+format). - ftp/ftps mirror the mail checks: an optional username/password pair (a banner
+check on the 220 greeting when omitted, a USER/PASS login when supplied), then the
+label. - Default ports are applied automatically where they exist (smtp 25, pop3 110,
+pop3s 995, imap 143, imaps 993, authdns/DNS 53, www/http 80, https 443, ssh 22, mysql
+3306, ftp 21, ftps 990, telnet 23); ping/ping6 have none, and tcp/udp require an
+explicit port.
 
 A trailing { opens a dependency block (next section).
 
@@ -718,8 +728,8 @@ Inside an object body, attributes are key value; pairs:
 | port | integer | tcp/udp (required); others optional | 1-65535; omitted => the type default |
 | desc | "text" | optional | Display label (the legacy label) |
 | contact | "addr" | dns (required); others optional | Notification address; absent/empty => syslog only, no page |
-| url + urltext | "path", "substring" | http/https (required) | Path to GET, and a substring the body must contain |
-| username + password | "u", "p" | pop3 (required) | POP3 credentials |
+| url + urltext | "path", "substring" | url: http/https (required); urltext optional | Path to GET; urltext is a substring the body must contain -- omit it for a reachability probe (any HTTP response = up) |
+| username + password | "u", "p" | pop3/pop3s/imap/imaps (optional) | Mail credentials; omitted => a banner-only check |
 | dns-query | "name" | dns (required) | The DNS name to look up |
 | dep | "object-name" | optional | Parent for dependency suppression; repeatable for multiple parents (any-path) |
 
@@ -728,31 +738,35 @@ override attributes -- queuetime, numfailures, send_pings / min_pings, group, co
 and source -- documented under Per-object overrides below.
 
 Check types (type keyword): ping, ping6, tcp, udp, smtp, pop3, pop3s, imap, imaps, dns,
-http, https, ssh, mysql. ping is an ICMP (IPv4) echo and ping6 an ICMPv6 (IPv6) echo
-over the host's AAAA record (pingv6/icmp6 are accepted aliases); imap is an IMAP
-greeting check (optional LOGIN), and pop3s/imaps are the implicit-TLS variants of
-POP3/IMAP. ssh reads the server's SSH- identification banner and mysql reads the
-MySQL/MariaDB handshake packet -- both are protocol-aware reachability checks (not
-logins). For legacy familiarity, authdns is an alias for dns and www for http. Default
-ports: smtp 25, pop3 110, pop3s 995, imap 143, imaps 993, dns 53, http 80, https 443,
-ssh 22, mysql 3306 (ping and ping6 have none; tcp/udp require an explicit port).
+http, https, ssh, mysql, ftp, ftps, telnet. ping is an ICMP (IPv4) echo and ping6 an
+ICMPv6 (IPv6) echo over the host's AAAA record (pingv6/icmp6 are accepted aliases); imap
+is an IMAP greeting check (optional LOGIN), and pop3s/imaps are the implicit-TLS
+variants of POP3/IMAP. ssh reads the server's SSH- identification banner and mysql reads
+the MySQL/MariaDB handshake packet -- both are protocol-aware reachability checks (not
+logins). ftp reads the FTP control-channel 220 greeting and adds an optional USER/PASS
+login; ftps is its implicit-TLS variant. telnet is a plaintext connection/banner check
+(port 23) -- up if the server sends anything on connect; never a login. For legacy
+familiarity, authdns is an alias for dns and www for http. Default ports: smtp 25, pop3
+110, pop3s 995, imap 143, imaps 993, dns 53, http 80, https 443, ssh 22, mysql 3306, ftp
+21, ftps 990, telnet 23 (ping and ping6 have none; tcp/udp require an explicit port).
 
 Required fields per type -- an object missing a required field is warned and skipped; the
 rest of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| ping, ping6, smtp, imap, imaps, ssh, mysql | host, type |
+| ping, ping6, smtp, pop3, pop3s, imap, imaps, ssh, mysql, ftp, ftps, telnet | host, type |
 | tcp, udp | host, type, port |
-| http, https | host, type, url, urltext |
-| pop3, pop3s | host, type, username, password |
+| http, https | host, type, url |
 | dns | host, type, dns-query, contact |
 
-Mail checks. imap reads the IMAP greeting (up on a ready server); add username/password
-and it also does a LOGIN (a rejected credential reads Bad Auth). pop3s and imaps speak
-their protocol over implicit TLS. The TLS checks verify *reachability*, not the
-certificate -- the handshake must succeed, but a self-signed or soon-to-expire cert still
-reads up. pop3/pop3s require credentials; imap/imaps take them optionally.
+Mail & FTP checks. imap reads the IMAP greeting (up on a ready server); add
+username/password and it also does a LOGIN (a rejected credential reads Bad Auth). ftp
+reads the FTP control 220 greeting and adds an optional USER/PASS login. pop3s, imaps,
+and ftps speak their protocol over implicit TLS. The TLS checks verify *reachability*,
+not the certificate -- the handshake must succeed, but a self-signed or soon-to-expire
+cert still reads up. Credentials are optional for pop3/pop3s/imap/imaps/ftp/ftps -- a
+banner check without them, an authenticated probe with them.
 
 Dependencies and the graph
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -982,7 +996,7 @@ This is the canonical mapping table (Appendix C points here).
 | label / "message" | desc "text"; | |
 | contact | contact "addr"; | |
 | url, url_text (www/https) | url "path";, urltext "substring"; | |
-| username, password (pop3/pop3s, imap/imaps) | username "u";, password "p"; | Required for pop3/pop3s; optional for imap/imaps |
+| username, password (pop3/pop3s, imap/imaps, ftp/ftps) | username "u";, password "p"; | Optional for all (omit => a banner-only check) |
 | name (authdns) | dns-query "name"; | |
 | { ... } child nesting | dep "parent"; on the child | Legacy ping/ping6/smtp parents become named edges |
 | config numfailures N (positional) | per-object numfailures N; | Resolved onto each object, not replayed as a global |
@@ -1131,7 +1145,7 @@ www / http and https
     # legacy  -- url, match-text, label  (no spaces in url_text)
     api.example.net  https  /health  OK  api-health  noc@example.net
 
-    # modern  -- url + urltext required for http/https
+    # modern  -- url required; urltext optional (omit for a reachability probe)
     object api {
         host    "api.example.net";
         type    https;
@@ -1733,11 +1747,11 @@ variants of POP3 and IMAP:
 
 - imap reads the server's IMAP greeting and is *up* on a ready * OK (or an already-
 authenticated * PREAUTH). Add username/password and it also performs a LOGIN, reporting
-a rejected credential as Bad Auth. Credentials are optional for imap/imaps (a banner
-check without them); pop3/pop3s require them. - pop3s and imaps speak their protocol
-over implicit TLS (TLS from connect). These are *reachability* checks -- the TLS
-handshake must succeed, but the certificate is not verified, so a self-signed or near-
-expiry cert still reads up.
+a rejected credential as Bad Auth. Credentials are optional for all four
+(pop3/pop3s/imap/imaps) -- a banner check without them, an authenticated probe with them.
+- pop3s and imaps speak their protocol over implicit TLS (TLS from connect). These are
+*reachability* checks -- the TLS handshake must succeed, but the certificate is not
+verified, so a self-signed or near-expiry cert still reads up.
 
     object mail-imaps {
         host "198.51.100.2"; type imaps; contact "noc@example.net";
@@ -1746,34 +1760,49 @@ expiry cert still reads up.
 
 Default ports: pop3s 995, imap 143, imaps 993.
 
-    The legacy sysmon.conf format accepts these too, positionally: host pop3s user pass label,
-    host imaps user pass label, and host imap label (banner) or host imap user pass label
-    (authenticated) -- credentials are optional for imap/imaps, required for pop3s.
+    The legacy sysmon.conf format accepts these too, positionally: host pop3s label (banner) or
+    host pop3s user pass label (authenticated), and likewise for imap/imaps -- credentials are
+    optional for all of pop3/pop3s/imap/imaps.
 
 ---
 
-Service-protocol checks -- ssh, mysql
-------------------------------------
+Service-protocol checks -- ssh, mysql, ftp, telnet
+-------------------------------------------------
 
-Two protocol-aware reachability checks that go beyond a bare TCP connect -- they confirm
-the service actually speaks its protocol, catching a port-forwarder, a wedged daemon, or
-an unrelated service sitting on the port:
+Protocol-aware reachability checks that go beyond a bare TCP connect -- they confirm the
+service actually speaks its protocol, catching a port-forwarder, a wedged daemon, or an
+unrelated service sitting on the port:
 
 - ssh reads the server's identification banner (SSH-2.0-OpenSSH_...). Up on an SSH- line;
 anything else is a bad response, an immediate close is *No Response*. - mysql reads the
 MySQL/MariaDB initial handshake packet (sent in the clear on connect, before any TLS
 upgrade). Up on a valid handshake -- or an error packet such as *"Too many connections"*,
-which still means the server is speaking MySQL and responding.
+which still means the server is speaking MySQL and responding. - ftp reads the FTP
+control-channel 220 greeting (up on a 220 ready reply; a 421 or other reply is a bad
+response). Add username/password and it also performs FTP's two-step USER -> PASS login
+(a rejected credential reads *Bad Auth*); without them it's a banner-only check. ftps
+runs the same check over implicit TLS (port 990). - telnet is a plaintext
+connection/banner check on port 23 -- up if the server sends any data on connect (Telnet
+option negotiation or a login banner), since a live telnet daemon speaks first. An
+immediate close is *No Response*. It never authenticates -- strictly a banner check, like
+ssh.
 
-Both default their port (ssh 22, mysql 3306) and take an optional override: port 2222;
-in the modern format, or an optional leading port positionally in legacy (host ssh 2222
-label). Neither is a login or authentication test.
+ssh/mysql/telnet default their port (22 / 3306 / 23) and take an optional override: port
+2222; in the modern format, or an optional leading port positionally in legacy (host ssh
+2222 label); ftp/ftps default to 21 / 990 (override via the modern port). ssh, mysql,
+and telnet are never a login test; ftp is a login only when you give it credentials.
 
     object db-primary {
         host "198.51.100.9"; type mysql;        # default port 3306
     };
     object jump-host {
         host "203.0.113.4"; type ssh; port 2222;
+    };
+    object vendor-ftp {
+        host "198.51.100.7"; type ftp;          # 220-banner check, port 21
+    };
+    object console-server {
+        host "198.51.100.20"; type telnet;      # banner/negotiation check, port 23
     };
 
 ---
@@ -1908,7 +1937,7 @@ Availability matrix
 | Dependency suppression | Yes ({ } nesting) | Yes (dep) | -- (structure is config-only) |
 | Multi-parent dependencies (any-path) | -- (single parent) | Yes (multiple dep) | -- (structure is config-only) |
 | IPv6 ping + mail checks (ping6 / imap / pop3s / imaps) | Yes | Yes | -- (config-only) |
-| Protocol-aware service checks (ssh / mysql) | Yes | Yes | -- (config-only) |
+| Protocol-aware service checks (ssh / mysql / ftp / ftps / telnet) | Yes | Yes | -- (config-only) |
 | Threshold alerting (numfailures) | Yes | Yes | --numfailures |
 | Re-page interval (pageinterval) | Yes | Yes | --pageinterval |
 | Recovery notices | Yes | Yes | -- |
@@ -2289,11 +2318,11 @@ fully-down ancestor freezes its subtree. See Feature tour -> dependency suppress
 Troubleshooting.
 
 Which codes a given check can produce depends on the check type -- e.g. Unpingable comes
-only from a ping check (ping or ping6); Bad Auth from the authenticated mail checks
-(pop3/pop3s, and imap/imaps when credentials are set) on a rejected login; and Bad Resp
-from a server that answers but not as expected -- DNS (malformed/wrong-source reply),
-HTTP (body missing the expected text), or a mail check (a bad greeting or reply). See
-the Feature tour for what each check verifies.
+only from a ping check (ping or ping6); Bad Auth from the mail/FTP checks
+(pop3/pop3s/imap/imaps/ftp/ftps) when credentials are set, on a rejected login; and Bad
+Resp from a server that answers but not as expected -- DNS (malformed/wrong-source
+reply), HTTP (a content check whose body is missing the expected text), or a mail/FTP
+check (a bad greeting or reply). See the Feature tour for what each check verifies.
 
 
 ########################################################################################
@@ -2499,15 +2528,15 @@ or unsupported, so the rest of the config still comes up. Check syslog (raise ve
 with config loglevel debug / -vv) for the specific warning. Common causes:
 
 - An object missing a required field for its type (e.g. a tcp/udp object with no port,
-an http/https object without url + urltext) is warned and skipped. - A dropped check
-type (nntp, pop2, umichx500, radius, bootp, snmp) warns and skips -- these aren't in
-scope for the rewrite. - A per-object source whose family doesn't match its check (an
-IPv6 source on a v4 check, or a v4 source on ping6) is warned and left unbound -- the
-object still loads and is checked, just on the kernel's default route. - ping6, imap,
-imaps, and pop3s are accepted in both the legacy and modern formats (they are no longer
-redirected to the modern config); pop3s/imaps are never silently downgraded to plaintext
-pop3/imap. - An unknown dep target, a dependency cycle, or a duplicate object name each
-warn and degrade gracefully (the object becomes a root, or the duplicate is skipped).
+an http/https object with no url) is warned and skipped. - A dropped check type (nntp,
+pop2, umichx500, radius, bootp, snmp) warns and skips -- these aren't in scope for the
+rewrite. - A per-object source whose family doesn't match its check (an IPv6 source on a
+v4 check, or a v4 source on ping6) is warned and left unbound -- the object still loads
+and is checked, just on the kernel's default route. - ping6, imap, imaps, and pop3s are
+accepted in both the legacy and modern formats (they are no longer redirected to the
+modern config); pop3s/imaps are never silently downgraded to plaintext pop3/imap. - An
+unknown dep target, a dependency cycle, or a duplicate object name each warn and degrade
+gracefully (the object becomes a root, or the duplicate is skipped).
 
 The full required-fields and check-type tables are in Configuration.
 
@@ -2703,15 +2732,15 @@ needs to be readable by the operator account that drives the client, and by no o
 Cleartext credentials in config files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The POP3/POP3S checks (and an IMAP/IMAPS check given credentials) authenticate with a
-username and password, and those credentials are stored in cleartext in the config file
-(the modern config's username / password attributes). There is no secret store or
-encryption-at-rest today.
+When the pop3/pop3s/imap/imaps/ftp/ftps checks are given a username and password (all
+optional -- without them the check is a banner-only probe), those credentials are stored
+in cleartext in the config file (the modern config's username / password attributes).
+There is no secret store or encryption-at-rest today.
 
 Practical guidance:
 
 - Treat the config file as a secret. Restrict its permissions (e.g. owned by the root
-account that starts the daemon, not group/world-readable) so the stored POP3 credentials
+account that starts the daemon, not group/world-readable) so the stored credentials
 aren't exposed to other local users. - Prefer a dedicated, low-privilege mailbox account
 for monitoring rather than a credential that grants access to anything sensitive. - Note
 that the status output never exposes these credentials -- neither the status page nor the

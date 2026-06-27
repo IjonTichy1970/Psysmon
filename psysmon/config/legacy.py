@@ -14,8 +14,8 @@ Faithfully reproduces ``loadconfig.c``/``parseline``:
 * **``numfailures`` is position-dependent** — its current value snapshots into each
   subsequently-parsed node's ``max_down`` (a running value, not last-wins).
 * Per-type field positions exactly as in C (ping/ping6/smtp: label[,contact][,``{``];
-  tcp/udp: port,label[,contact]; www/https: url,url_text,label[,contact];
-  pop3/pop3s: user,pass,label[,contact]; imap/imaps: label[,contact] (banner) or
+  tcp/udp: port,label[,contact]; www/https: url,label[,contact] (reachability) or
+  url,url_text,label[,contact] (content); pop3/pop3s/imap/imaps: label[,contact] (banner) or
   user,pass,label[,contact] (auth); authdns: name,contact).
 * Dropped legacy types (nntp, radius, umichx500, ...) -> warn and skip; never hard-fail.
 * Keyword matching is prefix-based, like the original ``strncmp`` (so ``tcpfoo`` matches
@@ -79,6 +79,9 @@ _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
     ("https", CheckType.HTTPS),
     ("ssh", CheckType.SSH),        # #96
     ("mysql", CheckType.MYSQL),    # #97
+    ("ftps", CheckType.FTPS),      # before "ftp"! (TLS) (#102)
+    ("ftp", CheckType.FTP),
+    ("telnet", CheckType.TELNET),  # #106
 )
 
 # Types whose stanza may open a `{` child block: the original's ping-like branch (ping, smtp) plus
@@ -289,25 +292,27 @@ class _Parser:
             if n >= 5:
                 node.contact = tokens[4]
         elif ctype in (CheckType.HTTP, CheckType.HTTPS):
-            if n < 5:
-                self._warn(lineno, f"{ctype} needs url, match-text and label; skipping")
+            # match-text (url_text) is OPTIONAL (#104). The 4-token form `host www url label` is a
+            # reachability probe (no match text; url_text stays None). 5+ tokens keep the original
+            # `url url_text label [contact]` meaning, so existing configs are unchanged — a
+            # reachability check that also wants a contact isn't expressible positionally (a 5-token
+            # line reads the middle field as url_text); use the modern format for that.
+            if n < 4:
+                self._warn(lineno, f"{ctype} needs a url and label; skipping")
                 return None
-            node.url, node.url_text, node.label = tokens[2], tokens[3], tokens[4]
-            if n >= 6:
-                node.contact = tokens[5]
-        elif ctype in (CheckType.POP3, CheckType.POP3S):
-            if n < 5:
-                self._warn(lineno, f"{ctype} needs user, password and label; skipping")
-                return None
-            node.username, node.password, node.label = tokens[2], tokens[3], tokens[4]
-            if n >= 6:
-                node.contact = tokens[5]
-        elif ctype in (CheckType.IMAP, CheckType.IMAPS):
-            # Mirror the modern imap/imaps: credentials are OPTIONAL. A short line
-            # (`host imap label [contact]`) is a banner-only check; a full pop3-style
-            # `host imap user pass label [contact]` line adds an authenticated LOGIN. The original
-            # C imap (loadconfig.c type 7) required user/pass, so that always-auth form is the
-            # 5-/6-token case here and parses identically.
+            if n == 4:
+                node.url, node.label = tokens[2], tokens[3]
+            else:
+                node.url, node.url_text, node.label = tokens[2], tokens[3], tokens[4]
+                if n >= 6:
+                    node.contact = tokens[5]
+        elif ctype in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS,
+                       CheckType.FTP, CheckType.FTPS):
+            # The mail/ftp checks mirror each other: credentials are OPTIONAL (#88 imap, #101 pop3,
+            # #102 ftp). A short line (`host ftp label [contact]`) is a banner-only check; a full
+            # `host ftp user pass label [contact]` line adds an authenticated probe. The original
+            # C pop3/imap required user/pass, so that always-auth form is the 5-/6-token case here
+            # and parses identically.
             if n < 5:
                 node.label = tokens[2]
                 if n >= 4:
@@ -322,9 +327,9 @@ class _Parser:
                 return None
             node.username = tokens[2]  # name to look up
             node.contact = tokens[3]
-        elif ctype in (CheckType.SSH, CheckType.MYSQL):
-            # Optional leading numeric port (#96/#97): `host ssh [PORT] label [contact]`. A field
-            # after the type that parses as a port (1..65535) is the port; otherwise it's the label
+        elif ctype in (CheckType.SSH, CheckType.MYSQL, CheckType.TELNET):
+            # Optional leading numeric port (#96/#97/#106): `host ssh [PORT] label [contact]`. A
+            # field after the type that parses as a port (1..65535) is the port; otherwise the label
             # (the default port from DEFAULT_PORT already applies). A purely-numeric label can't be
             # expressed here — use a descriptive label, or set the port in the modern format.
             idx = 2

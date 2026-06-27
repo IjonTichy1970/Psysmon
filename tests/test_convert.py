@@ -75,9 +75,31 @@ def test_to_modern_emits_ping6():
     assert len(reparsed.roots) == 1 and reparsed.roots[0].check_type is CheckType.PING6
 
 
+def test_to_modern_http_reachability_omits_urltext():
+    # An http node with no match text (url_text=None) round-trips as a reachability probe: the
+    # converter must NOT emit a urltext attribute, and the modern parser re-reads it as None (#104).
+    roots = [Node(hostname="web.example.net", check_type=CheckType.HTTP, url="/health")]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert 'url "/health";' in text and "urltext" not in text
+    n = parse_modern(text).roots[0]
+    assert n.check_type is CheckType.HTTP and n.url == "/health" and n.url_text is None
+
+
+def test_to_modern_pop3_banner_omits_credentials():
+    # A credential-less pop3/pop3s node now round-trips as a banner check: the converter must NOT
+    # emit empty username/password (mail creds are optional — #101, mirroring imap).
+    roots = [Node(hostname="box.example.net", check_type=CheckType.POP3)]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert "username" not in text and "password" not in text
+    n = parse_modern(text).roots[0]
+    assert n.check_type is CheckType.POP3 and n.username == "" and n.password == ""
+
+
 def test_to_modern_emits_mail_tls_types():
     # to_modern must serialize the new mail types (not KeyError) and round-trip through the modern
-    # parser, carrying pop3s's required creds and imaps's optional creds (#88).
+    # parser, carrying the mail types' optional credentials (#88 imap/imaps, #101 pop3/pop3s).
     roots = [
         Node(hostname="im.example.net", check_type=CheckType.IMAP),
         Node(hostname="ims.example.net", check_type=CheckType.IMAPS, username="u", password="p"),
@@ -112,6 +134,36 @@ def test_to_modern_emits_ssh_mysql():
     assert by_host["s2.example.net"].port == 2222
     assert by_host["m.example.net"].check_type is CheckType.MYSQL
     assert by_host["m.example.net"].port == 3307
+
+
+def test_to_modern_emits_telnet():
+    # to_modern serializes telnet (not KeyError); default port 23 omitted, an override kept.
+    roots = [
+        Node(hostname="dev.example.net", check_type=CheckType.TELNET),
+        Node(hostname="dev2.example.net", check_type=CheckType.TELNET, port=2323),
+    ]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert "type telnet;" in text and "port 23;" not in text and "port 2323;" in text
+    by = {n.hostname: n for n in parse_modern(text).roots}
+    assert by["dev.example.net"].check_type is CheckType.TELNET and by["dev.example.net"].port == 23
+    assert by["dev2.example.net"].port == 2323
+
+
+def test_to_modern_emits_ftp_types():
+    # to_modern serializes ftp/ftps (not KeyError), carrying optional creds; default ports omitted.
+    roots = [
+        Node(hostname="ftp.example.net", check_type=CheckType.FTP),
+        Node(hostname="ftps.example.net", check_type=CheckType.FTPS, username="u", password="p"),
+    ]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert "type ftp;" in text and "type ftps;" in text
+    assert "port 21;" not in text and "port 990;" not in text  # defaults omitted
+    by = {n.hostname: n for n in parse_modern(text).roots}
+    ftpn, ftps = by["ftp.example.net"], by["ftps.example.net"]
+    assert ftpn.check_type is CheckType.FTP and ftpn.username == ""
+    assert (ftps.username, ftps.password) == ("u", "p")
 
 
 def test_default_ports_omitted_tcp_udp_kept():

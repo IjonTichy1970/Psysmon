@@ -194,6 +194,8 @@ _TYPE_KEYWORDS = {
     "https": CheckType.HTTPS,
     "ssh": CheckType.SSH,        # SSH banner check (#96)
     "mysql": CheckType.MYSQL,    # MySQL/MariaDB handshake check (#97)
+    "ftp": CheckType.FTP, "ftps": CheckType.FTPS,    # FTP 220-banner + optional login (#102)
+    "telnet": CheckType.TELNET,    # connection/banner check on port 23 (#106)
 }
 _DROPPED_TYPES = frozenset({"nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
 # Object attributes the parser understands; anything else (a typo, or a not-yet-supported key)
@@ -695,23 +697,22 @@ class _Parser:
                 return None, []
             node.port = port
         elif ctype in (CheckType.HTTP, CheckType.HTTPS):
-            if not resolved.get("url") or not resolved.get("urltext"):
-                self._warn(line, f"object '{name}': {type_kw} needs 'url' and 'urltext'; skipping")
+            if not resolved.get("url"):
+                self._warn(line, f"object '{name}': {type_kw} needs 'url'; skipping")
                 return None, []
-            node.url, node.url_text = resolved["url"], resolved["urltext"]
-        elif ctype in (CheckType.POP3, CheckType.POP3S):
-            if not resolved.get("username") or not resolved.get("password"):
-                self._warn(line, f"object '{name}': {type_kw} needs 'username' and 'password'; "
-                           "skipping")
-                return None, []
-            node.username, node.password = resolved["username"], resolved["password"]
-        elif ctype in (CheckType.IMAP, CheckType.IMAPS):
-            # IMAP is a banner check; a LOGIN runs only if BOTH credentials are given (#88).
+            node.url = resolved["url"]
+            if "urltext" in resolved:  # optional (#104); url_text stays None when absent
+                node.url_text = resolved["urltext"]
+        elif ctype in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS,
+                       CheckType.FTP, CheckType.FTPS):
+            # The mail/ftp checks are banner checks; an authenticated probe runs only if BOTH
+            # credentials are given (optional creds — #88 imap, #101 pop3, #102 ftp).
+            # A partial pair is a config slip: warn and fall back to the banner check.
             u, p = resolved.get("username"), resolved.get("password")
             if u and p:
                 node.username, node.password = u, p
             elif u or p:
-                self._warn(line, f"object '{name}': imap auth needs both 'username' and "
+                self._warn(line, f"object '{name}': {type_kw} auth needs both 'username' and "
                            "'password'; ignoring the partial credentials")
         elif ctype is CheckType.DNS:
             # Legacy authdns requires a name AND a contact (a DNS check that pages nobody is what

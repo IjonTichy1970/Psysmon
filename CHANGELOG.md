@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- **FTP and FTPS checks** — new `ftp` and `ftps` check types (both config formats). `ftp` reads the
+  FTP control-channel `220` greeting — catching a port-forwarder or a wedged daemon that a bare
+  `tcp 21` connect can't — and with `username`/`password` also performs FTP's two-step `USER`/`PASS`
+  login (anonymous or credentialed); `ftps` runs the same check over **implicit TLS** (port 990,
+  reachability-only like the other TLS checks). Credentials are optional (a banner-only check
+  without them); default ports 21 / 990, with an optional override in the modern format
+  ([#102](https://github.com/IjonTichy1970/Psysmon/issues/102)).
+- **Telnet check** — a new `telnet` check type (both config formats). A connection/banner probe on
+  port 23, modeled on the SSH check: up if the server sends any initial data (Telnet `IAC` option
+  negotiation or a login banner), confirming a live telnet daemon beyond a bare `tcp 23` connect; an
+  immediate close is `No Response`. It never authenticates — strictly a banner check. Default port
+  23, with an optional override ([#106](https://github.com/IjonTichy1970/Psysmon/issues/106)).
+
+### Changed
+- **`urltext` is now optional for `http`/`https` checks.** Without it, the check is a protocol-aware
+  reachability probe (like `mysql`): any HTTP response — including an error status such as
+  `401`/`403`/`5xx` — counts as up, so you can monitor "is the web server answering?" without a
+  stable match string or a test page. With a `urltext` it behaves exactly as before (a `2xx` whose
+  body contains the text). `https` still verifies the certificate, so a reachability probe requires
+  a valid TLS handshake. In the legacy format the 4-token `host www url label` form is the
+  reachability probe; existing `url url_text label` lines are unchanged
+  ([#104](https://github.com/IjonTichy1970/Psysmon/issues/104)).
+- **POP3/POP3S credentials are now optional**, matching `imap`/`imaps`. Without `username`/`password`,
+  the check is a protocol-aware banner probe (a `+OK` ready greeting = up) instead of being skipped —
+  so a host with no test mailbox no longer has to fall back to a bare `tcp 110` check. With both
+  credentials it performs the `USER`/`PASS` login exactly as before; a partial pair warns and falls
+  back to the banner check ([#101](https://github.com/IjonTichy1970/Psysmon/issues/101)).
+
 ### Fixed
 - User guide: the legacy `config`-directive tables now show each directive's default value (e.g.
   `config heartbeat` → `300` seconds), matching the modern directive table.

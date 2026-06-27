@@ -61,6 +61,32 @@ async def test_bad_response_on_500(check_ctx, mock_transport):
     assert await http.check(node(url_text="hello"), check_ctx) == Status.BAD_RESPONSE
 
 
+async def test_reachability_ok_on_401_without_urltext(check_ctx, mock_transport):
+    # No urltext (url_text=None) -> any HTTP status is up, incl. an auth-required 401 (#104).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="Unauthorized")
+
+    mock_transport(handler)
+    assert await http.check(node(url_text=None), check_ctx) == Status.OK
+
+
+async def test_reachability_ok_on_500_without_urltext(check_ctx, mock_transport):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="kaboom")
+
+    mock_transport(handler)
+    assert await http.check(node(url_text=None), check_ctx) == Status.OK
+
+
+async def test_reachability_still_needs_an_http_response(check_ctx, mock_transport):
+    # Reachability mode is not a bare TCP check: a connect failure (no HTTP reply) is still down.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    mock_transport(handler)
+    assert await http.check(node(url_text=None), check_ctx) == Status.CONN_REFUSED
+
+
 async def test_connect_error_maps_conn_refused(check_ctx, mock_transport):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)

@@ -47,6 +47,8 @@ _TYPE_KW: dict[CheckType, str] = {
     CheckType.HTTPS: "https",
     CheckType.SSH: "ssh",      # #96
     CheckType.MYSQL: "mysql",  # #97
+    CheckType.FTP: "ftp", CheckType.FTPS: "ftps",  # #102
+    CheckType.TELNET: "telnet",  # #106
 }
 
 # Settings field -> (modern `config` keyword, emit-kind), in a fixed output order. `numfailures`
@@ -185,12 +187,11 @@ class _Serializer:
             self._line(f"  port {node.port};")
         if node.check_type in (CheckType.HTTP, CheckType.HTTPS):
             self._attr("url", node.url)
-            self._attr("urltext", node.url_text)
-        elif node.check_type in (CheckType.POP3, CheckType.POP3S):
-            self._attr("username", node.username)
-            self._attr("password", node.password)
-        elif node.check_type in (CheckType.IMAP, CheckType.IMAPS):
-            if node.username and node.password:  # IMAP creds are optional (the LOGIN check) (#88)
+            if node.url_text is not None:  # urltext is optional (#104); None = a reachability probe
+                self._attr("urltext", node.url_text)
+        elif node.check_type in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS,
+                                 CheckType.FTP, CheckType.FTPS):
+            if node.username and node.password:  # mail/ftp creds optional (#88/#101/#102)
                 self._attr("username", node.username)
                 self._attr("password", node.password)
         elif node.check_type is CheckType.DNS:

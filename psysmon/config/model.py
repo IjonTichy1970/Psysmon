@@ -37,6 +37,9 @@ class CheckType(StrEnum):
     HTTPS = "https"
     SSH = "ssh"  # SSH identification-banner check (#96)
     MYSQL = "mysql"  # MySQL/MariaDB initial-handshake check (#97)
+    FTP = "ftp"  # FTP control-channel 220-banner + optional login (#102)
+    FTPS = "ftps"  # FTP over implicit TLS (#102)
+    TELNET = "telnet"  # connection/banner check on port 23 — no login (#106)
 
 
 # Default port per type (None = not applicable or supplied explicitly in config).
@@ -55,6 +58,9 @@ DEFAULT_PORT: dict[CheckType, int | None] = {
     CheckType.HTTPS: 443,
     CheckType.SSH: 22,
     CheckType.MYSQL: 3306,
+    CheckType.FTP: 21,
+    CheckType.FTPS: 990,
+    CheckType.TELNET: 23,
 }
 
 # type_to_name() display strings from the original lib.c (used in the status file).
@@ -73,6 +79,9 @@ _DISPLAY_NAME: dict[CheckType, str] = {
     CheckType.HTTPS: "https",
     CheckType.SSH: "ssh",
     CheckType.MYSQL: "mysql",
+    CheckType.FTP: "ftp",
+    CheckType.FTPS: "ftps",
+    CheckType.TELNET: "telnet",
 }
 
 
@@ -125,7 +134,9 @@ class Node:
     username: str = ""  # pop3 auth
     password: str = ""  # pop3 auth
     url: str = ""  # http/https path
-    url_text: str = ""  # substring that must appear in the http/https body
+    # Substring the http/https body must contain. None = no match text configured -> a reachability
+    # probe where any HTTP response counts as up (#104); a string (incl. "") = a content check.
+    url_text: str | None = None
     max_down: int = 2  # numfailures in effect when parsed (position-dependent)
     interval: float | None = None  # per-host check interval; None = use global default
     # Loss-tolerant ping (#22): send this many echoes, require this many replies to count up.

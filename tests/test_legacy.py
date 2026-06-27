@@ -150,11 +150,47 @@ def test_legacy_pop3s_accepted_not_plaintext():
     assert ok.check_type is CheckType.POP3 and ok.port == 110
 
 
-def test_legacy_pop3_family_requires_credentials():
-    # pop3/pop3s always authenticate (mirror modern): too few fields -> warn + skip.
-    res = parse("mail.example.net pop3s onlylabel noc@x\n")  # 4 tokens, no user/pass
-    assert res.roots == []
-    assert any("needs user, password and label" in w for w in res.warnings)
+def test_legacy_pop3_family_optional_credentials():
+    # pop3/pop3s now mirror imap/imaps (#101): a short line is banner-only, a full line auths.
+    banner = parse("mail.example.net pop3s onlylabel noc@x\n").roots[0]  # 4 tokens: label + contact
+    assert banner.check_type is CheckType.POP3S and banner.port == 995
+    assert not banner.username and not banner.password
+    assert banner.label == "onlylabel" and banner.contact == "noc@x"
+    auth = parse("mail.example.net pop3 mu mp label noc@x\n").roots[0]  # 6 tokens: authenticated
+    assert (auth.username, auth.password, auth.label) == ("mu", "mp", "label")
+
+
+def test_legacy_telnet_optional_port_no_creds():
+    # telnet mirrors ssh's positional form (#106): optional leading port, label, contact; no creds.
+    n = parse("dev.example.net telnet console noc@x\n").roots[0]  # 4 tokens: label + contact
+    assert n.check_type is CheckType.TELNET and n.port == 23
+    assert not n.username and n.label == "console" and n.contact == "noc@x"
+    alt = parse("dev.example.net telnet 2323 console noc@x\n").roots[0]  # optional leading port
+    assert alt.port == 2323 and alt.label == "console" and alt.contact == "noc@x"
+
+
+def test_legacy_ftp_optional_credentials():
+    # ftp/ftps mirror the mail checks (#102): banner-only short line, authenticated full line; and
+    # ftps is NOT prefix-shadowed by ftp (ordered like pop3s before pop3).
+    banner = parse("ftp.example.net ftp control-banner noc@x\n").roots[0]  # 4 tokens: label+contact
+    assert banner.check_type is CheckType.FTP and banner.port == 21
+    assert not banner.username and banner.label == "control-banner" and banner.contact == "noc@x"
+    auth = parse("ftp.example.net ftp ftpuser ftppass label noc@x\n").roots[0]  # 6 tokens: auth
+    assert (auth.username, auth.password, auth.label) == ("ftpuser", "ftppass", "label")
+    sec = parse("ftp.example.net ftps fu fp label\n").roots[0]  # 5 tokens: auth, over TLS
+    assert sec.check_type is CheckType.FTPS and sec.port == 990
+    assert (sec.username, sec.password) == ("fu", "fp")
+
+
+def test_legacy_http_urltext_optional():
+    # urltext is optional (#104): the 4-token `host www url label` form is a reachability probe
+    # (no url_text); 5+ tokens keep the original url,url_text,label[,contact] meaning.
+    reach = parse("web.example.net www /health webdesc\n").roots[0]  # 4 tokens: url + label
+    assert reach.check_type is CheckType.HTTP and reach.url == "/health"
+    assert reach.url_text is None and reach.label == "webdesc" and not reach.contact
+    content = parse("web.example.net www /health OK weblabel noc@x\n").roots[0]  # 6 tokens: content
+    assert (content.url, content.url_text, content.label, content.contact) == (
+        "/health", "OK", "weblabel", "noc@x")
 
 
 def test_legacy_imap_optional_credentials():

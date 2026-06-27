@@ -53,34 +53,41 @@ address; an absent contact means **syslog only, no page**.
 | `smtp` | `smtp  label  [contact]` |
 | `tcp` | `tcp  port  label  [contact]` |
 | `udp` | `udp  port  label  [contact]` |
-| `www` (HTTP) | `www  url  url_text  label  [contact]` |
-| `https` | `https  url  url_text  label  [contact]` |
-| `pop3` | `pop3  username  password  label  [contact]` |
-| `pop3s` | `pop3s  username  password  label  [contact]` |
+| `www` (HTTP) | `www  url  [url_text]  label  [contact]` |
+| `https` | `https  url  [url_text]  label  [contact]` |
+| `pop3` | `pop3  [username  password]  label  [contact]` |
+| `pop3s` | `pop3s  [username  password]  label  [contact]` |
 | `imap` | `imap  [username  password]  label  [contact]` |
 | `imaps` | `imaps  [username  password]  label  [contact]` |
 | `authdns` (DNS) | `authdns  name  contact` |
 | `ssh` | `ssh  [port]  label  [contact]` |
 | `mysql` | `mysql  [port]  label  [contact]` |
+| `ftp` | `ftp  [username  password]  label  [contact]` |
+| `ftps` | `ftps  [username  password]  label  [contact]` |
+| `telnet` | `telnet  [port]  label  [contact]` |
 
 Notes confirmed from the parser:
 
 - **`label`** is the original "message" field — a human-readable description.
 - **`tcp`/`udp`** require a numeric `port` (a non-numeric or non-positive port skips the stanza).
-- **`www`/`https`** take a `url` (the path to GET) and `url_text` (a substring that must appear in
-  the response body), then the `label`.
-- **`pop3`** takes a `username` and `password`, then the `label`.
-- **`pop3s`** mirrors `pop3` (credentials required); **`imap`/`imaps`** take an **optional**
-  `username`/`password` pair — a plain reachability/banner check when omitted, a `LOGIN` when
-  supplied — then the `label`.
+- **`www`/`https`** take a `url` (the path to GET) and an **optional** `url_text` (a substring the
+  response body must contain), then the `label`. Omit `url_text` for a **reachability** check, where
+  any HTTP response — even a `401`/`403`/`5xx` — counts as up. Positionally, the 4-token
+  `host www url label` form is the reachability probe; a 5th field is read as `url_text`, so a
+  reachability check that *also* needs a contact must use the modern format. (For `https` the TLS
+  handshake must still succeed — the certificate is validated.)
+- **`pop3`/`pop3s`/`imap`/`imaps`** take an **optional** `username`/`password` pair — a plain
+  reachability/banner check when omitted, an authenticated probe when supplied — then the `label`.
 - **`authdns`** is special: it takes the DNS `name` to look up and then a **required** `contact` —
   a legacy authdns stanza with no contact is rejected. It has **no** `label` field.
-- **`ssh`/`mysql`** take an **optional** leading numeric port: a field after the type that parses as
-  a port (1–65535) is the port, otherwise it's the `label` (so a purely-numeric label isn't
+- **`ssh`/`mysql`/`telnet`** take an **optional** leading numeric port: a field after the type that
+  parses as a port (1–65535) is the port, otherwise it's the `label` (so a purely-numeric label isn't
   expressible here — use a descriptive one, or set the port in the modern format).
+- **`ftp`/`ftps`** mirror the mail checks: an **optional** `username`/`password` pair (a banner check
+  on the `220` greeting when omitted, a `USER`/`PASS` login when supplied), then the `label`.
 - Default ports are applied automatically where they exist (smtp `25`, pop3 `110`, pop3s `995`,
-  imap `143`, imaps `993`, authdns/DNS `53`, www/http `80`, https `443`, ssh `22`, mysql `3306`);
-  ping/ping6 have none, and tcp/udp require an explicit port.
+  imap `143`, imaps `993`, authdns/DNS `53`, www/http `80`, https `443`, ssh `22`, mysql `3306`,
+  ftp `21`, ftps `990`, telnet `23`); ping/ping6 have none, and tcp/udp require an explicit port.
 
 A trailing `{` opens a dependency block (next section).
 
@@ -282,8 +289,8 @@ Inside an object body, attributes are `key value;` pairs:
 | `port` | integer | tcp/udp (**required**); others optional | 1–65535; omitted ⇒ the type default |
 | `desc` | `"text"` | optional | Display label (the legacy `label`) |
 | `contact` | `"addr"` | dns (**required**); others optional | Notification address; absent/empty ⇒ syslog only, no page |
-| `url` + `urltext` | `"path"`, `"substring"` | http/https (**required**) | Path to GET, and a substring the body must contain |
-| `username` + `password` | `"u"`, `"p"` | pop3 (**required**) | POP3 credentials |
+| `url` + `urltext` | `"path"`, `"substring"` | url: http/https (**required**); `urltext` optional | Path to GET; `urltext` is a substring the body must contain — omit it for a reachability probe (any HTTP response = up) |
+| `username` + `password` | `"u"`, `"p"` | pop3/pop3s/imap/imaps (optional) | Mail credentials; omitted ⇒ a banner-only check |
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
 | `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (any-path) |
 
@@ -292,31 +299,36 @@ override** attributes — `queuetime`, `numfailures`, `send_pings` / `min_pings`
 `contact_on`, and `source` — documented under [Per-object overrides](#per-object-overrides) below.
 
 **Check types** (`type` keyword): `ping`, `ping6`, `tcp`, `udp`, `smtp`, `pop3`, `pop3s`, `imap`,
-`imaps`, `dns`, `http`, `https`, `ssh`, `mysql`. `ping` is an ICMP (IPv4) echo and **`ping6`** an
-ICMPv6 (IPv6) echo over the host's **AAAA** record (`pingv6`/`icmp6` are accepted aliases);
-**`imap`** is an IMAP greeting check (optional LOGIN), and **`pop3s`/`imaps`** are the implicit-TLS
-variants of POP3/IMAP. **`ssh`** reads the server's `SSH-` identification banner and **`mysql`** reads
-the MySQL/MariaDB handshake packet — both are protocol-aware reachability checks (not logins). For
+`imaps`, `dns`, `http`, `https`, `ssh`, `mysql`, `ftp`, `ftps`, `telnet`. `ping` is an ICMP (IPv4) echo and
+**`ping6`** an ICMPv6 (IPv6) echo over the host's **AAAA** record (`pingv6`/`icmp6` are accepted
+aliases); **`imap`** is an IMAP greeting check (optional LOGIN), and **`pop3s`/`imaps`** are the
+implicit-TLS variants of POP3/IMAP. **`ssh`** reads the server's `SSH-` identification banner and
+**`mysql`** reads the MySQL/MariaDB handshake packet — both are protocol-aware reachability checks
+(not logins). **`ftp`** reads the FTP control-channel `220` greeting and adds an optional
+`USER`/`PASS` login; **`ftps`** is its implicit-TLS variant. **`telnet`** is a plaintext
+connection/banner check (port 23) — up if the server sends anything on connect; never a login. For
 legacy familiarity, `authdns` is an alias for `dns` and `www` for `http`. Default ports: smtp `25`,
-pop3 `110`, pop3s `995`, imap `143`, imaps `993`, dns `53`, http `80`, https `443`, ssh `22`, mysql
-`3306` (ping and ping6 have none; tcp/udp require an explicit `port`).
+pop3 `110`, pop3s `995`, imap `143`, imaps `993`, dns `53`, http `80`, https `443`, ssh `22`,
+mysql `3306`, ftp `21`, ftps `990`, telnet `23` (ping and ping6 have none; tcp/udp require an
+explicit `port`).
 
 **Required fields per type** — an object missing a required field is warned and skipped; the rest
 of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `ping6`, `smtp`, `imap`, `imaps`, `ssh`, `mysql` | `host`, `type` |
+| `ping`, `ping6`, `smtp`, `pop3`, `pop3s`, `imap`, `imaps`, `ssh`, `mysql`, `ftp`, `ftps`, `telnet` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
-| `http`, `https` | `host`, `type`, `url`, `urltext` |
-| `pop3`, `pop3s` | `host`, `type`, `username`, `password` |
+| `http`, `https` | `host`, `type`, `url` |
 | `dns` | `host`, `type`, `dns-query`, `contact` |
 
-**Mail checks.** `imap` reads the IMAP greeting (up on a ready server); add `username`/`password`
-and it also does a `LOGIN` (a rejected credential reads `Bad Auth`). `pop3s` and `imaps` speak their
+**Mail & FTP checks.** `imap` reads the IMAP greeting (up on a ready server); add `username`/`password`
+and it also does a `LOGIN` (a rejected credential reads `Bad Auth`). `ftp` reads the FTP control
+`220` greeting and adds an optional `USER`/`PASS` login. `pop3s`, `imaps`, and `ftps` speak their
 protocol over **implicit TLS**. The TLS checks verify *reachability*, not the certificate — the
-handshake must succeed, but a self-signed or soon-to-expire cert still reads up. `pop3`/`pop3s`
-require credentials; `imap`/`imaps` take them optionally.
+handshake must succeed, but a self-signed or soon-to-expire cert still reads up. Credentials are
+**optional** for `pop3`/`pop3s`/`imap`/`imaps`/`ftp`/`ftps` — a banner check without them, an
+authenticated probe with them.
 
 ### Dependencies and the graph
 
@@ -540,7 +552,7 @@ This is the canonical mapping table ([Appendix C](90-appendices.md) points here)
 | `label` / "message" | `desc "text";` | |
 | `contact` | `contact "addr";` | |
 | `url`, `url_text` (www/https) | `url "path";`, `urltext "substring";` | |
-| `username`, `password` (pop3/pop3s, imap/imaps) | `username "u";`, `password "p";` | Required for pop3/pop3s; optional for imap/imaps |
+| `username`, `password` (pop3/pop3s, imap/imaps, ftp/ftps) | `username "u";`, `password "p";` | Optional for all (omit ⇒ a banner-only check) |
 | `name` (authdns) | `dns-query "name";` | |
 | `{ … }` child nesting | `dep "parent";` on the child | Legacy ping/ping6/smtp parents become named edges |
 | `config numfailures N` (positional) | per-object `numfailures N;` | Resolved onto each object, not replayed as a global |
@@ -712,7 +724,7 @@ api.example.net  https  /health  OK  api-health  noc@example.net
 ```
 
 ```
-# modern  — url + urltext required for http/https
+# modern  — url required; urltext optional (omit for a reachability probe)
 object api {
     host    "api.example.net";
     type    https;

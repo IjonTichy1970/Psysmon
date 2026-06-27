@@ -353,13 +353,29 @@ def test_dep_can_reference_a_later_object():
 def test_object_missing_required_field_skipped():
     assert any("no 'host'" in w for w in parse('object x { type ping; };\n').warnings)
     assert any("needs a 'port'" in w for w in parse('object x { ip "h"; type tcp; };\n').warnings)
-    assert any("'url' and 'urltext'" in w
+    assert any("https needs 'url'" in w
                for w in parse('object x { ip "h"; type https; };\n').warnings)
     assert any("invalid type" in w
                for w in parse('object x { ip "h"; type frobnicate; };\n').warnings)
     # all of the above produced no node
     for cfg in ('object x { type ping; };\n', 'object x { ip "h"; type tcp; };\n'):
         assert parse(cfg).roots == []
+
+
+def test_http_urltext_optional_reachability():
+    # url without urltext -> a reachability probe (url_text stays None), not a skip (#104).
+    res = parse('object x { host "h.example.net"; type http; url "/health"; };\n')
+    assert len(res.roots) == 1 and res.warnings == []
+    n = res.roots[0]
+    assert n.check_type is CheckType.HTTP and n.url == "/health" and n.url_text is None
+    # with urltext -> a content check (url_text set)
+    content = parse('object y { host "h2.example.net"; type https; url "/"; urltext "OK"; };\n')
+    assert content.roots[0].url_text == "OK"
+
+
+def test_http_still_requires_url():
+    res = parse('object x { host "h.example.net"; type http; };\n')
+    assert res.roots == [] and any("http needs 'url'" in w for w in res.warnings)
 
 
 # --- #76: `host` is the preferred synonym for `ip` -------------------------------------
@@ -414,10 +430,21 @@ def test_mail_tls_types_recognized():
     assert by["ims.example.net"].check_type is CheckType.IMAPS and by["ims.example.net"].port == 993
 
 
-def test_pop3s_requires_credentials():
-    res = parse('object x { host "h.example.net"; type pop3s; };\n')
-    assert res.roots == []
-    assert any("pop3s needs 'username' and 'password'" in w for w in res.warnings)
+def test_pop3_family_banner_only_builds_without_credentials():
+    # pop3/pop3s now mirror imap/imaps: no credentials -> a banner-only check, not a skip (#101).
+    res = parse(
+        'object x { host "h.example.net"; type pop3; };\n'
+        'object y { host "h2.example.net"; type pop3s; };\n'
+    )
+    assert len(res.roots) == 2 and res.warnings == []
+    assert all(n.username == "" and n.password == "" for n in res.roots)
+
+
+def test_pop3_partial_credentials_warn_and_ignored():
+    # Only one of username/password -> warn + ignore both; the object still builds (banner) (#101).
+    res = parse('object x { host "h.example.net"; type pop3; username "u"; };\n')
+    assert len(res.roots) == 1 and res.roots[0].username == ""
+    assert any("pop3 auth needs both" in w for w in res.warnings)
 
 
 def test_imap_banner_only_builds_without_credentials():
@@ -437,6 +464,33 @@ def test_imap_partial_credentials_warn_and_ignored():
     res = parse('object x { host "h.example.net"; type imap; username "u"; };\n')
     assert len(res.roots) == 1 and res.roots[0].username == ""
     assert any("imap auth needs both" in w for w in res.warnings)
+
+
+def test_ftp_types_recognized_with_optional_credentials():
+    # ftp/ftps build with the right default port and optional credentials (banner vs login) (#102).
+    res = parse(
+        'object a { host "ftp.example.net"; type ftp; };\n'
+        'object b { host "ftps.example.net"; type ftps; username "u"; password "p"; };\n'
+    )
+    assert res.warnings == []
+    by = {n.hostname: n for n in res.roots}
+    ftpn, ftps = by["ftp.example.net"], by["ftps.example.net"]
+    assert ftpn.check_type is CheckType.FTP and ftpn.port == 21 and ftpn.username == ""  # banner
+    assert ftps.check_type is CheckType.FTPS and ftps.port == 990
+    assert (ftps.username, ftps.password) == ("u", "p")
+
+
+def test_telnet_recognized_no_credentials():
+    # telnet is a connection/banner check (#106): host+type only, default port 23, no creds.
+    res = parse(
+        'object a { host "dev.example.net"; type telnet; };\n'
+        'object b { host "dev2.example.net"; type telnet; port 2323; };\n'
+    )
+    assert res.warnings == []
+    by = {n.hostname: n for n in res.roots}
+    dev = by["dev.example.net"]
+    assert dev.check_type is CheckType.TELNET and dev.port == 23 and dev.username == ""
+    assert by["dev2.example.net"].port == 2323
 
 
 def test_ping6_type_recognized():

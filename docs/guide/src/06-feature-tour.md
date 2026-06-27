@@ -292,8 +292,8 @@ variants of POP3 and IMAP:
 
 - **`imap`** reads the server's IMAP greeting and is *up* on a ready `* OK` (or an
   already-authenticated `* PREAUTH`). Add `username`/`password` and it also performs a `LOGIN`,
-  reporting a rejected credential as `Bad Auth`. Credentials are optional for `imap`/`imaps`
-  (a banner check without them); `pop3`/`pop3s` require them.
+  reporting a rejected credential as `Bad Auth`. Credentials are **optional for all four**
+  (`pop3`/`pop3s`/`imap`/`imaps`) — a banner check without them, an authenticated probe with them.
 - **`pop3s`** and **`imaps`** speak their protocol over **implicit TLS** (TLS from connect). These
   are *reachability* checks — the TLS handshake must succeed, but the certificate is **not**
   verified, so a self-signed or near-expiry cert still reads up.
@@ -307,15 +307,15 @@ object mail-imaps {
 
 Default ports: `pop3s` 995, `imap` 143, `imaps` 993.
 
-> The legacy `sysmon.conf` format accepts these too, positionally: `host pop3s user pass label`,
-> `host imaps user pass label`, and `host imap label` (banner) or `host imap user pass label`
-> (authenticated) — credentials are optional for `imap`/`imaps`, required for `pop3s`.
+> The legacy `sysmon.conf` format accepts these too, positionally: `host pop3s label` (banner) or
+> `host pop3s user pass label` (authenticated), and likewise for `imap`/`imaps` — credentials are
+> optional for all of `pop3`/`pop3s`/`imap`/`imaps`.
 
 ---
 
-## Service-protocol checks — `ssh`, `mysql`
+## Service-protocol checks — `ssh`, `mysql`, `ftp`, `telnet`
 
-Two protocol-aware reachability checks that go beyond a bare TCP connect — they confirm the service
+Protocol-aware reachability checks that go beyond a bare TCP connect — they confirm the service
 actually speaks its protocol, catching a port-forwarder, a wedged daemon, or an unrelated service
 sitting on the port:
 
@@ -324,10 +324,18 @@ sitting on the port:
 - **`mysql`** reads the MySQL/MariaDB initial handshake packet (sent in the clear on connect, before
   any TLS upgrade). Up on a valid handshake — or an error packet such as *"Too many connections"*,
   which still means the server is speaking MySQL and responding.
+- **`ftp`** reads the FTP control-channel `220` greeting (up on a `220` ready reply; a `421` or other
+  reply is a bad response). Add `username`/`password` and it also performs FTP's two-step `USER` →
+  `PASS` login (a rejected credential reads *Bad Auth*); without them it's a banner-only check.
+  **`ftps`** runs the same check over implicit TLS (port 990).
+- **`telnet`** is a plaintext connection/banner check on port 23 — up if the server sends any data
+  on connect (Telnet option negotiation or a login banner), since a live telnet daemon speaks first.
+  An immediate close is *No Response*. It never authenticates — strictly a banner check, like `ssh`.
 
-Both default their port (`ssh` 22, `mysql` 3306) and take an **optional override**: `port 2222;` in
-the modern format, or an optional leading port positionally in legacy (`host ssh 2222 label`).
-Neither is a login or authentication test.
+`ssh`/`mysql`/`telnet` default their port (22 / 3306 / 23) and take an **optional override**:
+`port 2222;` in the modern format, or an optional leading port positionally in legacy
+(`host ssh 2222 label`); `ftp`/`ftps` default to 21 / 990 (override via the modern `port`). `ssh`,
+`mysql`, and `telnet` are never a login test; `ftp` is a login only when you give it credentials.
 
 ```
 object db-primary {
@@ -335,6 +343,12 @@ object db-primary {
 };
 object jump-host {
     host "203.0.113.4"; type ssh; port 2222;
+};
+object vendor-ftp {
+    host "198.51.100.7"; type ftp;          # 220-banner check, port 21
+};
+object console-server {
+    host "198.51.100.20"; type telnet;      # banner/negotiation check, port 23
 };
 ```
 
@@ -476,7 +490,7 @@ control-channel documentation.
 | Dependency suppression | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
 | Multi-parent dependencies (any-path) | — (single parent) | Yes (multiple `dep`) | — (structure is config-only) |
 | IPv6 ping + mail checks (`ping6` / `imap` / `pop3s` / `imaps`) | Yes | Yes | — (config-only) |
-| Protocol-aware service checks (`ssh` / `mysql`) | Yes | Yes | — (config-only) |
+| Protocol-aware service checks (`ssh` / `mysql` / `ftp` / `ftps` / `telnet`) | Yes | Yes | — (config-only) |
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |

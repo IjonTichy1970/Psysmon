@@ -173,14 +173,15 @@ readable by the operator account that drives the client, and by no one else.
 
 ### Cleartext credentials in config files
 
-The POP3/POP3S checks (and an IMAP/IMAPS check given credentials) authenticate with a username and
-password, and those credentials are stored **in cleartext in the config file** (the modern config's
-`username` / `password` attributes). There is no secret store or encryption-at-rest today.
+When the `pop3`/`pop3s`/`imap`/`imaps`/`ftp`/`ftps` checks are given a `username` and `password`
+(all optional — without them the check is a banner-only probe), those credentials are stored **in
+cleartext in the config file** (the modern config's `username` / `password` attributes). There is no
+secret store or encryption-at-rest today.
 
 Practical guidance:
 
 - **Treat the config file as a secret.** Restrict its permissions (e.g. owned by the root account
-  that starts the daemon, not group/world-readable) so the stored POP3 credentials aren't exposed
+  that starts the daemon, not group/world-readable) so the stored credentials aren't exposed
   to other local users.
 - Prefer a dedicated, low-privilege mailbox account for monitoring rather than a credential that
   grants access to anything sensitive.

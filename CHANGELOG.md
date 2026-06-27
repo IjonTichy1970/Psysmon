@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-26 — FTP/FTPS & Telnet checks, optional-credential probes
+
 ### Added
 - **FTP and FTPS checks** — new `ftp` and `ftps` check types (both config formats). `ftp` reads the
   FTP control-channel `220` greeting — catching a port-forwarder or a wedged daemon that a bare
@@ -433,7 +435,8 @@ All notable changes to this project are documented here. The format is based on
   a host-is-up result — masking an outage and, because ping nodes gate their dependents,
   silencing alerts for a whole subtree ([#29](https://github.com/IjonTichy1970/Psysmon/issues/29)).
 
-[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/IjonTichy1970/Psysmon/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/IjonTichy1970/Psysmon/compare/v0.6.1...v0.7.0

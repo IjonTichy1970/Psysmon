@@ -169,39 +169,39 @@ prefix-matched (like the C `strncmp`); the later, post-rewrite globals are match
 
 **Original directives:**
 
-| Directive | Value | Effect |
-|---|---|---|
-| `config pageinterval` | minutes | Re-page interval while a host stays down |
-| `config numfailures` | integer | Failure threshold (position-dependent — see above) |
-| `config logging` | facility \| `none` | Syslog facility; `none` disables syslog |
-| `config loglevel` | `warning`\|`info`\|`debug` | Logging verbosity |
-| `config dnslog` | seconds | DNS-stats log interval |
-| `config dnsexpire` | seconds | DNS cache TTL |
-| `config heartbeat` | seconds | "Monitoring N hosts" summary interval |
-| `config savestate` | `"path"` | Persist live state to survive restarts (quoted or bare path) |
-| `config statusfile` | `html`\|`text` `path` | Status-output format and path |
-| `config sleeptime` | — | **Obsolete; ignored** with a warning (use `--interval`) |
+| Directive | Value | Default | Effect |
+|---|---|---|---|
+| `config pageinterval` | minutes | `10` | Re-page interval while a host stays down |
+| `config numfailures` | integer | `2` | Failure threshold (position-dependent — see above) |
+| `config logging` | facility \| `none` | `daemon` | Syslog facility; `none` disables syslog |
+| `config loglevel` | `warning`\|`info`\|`debug` | `info` | Logging verbosity |
+| `config dnslog` | seconds | `600` | DNS-stats log interval |
+| `config dnsexpire` | seconds | `900` | DNS cache TTL |
+| `config heartbeat` | seconds | `300` | "Monitoring N hosts" summary interval |
+| `config savestate` | `"path"` | (off) | Persist live state to survive restarts (quoted or bare path) |
+| `config statusfile` | `html`\|`text` `path` | (off) | Status-output format and path |
+| `config sleeptime` | — | — | **Obsolete; ignored** with a warning (use `--interval`) |
 
 **Post-rewrite globals** — the legacy format also accepts the global `config` directives the modern
 format does, so a drop-in `sysmon.conf` can set them in the file too (previously CLI-only).
 `contact_on`, `queuetime`, `send_pings`/`min_pings`, and `source` are **not** here — they're the
 position-dependent per-host directives above ([Sticky directives](#sticky-config-directives)):
 
-| Directive | Value | Effect |
-|---|---|---|
-| `config page_on_degraded` | — (flag) | Page on a degraded (lossy) ping |
-| `config source_ip` | address | Default outbound bind for the connection checks |
-| `config hostname` | name | Org hostname shown in alerts and the status title |
-| `config sender` / `config from` | address | Alert `From:` address |
-| `config maxqueued` | integer | Cap on concurrent checks |
-| `config statesave_interval` | seconds | How often to flush the state file (0 = only on exit) |
-| `config state_max_age` | seconds | Ignore a state file older than this on load (0 disables) |
-| `config noheartbeat` | — (flag) | Disable the heartbeat summary |
-| `config control` | — (flag) | Enable the control / query channel |
-| `config control_bind` | address | Control-channel bind address (a non-loopback bind needs TLS) |
-| `config control_port` | integer | Control-channel port |
-| `config control_token_file` | `"path"` | Bearer-token file gating control mutations |
-| `config control_tls_cert` / `config control_tls_key` | `"path"` | Control-channel TLS cert / key |
+| Directive | Value | Default | Effect |
+|---|---|---|---|
+| `config page_on_degraded` | — (flag) | off | Page on a degraded (lossy) ping |
+| `config source_ip` | address | (auto) | Default outbound bind for the connection checks |
+| `config hostname` | name | (auto) | Org hostname shown in alerts and the status title |
+| `config sender` / `config from` | address | (none) | Alert `From:` address |
+| `config maxqueued` | integer | `50` | Cap on concurrent checks |
+| `config statesave_interval` | seconds | `60` | How often to flush the state file (0 = only on exit) |
+| `config state_max_age` | seconds | `86400` | Ignore a state file older than this on load (0 disables) |
+| `config noheartbeat` | — (flag) | — | Disable the heartbeat summary |
+| `config control` | — (flag) | off | Enable the control / query channel |
+| `config control_bind` | address | `127.0.0.1` | Control-channel bind address (a non-loopback bind needs TLS) |
+| `config control_port` | integer | `2026` | Control-channel port |
+| `config control_token_file` | `"path"` | (none) | Bearer-token file gating control mutations |
+| `config control_tls_cert` / `config control_tls_key` | `"path"` | (none) | Control-channel TLS cert / key |
 
 Flag directives (`page_on_degraded`, `noheartbeat`, `control`) take no value. Valid syslog
 facilities are the usual set (`kern`, `user`, `mail`, `daemon`, `auth`, `syslog`, `lpr`, `news`,

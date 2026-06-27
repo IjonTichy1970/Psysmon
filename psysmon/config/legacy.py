@@ -295,19 +295,12 @@ class _Parser:
             node.url, node.url_text, node.label = tokens[2], tokens[3], tokens[4]
             if n >= 6:
                 node.contact = tokens[5]
-        elif ctype in (CheckType.POP3, CheckType.POP3S):
-            if n < 5:
-                self._warn(lineno, f"{ctype} needs user, password and label; skipping")
-                return None
-            node.username, node.password, node.label = tokens[2], tokens[3], tokens[4]
-            if n >= 6:
-                node.contact = tokens[5]
-        elif ctype in (CheckType.IMAP, CheckType.IMAPS):
-            # Mirror the modern imap/imaps: credentials are OPTIONAL. A short line
-            # (`host imap label [contact]`) is a banner-only check; a full pop3-style
-            # `host imap user pass label [contact]` line adds an authenticated LOGIN. The original
-            # C imap (loadconfig.c type 7) required user/pass, so that always-auth form is the
-            # 5-/6-token case here and parses identically.
+        elif ctype in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS):
+            # The mail checks mirror each other: credentials are OPTIONAL (#88 imap, #101 pop3). A
+            # short line (`host pop3 label [contact]`) is a banner-only check; a full
+            # `host pop3 user pass label [contact]` line adds an authenticated probe. The original
+            # C pop3/imap required user/pass, so that always-auth form is the 5-/6-token case here
+            # and parses identically.
             if n < 5:
                 node.label = tokens[2]
                 if n >= 4:

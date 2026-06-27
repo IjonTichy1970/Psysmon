@@ -494,8 +494,8 @@ notification address; an absent contact means syslog only, no page.
 | udp | udp  port  label  [contact] |
 | www (HTTP) | www  url  url_text  label  [contact] |
 | https | https  url  url_text  label  [contact] |
-| pop3 | pop3  username  password  label  [contact] |
-| pop3s | pop3s  username  password  label  [contact] |
+| pop3 | pop3  [username  password]  label  [contact] |
+| pop3s | pop3s  [username  password]  label  [contact] |
 | imap | imap  [username  password]  label  [contact] |
 | imaps | imaps  [username  password]  label  [contact] |
 | authdns (DNS) | authdns  name  contact |
@@ -507,17 +507,17 @@ Notes confirmed from the parser:
 - label is the original "message" field -- a human-readable description. - tcp/udp
 require a numeric port (a non-numeric or non-positive port skips the stanza). -
 www/https take a url (the path to GET) and url_text (a substring that must appear in the
-response body), then the label. - pop3 takes a username and password, then the label. -
-pop3s mirrors pop3 (credentials required); imap/imaps take an optional username/password
-pair -- a plain reachability/banner check when omitted, a LOGIN when supplied -- then the
-label. - authdns is special: it takes the DNS name to look up and then a required
-contact -- a legacy authdns stanza with no contact is rejected. It has no label field. -
-ssh/mysql take an optional leading numeric port: a field after the type that parses as a
-port (1-65535) is the port, otherwise it's the label (so a purely-numeric label isn't
-expressible here -- use a descriptive one, or set the port in the modern format). -
-Default ports are applied automatically where they exist (smtp 25, pop3 110, pop3s 995,
-imap 143, imaps 993, authdns/DNS 53, www/http 80, https 443, ssh 22, mysql 3306);
-ping/ping6 have none, and tcp/udp require an explicit port.
+response body), then the label. - pop3/pop3s/imap/imaps take an optional
+username/password pair -- a plain reachability/banner check when omitted, an
+authenticated probe when supplied -- then the label. - authdns is special: it takes the
+DNS name to look up and then a required contact -- a legacy authdns stanza with no
+contact is rejected. It has no label field. - ssh/mysql take an optional leading numeric
+port: a field after the type that parses as a port (1-65535) is the port, otherwise it's
+the label (so a purely-numeric label isn't expressible here -- use a descriptive one, or
+set the port in the modern format). - Default ports are applied automatically where they
+exist (smtp 25, pop3 110, pop3s 995, imap 143, imaps 993, authdns/DNS 53, www/http 80,
+https 443, ssh 22, mysql 3306); ping/ping6 have none, and tcp/udp require an explicit
+port.
 
 A trailing { opens a dependency block (next section).
 
@@ -719,7 +719,7 @@ Inside an object body, attributes are key value; pairs:
 | desc | "text" | optional | Display label (the legacy label) |
 | contact | "addr" | dns (required); others optional | Notification address; absent/empty => syslog only, no page |
 | url + urltext | "path", "substring" | http/https (required) | Path to GET, and a substring the body must contain |
-| username + password | "u", "p" | pop3 (required) | POP3 credentials |
+| username + password | "u", "p" | pop3/pop3s/imap/imaps (optional) | Mail credentials; omitted => a banner-only check |
 | dns-query | "name" | dns (required) | The DNS name to look up |
 | dep | "object-name" | optional | Parent for dependency suppression; repeatable for multiple parents (any-path) |
 
@@ -1733,11 +1733,11 @@ variants of POP3 and IMAP:
 
 - imap reads the server's IMAP greeting and is *up* on a ready * OK (or an already-
 authenticated * PREAUTH). Add username/password and it also performs a LOGIN, reporting
-a rejected credential as Bad Auth. Credentials are optional for imap/imaps (a banner
-check without them); pop3/pop3s require them. - pop3s and imaps speak their protocol
-over implicit TLS (TLS from connect). These are *reachability* checks -- the TLS
-handshake must succeed, but the certificate is not verified, so a self-signed or near-
-expiry cert still reads up.
+a rejected credential as Bad Auth. Credentials are optional for all four
+(pop3/pop3s/imap/imaps) -- a banner check without them, an authenticated probe with them.
+- pop3s and imaps speak their protocol over implicit TLS (TLS from connect). These are
+*reachability* checks -- the TLS handshake must succeed, but the certificate is not
+verified, so a self-signed or near-expiry cert still reads up.
 
     object mail-imaps {
         host "198.51.100.2"; type imaps; contact "noc@example.net";

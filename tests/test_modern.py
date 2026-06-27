@@ -414,10 +414,21 @@ def test_mail_tls_types_recognized():
     assert by["ims.example.net"].check_type is CheckType.IMAPS and by["ims.example.net"].port == 993
 
 
-def test_pop3s_requires_credentials():
-    res = parse('object x { host "h.example.net"; type pop3s; };\n')
-    assert res.roots == []
-    assert any("pop3s needs 'username' and 'password'" in w for w in res.warnings)
+def test_pop3_family_banner_only_builds_without_credentials():
+    # pop3/pop3s now mirror imap/imaps: no credentials -> a banner-only check, not a skip (#101).
+    res = parse(
+        'object x { host "h.example.net"; type pop3; };\n'
+        'object y { host "h2.example.net"; type pop3s; };\n'
+    )
+    assert len(res.roots) == 2 and res.warnings == []
+    assert all(n.username == "" and n.password == "" for n in res.roots)
+
+
+def test_pop3_partial_credentials_warn_and_ignored():
+    # Only one of username/password -> warn + ignore both; the object still builds (banner) (#101).
+    res = parse('object x { host "h.example.net"; type pop3; username "u"; };\n')
+    assert len(res.roots) == 1 and res.roots[0].username == ""
+    assert any("pop3 auth needs both" in w for w in res.warnings)
 
 
 def test_imap_banner_only_builds_without_credentials():

@@ -292,8 +292,8 @@ variants of POP3 and IMAP:
 
 - **`imap`** reads the server's IMAP greeting and is *up* on a ready `* OK` (or an
   already-authenticated `* PREAUTH`). Add `username`/`password` and it also performs a `LOGIN`,
-  reporting a rejected credential as `Bad Auth`. Credentials are optional for `imap`/`imaps`
-  (a banner check without them); `pop3`/`pop3s` require them.
+  reporting a rejected credential as `Bad Auth`. Credentials are **optional for all four**
+  (`pop3`/`pop3s`/`imap`/`imaps`) — a banner check without them, an authenticated probe with them.
 - **`pop3s`** and **`imaps`** speak their protocol over **implicit TLS** (TLS from connect). These
   are *reachability* checks — the TLS handshake must succeed, but the certificate is **not**
   verified, so a self-signed or near-expiry cert still reads up.

@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- **POP3/POP3S credentials are now optional**, matching `imap`/`imaps`. Without `username`/`password`,
+  the check is a protocol-aware banner probe (a `+OK` ready greeting = up) instead of being skipped —
+  so a host with no test mailbox no longer has to fall back to a bare `tcp 110` check. With both
+  credentials it performs the `USER`/`PASS` login exactly as before; a partial pair warns and falls
+  back to the banner check ([#101](https://github.com/IjonTichy1970/Psysmon/issues/101)).
+
 ### Fixed
 - User guide: the legacy `config`-directive tables now show each directive's default value (e.g.
   `config heartbeat` → `300` seconds), matching the modern directive table.

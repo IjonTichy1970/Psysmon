@@ -117,7 +117,7 @@ Inside the block, attributes are `key value;` pairs.
 | `desc` | `"text"` | optional | Display label |
 | `contact` | `"addr"` | dns (**required**, non-empty); others optional | Notification address; where optional, an absent/empty contact ⇒ syslog only (no page) |
 | `url` + `urltext` | `"path"`, `"substring"` | http/https (**required**) | Path to GET, and a substring the body must contain |
-| `username` + `password` | `"u"`, `"p"` | pop3 (**required**) | POP3 credentials |
+| `username` + `password` | `"u"`, `"p"` | pop3/pop3s/imap/imaps (optional) | Mail credentials; omitted ⇒ a banner-only check |
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
 | `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (OR / any-path) |
 
@@ -137,10 +137,9 @@ of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `ping6`, `smtp`, `imap`, `imaps`, `ssh`, `mysql` | `host`, `type` |
+| `ping`, `ping6`, `smtp`, `pop3`, `pop3s`, `imap`, `imaps`, `ssh`, `mysql` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
 | `http`, `https` | `host`, `type`, `url`, `urltext` |
-| `pop3`, `pop3s` | `host`, `type`, `username`, `password` |
 | `dns` | `host`, `type`, `dns-query`, `contact` |
 
 **Mail checks.** `imap` reads the IMAP greeting and is *up* on a ready server; set
@@ -148,7 +147,8 @@ of the config still loads:
 `pop3s` and `imaps` speak their protocol over **implicit TLS** (TLS from connect). These TLS checks
 are *reachability* checks — the handshake must succeed, but the certificate is **not** verified, so
 a self-signed or soon-to-expire cert still reads up (certificate-*expiry* monitoring is a separate,
-planned check). `pop3`/`pop3s` require `username`/`password`; `imap`/`imaps` take them optionally.
+planned check). `pop3`/`pop3s`/`imap`/`imaps` all take `username`/`password` **optionally** — a
+banner-only reachability check without them, an authenticated probe with them.
 
 ### Per-object overrides (psysmon extensions)
 

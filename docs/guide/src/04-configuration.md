@@ -55,8 +55,8 @@ address; an absent contact means **syslog only, no page**.
 | `udp` | `udp  port  label  [contact]` |
 | `www` (HTTP) | `www  url  url_text  label  [contact]` |
 | `https` | `https  url  url_text  label  [contact]` |
-| `pop3` | `pop3  username  password  label  [contact]` |
-| `pop3s` | `pop3s  username  password  label  [contact]` |
+| `pop3` | `pop3  [username  password]  label  [contact]` |
+| `pop3s` | `pop3s  [username  password]  label  [contact]` |
 | `imap` | `imap  [username  password]  label  [contact]` |
 | `imaps` | `imaps  [username  password]  label  [contact]` |
 | `authdns` (DNS) | `authdns  name  contact` |
@@ -69,10 +69,8 @@ Notes confirmed from the parser:
 - **`tcp`/`udp`** require a numeric `port` (a non-numeric or non-positive port skips the stanza).
 - **`www`/`https`** take a `url` (the path to GET) and `url_text` (a substring that must appear in
   the response body), then the `label`.
-- **`pop3`** takes a `username` and `password`, then the `label`.
-- **`pop3s`** mirrors `pop3` (credentials required); **`imap`/`imaps`** take an **optional**
-  `username`/`password` pair — a plain reachability/banner check when omitted, a `LOGIN` when
-  supplied — then the `label`.
+- **`pop3`/`pop3s`/`imap`/`imaps`** take an **optional** `username`/`password` pair — a plain
+  reachability/banner check when omitted, an authenticated probe when supplied — then the `label`.
 - **`authdns`** is special: it takes the DNS `name` to look up and then a **required** `contact` —
   a legacy authdns stanza with no contact is rejected. It has **no** `label` field.
 - **`ssh`/`mysql`** take an **optional** leading numeric port: a field after the type that parses as
@@ -283,7 +281,7 @@ Inside an object body, attributes are `key value;` pairs:
 | `desc` | `"text"` | optional | Display label (the legacy `label`) |
 | `contact` | `"addr"` | dns (**required**); others optional | Notification address; absent/empty ⇒ syslog only, no page |
 | `url` + `urltext` | `"path"`, `"substring"` | http/https (**required**) | Path to GET, and a substring the body must contain |
-| `username` + `password` | `"u"`, `"p"` | pop3 (**required**) | POP3 credentials |
+| `username` + `password` | `"u"`, `"p"` | pop3/pop3s/imap/imaps (optional) | Mail credentials; omitted ⇒ a banner-only check |
 | `dns-query` | `"name"` | dns (**required**) | The DNS name to look up |
 | `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (any-path) |
 

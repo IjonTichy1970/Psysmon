@@ -190,6 +190,30 @@ async def test_default_port_used(check_ctx, monkeypatch):
     assert captured["port"] == DEFAULT_PORT[CheckType.POP3] == 110
 
 
+async def _greeting_only(text: bytes):
+    """A POP3 server that sends only a greeting, then waits for the client's QUIT and closes."""
+    async def handler(reader, writer):
+        writer.write(text)
+        await writer.drain()
+        await reader.readline()  # the client's QUIT (banner-only path), then tear down
+        writer.close()
+
+    return handler
+
+
+async def test_banner_only_ok_without_credentials(check_ctx, tcp_server):
+    # No username/password -> a "+OK" greeting alone is up; no USER/PASS is sent (#101).
+    port = await tcp_server(await _greeting_only(b"+OK POP3 ready\r\n"))
+    assert await check(node(port=port, username="", password=""), check_ctx) == Status.OK
+
+
+async def test_banner_only_bad_greeting_without_credentials(check_ctx, tcp_server):
+    # No creds + a non-"+OK" greeting is still BAD_RESPONSE (the banner must be a ready greeting).
+    port = await tcp_server(await _greeting_only(b"-ERR not ready\r\n"))
+    n = node(port=port, username="", password="")
+    assert await check(n, check_ctx) == Status.BAD_RESPONSE
+
+
 async def test_perform_no_dns():
     ctx = base.CheckContext(resolver=FakeResolver(default=None), timeout_s=2.0)
     assert await base.perform(check, node(), ctx) == Status.NO_DNS

@@ -1,7 +1,10 @@
-"""POP3 authentication check.
+"""POP3 greeting + optional authentication check (``CheckType.POP3`` / ``POP3S``).
 
 Resolves the node, opens a TCP connection, reads the greeting (empty/EOF → ``NO_RESPONSE``, a
-non-``+OK`` line → ``BAD_RESPONSE``), then performs a ``USER``/``PASS`` login. The ``USER`` reply
+non-``+OK`` line → ``BAD_RESPONSE``). If the node carries both ``username`` and ``password``
+(optional — decision for #101, mirroring imap/imaps) it then performs a ``USER``/``PASS`` login;
+otherwise a ``+OK`` ready greeting alone is enough (a banner-only reachability probe), so a host
+with no test mailbox no longer has to fall back to a bare ``tcp`` check. The ``USER`` reply
 is checked too: ``-ERR`` (username rejected) is ``BAD_AUTH``; a dropped connection (empty reply)
 is ``NO_RESPONSE``. On the ``PASS`` reply,
 ``+OK`` means the credentials are accepted (``OK``); ``-ERR`` means the auth was rejected
@@ -25,13 +28,17 @@ from psysmon.status import Status
 
 
 async def check(node: Node, ctx: base.CheckContext) -> int:
-    """Probe a POP3 server, authenticating with ``node.username``/``node.password``."""
+    """Validate the POP3 greeting, optionally authenticating with the node's credentials."""
     async with base.open_check_connection(node, ctx) as (reader, writer):
         greeting = await reader.readline()
         if not greeting:  # connection dropped before the greeting
             return Status.NO_RESPONSE
         if not greeting.startswith(b"+OK"):  # responded, but not a "+OK" ready greeting
             return Status.BAD_RESPONSE
+
+        if not (node.username and node.password):
+            await base.graceful_quit(writer)
+            return Status.OK  # banner-only check: a "+OK" ready greeting is enough (#101)
 
         writer.write(b"USER " + node.username.encode("utf-8") + b"\r\n")
         await writer.drain()

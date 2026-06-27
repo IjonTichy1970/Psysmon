@@ -186,11 +186,8 @@ class _Serializer:
         if node.check_type in (CheckType.HTTP, CheckType.HTTPS):
             self._attr("url", node.url)
             self._attr("urltext", node.url_text)
-        elif node.check_type in (CheckType.POP3, CheckType.POP3S):
-            self._attr("username", node.username)
-            self._attr("password", node.password)
-        elif node.check_type in (CheckType.IMAP, CheckType.IMAPS):
-            if node.username and node.password:  # IMAP creds are optional (the LOGIN check) (#88)
+        elif node.check_type in (CheckType.POP3, CheckType.POP3S, CheckType.IMAP, CheckType.IMAPS):
+            if node.username and node.password:  # mail creds are optional (#88 imap, #101 pop3)
                 self._attr("username", node.username)
                 self._attr("password", node.password)
         elif node.check_type is CheckType.DNS:

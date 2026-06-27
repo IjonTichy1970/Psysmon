@@ -150,11 +150,14 @@ def test_legacy_pop3s_accepted_not_plaintext():
     assert ok.check_type is CheckType.POP3 and ok.port == 110
 
 
-def test_legacy_pop3_family_requires_credentials():
-    # pop3/pop3s always authenticate (mirror modern): too few fields -> warn + skip.
-    res = parse("mail.example.net pop3s onlylabel noc@x\n")  # 4 tokens, no user/pass
-    assert res.roots == []
-    assert any("needs user, password and label" in w for w in res.warnings)
+def test_legacy_pop3_family_optional_credentials():
+    # pop3/pop3s now mirror imap/imaps (#101): a short line is banner-only, a full line auths.
+    banner = parse("mail.example.net pop3s onlylabel noc@x\n").roots[0]  # 4 tokens: label + contact
+    assert banner.check_type is CheckType.POP3S and banner.port == 995
+    assert not banner.username and not banner.password
+    assert banner.label == "onlylabel" and banner.contact == "noc@x"
+    auth = parse("mail.example.net pop3 mu mp label noc@x\n").roots[0]  # 6 tokens: authenticated
+    assert (auth.username, auth.password, auth.label) == ("mu", "mp", "label")
 
 
 def test_legacy_imap_optional_credentials():

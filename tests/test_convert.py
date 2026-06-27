@@ -75,9 +75,20 @@ def test_to_modern_emits_ping6():
     assert len(reparsed.roots) == 1 and reparsed.roots[0].check_type is CheckType.PING6
 
 
+def test_to_modern_pop3_banner_omits_credentials():
+    # A credential-less pop3/pop3s node now round-trips as a banner check: the converter must NOT
+    # emit empty username/password (mail creds are optional — #101, mirroring imap).
+    roots = [Node(hostname="box.example.net", check_type=CheckType.POP3)]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert "username" not in text and "password" not in text
+    n = parse_modern(text).roots[0]
+    assert n.check_type is CheckType.POP3 and n.username == "" and n.password == ""
+
+
 def test_to_modern_emits_mail_tls_types():
     # to_modern must serialize the new mail types (not KeyError) and round-trip through the modern
-    # parser, carrying pop3s's required creds and imaps's optional creds (#88).
+    # parser, carrying the mail types' optional credentials (#88 imap/imaps, #101 pop3/pop3s).
     roots = [
         Node(hostname="im.example.net", check_type=CheckType.IMAP),
         Node(hostname="ims.example.net", check_type=CheckType.IMAPS, username="u", password="p"),

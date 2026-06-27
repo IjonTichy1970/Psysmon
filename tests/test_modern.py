@@ -480,6 +480,19 @@ def test_ftp_types_recognized_with_optional_credentials():
     assert (ftps.username, ftps.password) == ("u", "p")
 
 
+def test_telnet_recognized_no_credentials():
+    # telnet is a connection/banner check (#106): host+type only, default port 23, no creds.
+    res = parse(
+        'object a { host "dev.example.net"; type telnet; };\n'
+        'object b { host "dev2.example.net"; type telnet; port 2323; };\n'
+    )
+    assert res.warnings == []
+    by = {n.hostname: n for n in res.roots}
+    dev = by["dev.example.net"]
+    assert dev.check_type is CheckType.TELNET and dev.port == 23 and dev.username == ""
+    assert by["dev2.example.net"].port == 2323
+
+
 def test_ping6_type_recognized():
     # ping6 (and its pingv6/icmp6 aliases) build a PING6 node — no longer deferred (#24).
     for kw in ("ping6", "pingv6", "icmp6"):

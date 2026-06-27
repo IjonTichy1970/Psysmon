@@ -64,6 +64,7 @@ address; an absent contact means **syslog only, no page**.
 | `mysql` | `mysql  [port]  label  [contact]` |
 | `ftp` | `ftp  [username  password]  label  [contact]` |
 | `ftps` | `ftps  [username  password]  label  [contact]` |
+| `telnet` | `telnet  [port]  label  [contact]` |
 
 Notes confirmed from the parser:
 
@@ -79,14 +80,14 @@ Notes confirmed from the parser:
   reachability/banner check when omitted, an authenticated probe when supplied — then the `label`.
 - **`authdns`** is special: it takes the DNS `name` to look up and then a **required** `contact` —
   a legacy authdns stanza with no contact is rejected. It has **no** `label` field.
-- **`ssh`/`mysql`** take an **optional** leading numeric port: a field after the type that parses as
-  a port (1–65535) is the port, otherwise it's the `label` (so a purely-numeric label isn't
+- **`ssh`/`mysql`/`telnet`** take an **optional** leading numeric port: a field after the type that
+  parses as a port (1–65535) is the port, otherwise it's the `label` (so a purely-numeric label isn't
   expressible here — use a descriptive one, or set the port in the modern format).
 - **`ftp`/`ftps`** mirror the mail checks: an **optional** `username`/`password` pair (a banner check
   on the `220` greeting when omitted, a `USER`/`PASS` login when supplied), then the `label`.
 - Default ports are applied automatically where they exist (smtp `25`, pop3 `110`, pop3s `995`,
   imap `143`, imaps `993`, authdns/DNS `53`, www/http `80`, https `443`, ssh `22`, mysql `3306`,
-  ftp `21`, ftps `990`); ping/ping6 have none, and tcp/udp require an explicit port.
+  ftp `21`, ftps `990`, telnet `23`); ping/ping6 have none, and tcp/udp require an explicit port.
 
 A trailing `{` opens a dependency block (next section).
 
@@ -298,23 +299,25 @@ override** attributes — `queuetime`, `numfailures`, `send_pings` / `min_pings`
 `contact_on`, and `source` — documented under [Per-object overrides](#per-object-overrides) below.
 
 **Check types** (`type` keyword): `ping`, `ping6`, `tcp`, `udp`, `smtp`, `pop3`, `pop3s`, `imap`,
-`imaps`, `dns`, `http`, `https`, `ssh`, `mysql`, `ftp`, `ftps`. `ping` is an ICMP (IPv4) echo and
+`imaps`, `dns`, `http`, `https`, `ssh`, `mysql`, `ftp`, `ftps`, `telnet`. `ping` is an ICMP (IPv4) echo and
 **`ping6`** an ICMPv6 (IPv6) echo over the host's **AAAA** record (`pingv6`/`icmp6` are accepted
 aliases); **`imap`** is an IMAP greeting check (optional LOGIN), and **`pop3s`/`imaps`** are the
 implicit-TLS variants of POP3/IMAP. **`ssh`** reads the server's `SSH-` identification banner and
 **`mysql`** reads the MySQL/MariaDB handshake packet — both are protocol-aware reachability checks
 (not logins). **`ftp`** reads the FTP control-channel `220` greeting and adds an optional
-`USER`/`PASS` login; **`ftps`** is its implicit-TLS variant. For legacy familiarity, `authdns` is an
-alias for `dns` and `www` for `http`. Default ports: smtp `25`, pop3 `110`, pop3s `995`, imap `143`,
-imaps `993`, dns `53`, http `80`, https `443`, ssh `22`, mysql `3306`, ftp `21`, ftps `990` (ping and
-ping6 have none; tcp/udp require an explicit `port`).
+`USER`/`PASS` login; **`ftps`** is its implicit-TLS variant. **`telnet`** is a plaintext
+connection/banner check (port 23) — up if the server sends anything on connect; never a login. For
+legacy familiarity, `authdns` is an alias for `dns` and `www` for `http`. Default ports: smtp `25`,
+pop3 `110`, pop3s `995`, imap `143`, imaps `993`, dns `53`, http `80`, https `443`, ssh `22`,
+mysql `3306`, ftp `21`, ftps `990`, telnet `23` (ping and ping6 have none; tcp/udp require an
+explicit `port`).
 
 **Required fields per type** — an object missing a required field is warned and skipped; the rest
 of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `ping6`, `smtp`, `pop3`, `pop3s`, `imap`, `imaps`, `ssh`, `mysql`, `ftp`, `ftps` | `host`, `type` |
+| `ping`, `ping6`, `smtp`, `pop3`, `pop3s`, `imap`, `imaps`, `ssh`, `mysql`, `ftp`, `ftps`, `telnet` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
 | `http`, `https` | `host`, `type`, `url` |
 | `dns` | `host`, `type`, `dns-query`, `contact` |

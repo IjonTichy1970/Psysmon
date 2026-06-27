@@ -313,7 +313,7 @@ Default ports: `pop3s` 995, `imap` 143, `imaps` 993.
 
 ---
 
-## Service-protocol checks — `ssh`, `mysql`, `ftp`
+## Service-protocol checks — `ssh`, `mysql`, `ftp`, `telnet`
 
 Protocol-aware reachability checks that go beyond a bare TCP connect — they confirm the service
 actually speaks its protocol, catching a port-forwarder, a wedged daemon, or an unrelated service
@@ -328,11 +328,14 @@ sitting on the port:
   reply is a bad response). Add `username`/`password` and it also performs FTP's two-step `USER` →
   `PASS` login (a rejected credential reads *Bad Auth*); without them it's a banner-only check.
   **`ftps`** runs the same check over implicit TLS (port 990).
+- **`telnet`** is a plaintext connection/banner check on port 23 — up if the server sends any data
+  on connect (Telnet option negotiation or a login banner), since a live telnet daemon speaks first.
+  An immediate close is *No Response*. It never authenticates — strictly a banner check, like `ssh`.
 
-`ssh`/`mysql` default their port (22 / 3306) and take an **optional override**: `port 2222;` in the
-modern format, or an optional leading port positionally in legacy (`host ssh 2222 label`); `ftp`/`ftps`
-default to 21 / 990 (override via the modern `port`). `ssh` and `mysql` are never a login test; `ftp`
-is a login only when you give it credentials.
+`ssh`/`mysql`/`telnet` default their port (22 / 3306 / 23) and take an **optional override**:
+`port 2222;` in the modern format, or an optional leading port positionally in legacy
+(`host ssh 2222 label`); `ftp`/`ftps` default to 21 / 990 (override via the modern `port`). `ssh`,
+`mysql`, and `telnet` are never a login test; `ftp` is a login only when you give it credentials.
 
 ```
 object db-primary {
@@ -343,6 +346,9 @@ object jump-host {
 };
 object vendor-ftp {
     host "198.51.100.7"; type ftp;          # 220-banner check, port 21
+};
+object console-server {
+    host "198.51.100.20"; type telnet;      # banner/negotiation check, port 23
 };
 ```
 
@@ -484,7 +490,7 @@ control-channel documentation.
 | Dependency suppression | Yes (`{ }` nesting) | Yes (`dep`) | — (structure is config-only) |
 | Multi-parent dependencies (any-path) | — (single parent) | Yes (multiple `dep`) | — (structure is config-only) |
 | IPv6 ping + mail checks (`ping6` / `imap` / `pop3s` / `imaps`) | Yes | Yes | — (config-only) |
-| Protocol-aware service checks (`ssh` / `mysql` / `ftp` / `ftps`) | Yes | Yes | — (config-only) |
+| Protocol-aware service checks (`ssh` / `mysql` / `ftp` / `ftps` / `telnet`) | Yes | Yes | — (config-only) |
 | Threshold alerting (`numfailures`) | Yes | Yes | `--numfailures` |
 | Re-page interval (`pageinterval`) | Yes | Yes | `--pageinterval` |
 | Recovery notices | Yes | Yes | — |

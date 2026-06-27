@@ -122,23 +122,25 @@ Inside the block, attributes are `key value;` pairs.
 | `dep` | `"object-name"` | optional | Parent for dependency suppression; **repeatable** for multiple parents (OR / any-path) |
 
 **Check types** (the `type` keyword): `ping`, `ping6`, `tcp`, `udp`, `smtp`, `pop3`, `pop3s`,
-`imap`, `imaps`, `dns`, `http`, `https`, `ssh`, `mysql`, `ftp`, `ftps`. `ping` is an ICMP (IPv4) echo
+`imap`, `imaps`, `dns`, `http`, `https`, `ssh`, `mysql`, `ftp`, `ftps`, `telnet`. `ping` is an ICMP (IPv4) echo
 and **`ping6`** an ICMPv6 (IPv6) echo over the host's **AAAA** record (`pingv6`/`icmp6` are accepted
 aliases). **`imap`** is an IMAP greeting check (with an optional LOGIN — see below); **`pop3s`/`imaps`**
 are the implicit-TLS variants of POP3/IMAP (TLS from connect). **`ssh`** reads the server's `SSH-`
 identification banner and **`mysql`** reads the MySQL/MariaDB handshake packet — both protocol-aware
 reachability checks (not logins). **`ftp`** reads the FTP control-channel `220` greeting and adds an
-optional `USER`/`PASS` login; **`ftps`** is its implicit-TLS variant. For legacy familiarity,
-`authdns` is an alias for `dns` and `www` for `http`. Default ports: smtp `25`, pop3 `110`,
-pop3s `995`, imap `143`, imaps `993`, dns `53`, http `80`, https `443`, ssh `22`, mysql `3306`,
-ftp `21`, ftps `990` (ping and ping6 have none; tcp/udp require an explicit `port`).
+optional `USER`/`PASS` login; **`ftps`** is its implicit-TLS variant. **`telnet`** is a plaintext
+connection/banner check (port 23) — up if the server sends any data on connect; never a login. For
+legacy familiarity, `authdns` is an alias for `dns` and `www` for `http`. Default ports: smtp `25`,
+pop3 `110`, pop3s `995`, imap `143`, imaps `993`, dns `53`, http `80`, https `443`, ssh `22`,
+mysql `3306`, ftp `21`, ftps `990`, telnet `23` (ping and ping6 have none; tcp/udp require an
+explicit `port`).
 
 **Required fields per type** — an object missing a required field is warned and skipped; the rest
 of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| `ping`, `ping6`, `smtp`, `pop3`, `pop3s`, `imap`, `imaps`, `ssh`, `mysql`, `ftp`, `ftps` | `host`, `type` |
+| `ping`, `ping6`, `smtp`, `pop3`, `pop3s`, `imap`, `imaps`, `ssh`, `mysql`, `ftp`, `ftps`, `telnet` | `host`, `type` |
 | `tcp`, `udp` | `host`, `type`, `port` |
 | `http`, `https` | `host`, `type`, `url` |
 | `dns` | `host`, `type`, `dns-query`, `contact` |

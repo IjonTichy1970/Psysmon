@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format is based on
   reachability-only like the other TLS checks). Credentials are optional (a banner-only check
   without them); default ports 21 / 990, with an optional override in the modern format
   ([#102](https://github.com/IjonTichy1970/Psysmon/issues/102)).
+- **Telnet check** — a new `telnet` check type (both config formats). A connection/banner probe on
+  port 23, modeled on the SSH check: up if the server sends any initial data (Telnet `IAC` option
+  negotiation or a login banner), confirming a live telnet daemon beyond a bare `tcp 23` connect; an
+  immediate close is `No Response`. It never authenticates — strictly a banner check. Default port
+  23, with an optional override ([#106](https://github.com/IjonTichy1970/Psysmon/issues/106)).
 
 ### Changed
 - **`urltext` is now optional for `http`/`https` checks.** Without it, the check is a protocol-aware

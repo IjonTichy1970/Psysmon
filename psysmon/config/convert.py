@@ -48,6 +48,7 @@ _TYPE_KW: dict[CheckType, str] = {
     CheckType.SSH: "ssh",      # #96
     CheckType.MYSQL: "mysql",  # #97
     CheckType.FTP: "ftp", CheckType.FTPS: "ftps",  # #102
+    CheckType.TELNET: "telnet",  # #106
 }
 
 # Settings field -> (modern `config` keyword, emit-kind), in a fixed output order. `numfailures`

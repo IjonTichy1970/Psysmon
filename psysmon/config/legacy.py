@@ -81,6 +81,7 @@ _TYPE_KEYWORDS: tuple[tuple[str, CheckType | None], ...] = (
     ("mysql", CheckType.MYSQL),    # #97
     ("ftps", CheckType.FTPS),      # before "ftp"! (TLS) (#102)
     ("ftp", CheckType.FTP),
+    ("telnet", CheckType.TELNET),  # #106
 )
 
 # Types whose stanza may open a `{` child block: the original's ping-like branch (ping, smtp) plus
@@ -326,9 +327,9 @@ class _Parser:
                 return None
             node.username = tokens[2]  # name to look up
             node.contact = tokens[3]
-        elif ctype in (CheckType.SSH, CheckType.MYSQL):
-            # Optional leading numeric port (#96/#97): `host ssh [PORT] label [contact]`. A field
-            # after the type that parses as a port (1..65535) is the port; otherwise it's the label
+        elif ctype in (CheckType.SSH, CheckType.MYSQL, CheckType.TELNET):
+            # Optional leading numeric port (#96/#97/#106): `host ssh [PORT] label [contact]`. A
+            # field after the type that parses as a port (1..65535) is the port; otherwise the label
             # (the default port from DEFAULT_PORT already applies). A purely-numeric label can't be
             # expressed here — use a descriptive label, or set the port in the modern format.
             idx = 2

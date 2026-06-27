@@ -195,6 +195,7 @@ _TYPE_KEYWORDS = {
     "ssh": CheckType.SSH,        # SSH banner check (#96)
     "mysql": CheckType.MYSQL,    # MySQL/MariaDB handshake check (#97)
     "ftp": CheckType.FTP, "ftps": CheckType.FTPS,    # FTP 220-banner + optional login (#102)
+    "telnet": CheckType.TELNET,    # connection/banner check on port 23 (#106)
 }
 _DROPPED_TYPES = frozenset({"nntp", "pop2", "umichx500", "radius", "bootp", "snmp"})
 # Object attributes the parser understands; anything else (a typo, or a not-yet-supported key)

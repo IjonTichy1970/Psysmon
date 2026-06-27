@@ -39,6 +39,7 @@ class CheckType(StrEnum):
     MYSQL = "mysql"  # MySQL/MariaDB initial-handshake check (#97)
     FTP = "ftp"  # FTP control-channel 220-banner + optional login (#102)
     FTPS = "ftps"  # FTP over implicit TLS (#102)
+    TELNET = "telnet"  # connection/banner check on port 23 — no login (#106)
 
 
 # Default port per type (None = not applicable or supplied explicitly in config).
@@ -59,6 +60,7 @@ DEFAULT_PORT: dict[CheckType, int | None] = {
     CheckType.MYSQL: 3306,
     CheckType.FTP: 21,
     CheckType.FTPS: 990,
+    CheckType.TELNET: 23,
 }
 
 # type_to_name() display strings from the original lib.c (used in the status file).
@@ -79,6 +81,7 @@ _DISPLAY_NAME: dict[CheckType, str] = {
     CheckType.MYSQL: "mysql",
     CheckType.FTP: "ftp",
     CheckType.FTPS: "ftps",
+    CheckType.TELNET: "telnet",
 }
 
 

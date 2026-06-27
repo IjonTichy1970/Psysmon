@@ -503,6 +503,7 @@ notification address; an absent contact means syslog only, no page.
 | mysql | mysql  [port]  label  [contact] |
 | ftp | ftp  [username  password]  label  [contact] |
 | ftps | ftps  [username  password]  label  [contact] |
+| telnet | telnet  [port]  label  [contact] |
 
 Notes confirmed from the parser:
 
@@ -518,14 +519,15 @@ pop3/pop3s/imap/imaps take an optional username/password pair -- a plain
 reachability/banner check when omitted, an authenticated probe when supplied -- then the
 label. - authdns is special: it takes the DNS name to look up and then a required
 contact -- a legacy authdns stanza with no contact is rejected. It has no label field. -
-ssh/mysql take an optional leading numeric port: a field after the type that parses as a
-port (1-65535) is the port, otherwise it's the label (so a purely-numeric label isn't
-expressible here -- use a descriptive one, or set the port in the modern format). -
-ftp/ftps mirror the mail checks: an optional username/password pair (a banner check on
-the 220 greeting when omitted, a USER/PASS login when supplied), then the label. -
-Default ports are applied automatically where they exist (smtp 25, pop3 110, pop3s 995,
-imap 143, imaps 993, authdns/DNS 53, www/http 80, https 443, ssh 22, mysql 3306, ftp 21,
-ftps 990); ping/ping6 have none, and tcp/udp require an explicit port.
+ssh/mysql/telnet take an optional leading numeric port: a field after the type that
+parses as a port (1-65535) is the port, otherwise it's the label (so a purely-numeric
+label isn't expressible here -- use a descriptive one, or set the port in the modern
+format). - ftp/ftps mirror the mail checks: an optional username/password pair (a banner
+check on the 220 greeting when omitted, a USER/PASS login when supplied), then the
+label. - Default ports are applied automatically where they exist (smtp 25, pop3 110,
+pop3s 995, imap 143, imaps 993, authdns/DNS 53, www/http 80, https 443, ssh 22, mysql
+3306, ftp 21, ftps 990, telnet 23); ping/ping6 have none, and tcp/udp require an
+explicit port.
 
 A trailing { opens a dependency block (next section).
 
@@ -736,23 +738,24 @@ override attributes -- queuetime, numfailures, send_pings / min_pings, group, co
 and source -- documented under Per-object overrides below.
 
 Check types (type keyword): ping, ping6, tcp, udp, smtp, pop3, pop3s, imap, imaps, dns,
-http, https, ssh, mysql, ftp, ftps. ping is an ICMP (IPv4) echo and ping6 an ICMPv6
-(IPv6) echo over the host's AAAA record (pingv6/icmp6 are accepted aliases); imap is an
-IMAP greeting check (optional LOGIN), and pop3s/imaps are the implicit-TLS variants of
-POP3/IMAP. ssh reads the server's SSH- identification banner and mysql reads the
-MySQL/MariaDB handshake packet -- both are protocol-aware reachability checks (not
+http, https, ssh, mysql, ftp, ftps, telnet. ping is an ICMP (IPv4) echo and ping6 an
+ICMPv6 (IPv6) echo over the host's AAAA record (pingv6/icmp6 are accepted aliases); imap
+is an IMAP greeting check (optional LOGIN), and pop3s/imaps are the implicit-TLS
+variants of POP3/IMAP. ssh reads the server's SSH- identification banner and mysql reads
+the MySQL/MariaDB handshake packet -- both are protocol-aware reachability checks (not
 logins). ftp reads the FTP control-channel 220 greeting and adds an optional USER/PASS
-login; ftps is its implicit-TLS variant. For legacy familiarity, authdns is an alias for
-dns and www for http. Default ports: smtp 25, pop3 110, pop3s 995, imap 143, imaps 993,
-dns 53, http 80, https 443, ssh 22, mysql 3306, ftp 21, ftps 990 (ping and ping6 have
-none; tcp/udp require an explicit port).
+login; ftps is its implicit-TLS variant. telnet is a plaintext connection/banner check
+(port 23) -- up if the server sends anything on connect; never a login. For legacy
+familiarity, authdns is an alias for dns and www for http. Default ports: smtp 25, pop3
+110, pop3s 995, imap 143, imaps 993, dns 53, http 80, https 443, ssh 22, mysql 3306, ftp
+21, ftps 990, telnet 23 (ping and ping6 have none; tcp/udp require an explicit port).
 
 Required fields per type -- an object missing a required field is warned and skipped; the
 rest of the config still loads:
 
 | Type | Required attributes |
 |---|---|
-| ping, ping6, smtp, pop3, pop3s, imap, imaps, ssh, mysql, ftp, ftps | host, type |
+| ping, ping6, smtp, pop3, pop3s, imap, imaps, ssh, mysql, ftp, ftps, telnet | host, type |
 | tcp, udp | host, type, port |
 | http, https | host, type, url |
 | dns | host, type, dns-query, contact |
@@ -1763,8 +1766,8 @@ Default ports: pop3s 995, imap 143, imaps 993.
 
 ---
 
-Service-protocol checks -- ssh, mysql, ftp
------------------------------------------
+Service-protocol checks -- ssh, mysql, ftp, telnet
+-------------------------------------------------
 
 Protocol-aware reachability checks that go beyond a bare TCP connect -- they confirm the
 service actually speaks its protocol, catching a port-forwarder, a wedged daemon, or an
@@ -1778,12 +1781,16 @@ which still means the server is speaking MySQL and responding. - ftp reads the F
 control-channel 220 greeting (up on a 220 ready reply; a 421 or other reply is a bad
 response). Add username/password and it also performs FTP's two-step USER -> PASS login
 (a rejected credential reads *Bad Auth*); without them it's a banner-only check. ftps
-runs the same check over implicit TLS (port 990).
+runs the same check over implicit TLS (port 990). - telnet is a plaintext
+connection/banner check on port 23 -- up if the server sends any data on connect (Telnet
+option negotiation or a login banner), since a live telnet daemon speaks first. An
+immediate close is *No Response*. It never authenticates -- strictly a banner check, like
+ssh.
 
-ssh/mysql default their port (22 / 3306) and take an optional override: port 2222; in
-the modern format, or an optional leading port positionally in legacy (host ssh 2222
-label); ftp/ftps default to 21 / 990 (override via the modern port). ssh and mysql are
-never a login test; ftp is a login only when you give it credentials.
+ssh/mysql/telnet default their port (22 / 3306 / 23) and take an optional override: port
+2222; in the modern format, or an optional leading port positionally in legacy (host ssh
+2222 label); ftp/ftps default to 21 / 990 (override via the modern port). ssh, mysql,
+and telnet are never a login test; ftp is a login only when you give it credentials.
 
     object db-primary {
         host "198.51.100.9"; type mysql;        # default port 3306
@@ -1793,6 +1800,9 @@ never a login test; ftp is a login only when you give it credentials.
     };
     object vendor-ftp {
         host "198.51.100.7"; type ftp;          # 220-banner check, port 21
+    };
+    object console-server {
+        host "198.51.100.20"; type telnet;      # banner/negotiation check, port 23
     };
 
 ---
@@ -1927,7 +1937,7 @@ Availability matrix
 | Dependency suppression | Yes ({ } nesting) | Yes (dep) | -- (structure is config-only) |
 | Multi-parent dependencies (any-path) | -- (single parent) | Yes (multiple dep) | -- (structure is config-only) |
 | IPv6 ping + mail checks (ping6 / imap / pop3s / imaps) | Yes | Yes | -- (config-only) |
-| Protocol-aware service checks (ssh / mysql / ftp / ftps) | Yes | Yes | -- (config-only) |
+| Protocol-aware service checks (ssh / mysql / ftp / ftps / telnet) | Yes | Yes | -- (config-only) |
 | Threshold alerting (numfailures) | Yes | Yes | --numfailures |
 | Re-page interval (pageinterval) | Yes | Yes | --pageinterval |
 | Recovery notices | Yes | Yes | -- |

@@ -160,6 +160,15 @@ def test_legacy_pop3_family_optional_credentials():
     assert (auth.username, auth.password, auth.label) == ("mu", "mp", "label")
 
 
+def test_legacy_telnet_optional_port_no_creds():
+    # telnet mirrors ssh's positional form (#106): optional leading port, label, contact; no creds.
+    n = parse("dev.example.net telnet console noc@x\n").roots[0]  # 4 tokens: label + contact
+    assert n.check_type is CheckType.TELNET and n.port == 23
+    assert not n.username and n.label == "console" and n.contact == "noc@x"
+    alt = parse("dev.example.net telnet 2323 console noc@x\n").roots[0]  # optional leading port
+    assert alt.port == 2323 and alt.label == "console" and alt.contact == "noc@x"
+
+
 def test_legacy_ftp_optional_credentials():
     # ftp/ftps mirror the mail checks (#102): banner-only short line, authenticated full line; and
     # ftps is NOT prefix-shadowed by ftp (ordered like pop3s before pop3).

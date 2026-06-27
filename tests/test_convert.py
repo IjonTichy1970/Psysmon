@@ -136,6 +136,20 @@ def test_to_modern_emits_ssh_mysql():
     assert by_host["m.example.net"].port == 3307
 
 
+def test_to_modern_emits_telnet():
+    # to_modern serializes telnet (not KeyError); default port 23 omitted, an override kept.
+    roots = [
+        Node(hostname="dev.example.net", check_type=CheckType.TELNET),
+        Node(hostname="dev2.example.net", check_type=CheckType.TELNET, port=2323),
+    ]
+    text, warnings = to_modern(ParseResult(roots=roots))
+    assert warnings == []
+    assert "type telnet;" in text and "port 23;" not in text and "port 2323;" in text
+    by = {n.hostname: n for n in parse_modern(text).roots}
+    assert by["dev.example.net"].check_type is CheckType.TELNET and by["dev.example.net"].port == 23
+    assert by["dev2.example.net"].port == 2323
+
+
 def test_to_modern_emits_ftp_types():
     # to_modern serializes ftp/ftps (not KeyError), carrying optional creds; default ports omitted.
     roots = [

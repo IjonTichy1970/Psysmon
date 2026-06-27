@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+- Modernized the packaging license metadata to the SPDX form (PEP 639): `license` is now the
+  `GPL-2.0-or-later` expression string and the deprecated GPL license *classifier* was removed
+  (the license itself is unchanged). Builds no longer emit the setuptools deprecation warnings that
+  were slated to become hard errors; requires `setuptools>=77` to build.
+
 ## [0.10.0] — 2026-06-26 — FTP/FTPS & Telnet checks, optional-credential probes
 
 ### Added
